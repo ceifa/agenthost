@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agenthost",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [
+    { "binding": "SITES", "bucket_name": "agenthost-sites" }
+  ],
+  // Per-IP rate limits (see src/env.ts). These are the primary in-code abuse
+  // control — no longer relying solely on a dashboard WAF rule. period is 10|60.
+  "ratelimits": [
+    { "name": "PUBLISH_LIMITER", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } },
+    { "name": "ACCESS_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }
+  ],
+  "assets": {
+    // landing/dist + admin/dist are copied into ../public by the build step.
+    // run_worker_first lets the Worker route by Host before Static Assets answer.
+    "directory": "../public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    { "pattern": "agenthost.page/*", "zone_name": "agenthost.page" },
+    { "pattern": "*.agenthost.page/*", "zone_name": "agenthost.page" }
+  ],
+  "triggers": {
+    // nightly retention sweep: delete free-tier sites idle past their plan's
+    // retention window (see worker/src/config.ts).
+    "crons": ["0 4 * * *"]
+  },
+  "vars": {
+    // Apex/control-plane host — set this to YOUR domain. Everything else that is
+    // a *.{APEX_HOST} subdomain is treated as a hosted-site request; the admin
+    // lives on admin.{APEX_HOST} (an Access-protected hostname in this zone).
+    "APEX_HOST": "agenthost.page"
+    // Admin auth (ALLOWED_ADMIN_EMAIL, ACCESS_TEAM_DOMAIN, ACCESS_AUD) is NOT set
+    // here — these carry the operator's identity, so they ship as Wrangler secrets
+    // instead of repo config: `wrangler secret put <NAME>` (see DEPLOYING.md §4).
+    // Secrets are read via env.* exactly like vars, survive `wrangler deploy`
+    // untouched, and never live in the repo. While unset, the admin fails closed
+    // (403); the public publish/serve flow works without them.
+    // DEV_MODE is intentionally NOT set here — set it only in .dev.vars locally.
+  }
+  // Cloudflare Access (admin auth) is configured in the dashboard. Custom domains
+  // need no paid Cloudflare for SaaS: the admin records a `_domains` mapping and
+  // adds the domain as a zone + Worker Custom Domain in the dashboard (free TLS +
+  // routing) — see DEPLOYING.md §5. Per-IP rate limiting is in-code above (a
+  // dashboard WAF rule may still be layered on top as defense-in-depth).
+}

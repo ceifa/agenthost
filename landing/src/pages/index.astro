@@ -1,0 +1,401 @@
+---
+// The publish command, as a terminal transcript (prompt colored separately).
+const cmdHtml = `<span class="tp">$</span> tar czf - -C ./dist . | curl -s --data-binary @- \\
+    <span class="tf">-H</span> 'Content-Type: application/gzip' \\
+    '<span class="tu">https://agenthost.page/publish?id=myblog</span>'`;
+
+// The JSON that comes back. shareUrl is the payoff; secrets are masked.
+const respHtml = `<span class="tb">{</span>
+  <span class="tk">"shareUrl"</span>:   <span class="thi">"https://cleverotter4f2-myblog.agenthost.page/?k=•••"</span>  <span class="tc"># ← give a human</span>
+  <span class="tk">"url"</span>:        <span class="tv">"https://cleverotter4f2-myblog.agenthost.page/"</span>
+  <span class="tk">"username"</span>:   <span class="tv">"cleverotter4f2"</span>
+  <span class="tk">"ownerToken"</span>: <span class="tsec">"••••••••••"</span>   <span class="tc"># shown once. save it</span>
+  <span class="tk">"accessKey"</span>:  <span class="tsec">"••••••••••"</span>   <span class="tc"># shown once</span>
+<span class="tb">}</span>`;
+
+// Single-file publish, no tar step.
+const fileHtml = `<span class="tp">$</span> curl -s --data-binary @report.md \\
+    <span class="tf">-H</span> 'Content-Type: text/markdown' \\
+    '<span class="tu">https://agenthost.page/publish?id=report</span>'`;
+
+const redeployHtml = `<span class="tp">$</span> tar czf - -C ./dist . | curl -s --data-binary @- \\
+    <span class="tf">-H</span> 'Content-Type: application/gzip' \\
+    <span class="tf">-H</span> 'Authorization: Bearer <span class="tu">$OWNER_TOKEN</span>' \\
+    '<span class="tu">https://agenthost.page/publish?id=myblog&username=$USER</span>'`;
+
+const caps = [
+  ["Private by default", "Every site sits behind an access key. The share link signs a visitor in once; an injected Share button copies a fresh key-embedded link."],
+  ["Markdown → docs", "Drop a folder of .md and get a GitBook-style site with a left sidebar, SUMMARY.md ordering, GFM, and mermaid diagrams. Mix .html and .md freely."],
+  ["Own subdomain", "Each site is the root of its own subdomain, so <code>/css/app.css</code> and <code>./css/app.css</code> both resolve with nothing to configure."],
+  ["Redeploy, same URL", "Keep the ownerToken and ship again to the exact same address. Strong read-after-write means you can verify the instant it returns."],
+  ["Public toggle & key rotation", "One POST drops the gate to go public. One more rotates the key and invalidates every old link at once."],
+  ["Custom domains", "Bring your own domain on the paid tier. The operator turns it on, with larger caps and no retention window."],
+];
+
+// Source repo, configurable at build time: `PUBLIC_GITHUB_URL=https://github.com/you/agenthost`.
+const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
+// owner/repo slug for the install commands, derived from the URL above.
+const repoSlug = githubUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "") || "<owner>/<repo>";
+// GitHub tree path to the skill folder, for agents that install from source.
+const skillTreeUrl = `${githubUrl}/tree/main/skills/agenthost`;
+
+// CLI installers — commands you run yourself.
+const skillRows = [
+  ["skills.sh", `<code>npx skills add ${repoSlug} --skill agenthost</code>`],
+  ["Hermes", `<code>hermes skills tap add ${repoSlug}</code>`],
+  ["OpenClaw", `<code>openclaw skills install @ceifa/agenthost</code>`],
+];
+
+const limits = [
+  ["Per file", "5 MB", "25 MB"],
+  ["Files / site", "50", "1,000"],
+  ["Size / site", "250 MB", "1 GB"],
+  ["Total / account", "500 MB", "unlimited"],
+  ["Retention", "15 days idle", "forever"],
+  ["Custom username", "no", "yes"],
+  ["Custom domain", "no", "yes"],
+];
+
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agenthost: one command in, a private link out</title>
+    <meta
+      name="description"
+      content="An AI agent pipes a folder to one endpoint and gets back a private, pre-authenticated share link for a human to open. No signup, no API key. Built as an Agent Skill on Cloudflare."
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%80%3C/text%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style is:global>
+      :root {
+        --ink: #0e0f10;
+        --surface: #16171a;
+        --surface2: #0a0b0c;
+        --line: #24262a;
+        --line2: #33363b;
+        --fg: #edeae3;
+        --muted: #8b8d93;
+        --faint: #5b5d63;
+        --amber: #f2b544;
+        --amber-dim: #b98420;
+        --amber-soft: rgba(242, 181, 68, 0.12);
+        --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+        --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: auto; }
+      body {
+        margin: 0;
+        background: var(--ink);
+        color: var(--fg);
+        font: 400 16px/1.65 var(--sans);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      a { color: var(--fg); text-decoration: none; }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 0 28px; }
+
+      /* ---- top bar ---- */
+      .bar {
+        position: sticky; top: 0; z-index: 20;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, var(--ink) 82%, transparent);
+        backdrop-filter: blur(10px);
+      }
+      .bar .wrap { display: flex; align-items: center; gap: 20px; height: 58px; }
+      .brand { font-family: var(--mono); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+      .brand b { color: var(--amber); font-weight: 700; }
+      .nav { margin-left: auto; display: flex; gap: 22px; font-family: var(--mono); font-size: 13px; }
+      .nav a { color: var(--muted); }
+      .nav a:hover { color: var(--fg); }
+      .nav .paid { color: var(--amber); }
+
+      /* ---- section heads ---- */
+      section { padding: 62px 0; border-top: 1px solid var(--line); }
+      h2 {
+        font-family: var(--mono); font-weight: 600; font-size: clamp(21px, 3.2vw, 27px);
+        letter-spacing: -0.02em; margin: 0 0 10px; line-height: 1.15;
+      }
+      .lead { color: var(--muted); max-width: 60ch; margin: 0 0 4px; }
+
+      /* ---- hero ---- */
+      .hero { padding: 74px 0 60px; }
+      h1 {
+        font-family: var(--mono); font-weight: 600;
+        font-size: clamp(30px, 7vw, 72px); line-height: 1.03; letter-spacing: -0.035em;
+        margin: 0 0 20px;
+      }
+      h1 .out { color: var(--amber); }
+      .hero .lead { font-size: 18px; max-width: 54ch; }
+
+      /* ---- terminal ---- */
+      .term {
+        margin-top: 34px;
+        border: 1px solid var(--line2); border-radius: 12px; overflow: hidden;
+        background: var(--surface2);
+        box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(242, 181, 68, 0.04);
+      }
+      .term-bar {
+        display: flex; align-items: center; gap: 8px;
+        padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line);
+        font-family: var(--mono); font-size: 12px; color: var(--faint);
+      }
+      .term-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line2); }
+      .term-bar .host { margin-left: 8px; letter-spacing: 0.02em; }
+      .term-body { position: relative; padding: 20px 22px; overflow-x: auto; }
+      .term-body::before {
+        content: ""; position: absolute; inset: 0; pointer-events: none;
+        background: repeating-linear-gradient(
+          to bottom, transparent 0 3px, rgba(255, 255, 255, 0.014) 3px 4px
+        );
+      }
+      .term pre { margin: 0; position: relative; font-family: var(--mono); font-size: 13px; line-height: 1.85; }
+      .term .divider { height: 1px; background: var(--line); margin: 16px 0; border: 0; }
+      .tp { color: var(--amber); font-weight: 600; }
+      .tf { color: var(--muted); }
+      .tu { color: #cdb98f; }
+      .tb { color: var(--faint); }
+      .tk { color: var(--muted); }
+      .tv { color: var(--fg); }
+      .tn { color: #cdb98f; }
+      .tsec { color: var(--faint); }
+      .tc { color: var(--faint); font-style: italic; }
+      .thi {
+        color: var(--amber); background: var(--amber-soft);
+        padding: 1px 5px; border-radius: 4px; text-shadow: 0 0 18px rgba(242, 181, 68, 0.35);
+      }
+
+      /* ---- single-file note ---- */
+      .altline { margin-top: 16px; font-size: 14px; color: var(--muted); }
+      .altline b { color: var(--fg); font-weight: 500; }
+      .code {
+        border: 1px solid var(--line); border-radius: 10px; background: var(--surface2);
+        padding: 16px 20px; overflow-x: auto; margin-top: 14px;
+      }
+      .code pre { margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1.8; }
+
+      /* ---- lifecycle steps ---- */
+      .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-top: 26px; }
+      .step { background: var(--ink); padding: 22px 22px 26px; }
+      .step .idx { font-family: var(--mono); font-size: 12px; color: var(--amber-dim); letter-spacing: 0.15em; }
+      .step h3 { font-family: var(--mono); font-size: 16px; font-weight: 600; margin: 12px 0 8px; }
+      .step p { margin: 0; font-size: 14px; color: var(--muted); }
+
+      /* ---- capabilities ---- */
+      .caps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 26px; }
+      .cap { border: 1px solid var(--line); border-radius: 12px; padding: 20px 20px 22px; background: var(--surface); }
+      .cap:hover { border-color: var(--line2); }
+      .cap h3 { font-family: var(--mono); font-size: 15.5px; font-weight: 600; margin: 0 0 8px; display: flex; align-items: baseline; gap: 9px; }
+      .cap h3::before { content: "→"; color: var(--amber); font-weight: 600; }
+      .cap p { margin: 0; font-size: 14px; color: var(--muted); }
+      .cap code { font-family: var(--mono); font-size: 12.5px; color: #cdb98f; background: var(--surface2); padding: 1px 5px; border-radius: 4px; }
+
+      /* ---- tables ---- */
+      table { width: 100%; border-collapse: collapse; margin-top: 24px; font-size: 14.5px; }
+      thead th { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); text-align: left; font-weight: 500; padding: 0 0 12px; border-bottom: 1px solid var(--line2); }
+      thead th.paid { color: var(--amber-dim); }
+      tbody td { padding: 13px 0; border-bottom: 1px solid var(--line); color: var(--muted); }
+      tbody td:first-child { color: var(--fg); }
+      tbody td.paid { color: var(--fg); font-family: var(--mono); font-size: 13.5px; }
+      tbody td.free { font-family: var(--mono); font-size: 13.5px; }
+      .skill-tbl code { font-family: var(--mono); font-size: 12.5px; color: #cdb98f; }
+      .skill-tbl td:first-child { font-family: var(--mono); font-weight: 500; padding-right: 24px; }
+      .skill-tbl a { color: var(--amber-dim); border-bottom: 1px solid transparent; }
+      .skill-tbl a:hover { color: var(--amber); border-bottom-color: var(--amber-dim); }
+
+      /* ---- skill hand-off blocks ---- */
+      .handoffs { display: grid; gap: 14px; margin-top: 26px; }
+      .handoff { border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; background: var(--surface); }
+      .handoff .lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--amber-dim); }
+      .handoff p { margin: 10px 0 0; font-size: 14.5px; color: var(--muted); }
+      .handoff .quote { font-family: var(--mono); font-size: 14px; color: var(--fg); line-height: 1.6; }
+      .handoff .quote .u { color: var(--amber); }
+      .handoff .sub { margin-top: 8px; font-size: 13px; }
+      .handoff a { color: var(--amber-dim); border-bottom: 1px solid transparent; }
+      .handoff a:hover { color: var(--amber); border-bottom-color: var(--amber-dim); }
+      .handoff code { font-family: var(--mono); font-size: 12.5px; color: #cdb98f; }
+
+      /* ---- footer ---- */
+      footer { border-top: 1px solid var(--line); padding: 44px 0 60px; }
+      footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 26px; align-items: center; font-family: var(--mono); font-size: 13px; color: var(--faint); }
+      footer a { color: var(--muted); }
+      footer a:hover { color: var(--amber); }
+      footer .sp { margin-left: auto; }
+      footer .gh { display: inline-flex; align-items: center; }
+
+      /* ---- buttons ---- */
+      .cta { display: flex; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
+      .btn { font-family: var(--mono); font-size: 14px; font-weight: 600; padding: 12px 22px; border-radius: 9px; border: 1px solid transparent; display: inline-flex; align-items: center; gap: 9px; }
+      .btn.primary { background: var(--amber); color: #1a1206; }
+      .btn.primary:hover { background: #ffc65a; }
+      .btn.ghost { border-color: var(--line2); color: var(--fg); }
+      .btn.ghost:hover { border-color: var(--amber-dim); color: var(--amber); }
+
+      :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
+
+      @media (max-width: 680px) {
+        .steps { grid-template-columns: 1fr; }
+        .nav .hideph { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <div class="wrap">
+        <span class="brand">🚀 agent<b>host</b></span>
+        <nav class="nav">
+          <a href="#lifecycle" class="hideph">how it works</a>
+          <a href="#skill">skill</a>
+          <a href="/llms.txt">llms.txt</a>
+        </nav>
+      </div>
+    </div>
+
+    <header class="hero">
+      <div class="wrap">
+        <h1>One command in.<br />A private link <span class="out">out.</span></h1>
+        <p class="lead">
+          Your agent pipes a folder to one endpoint and gets back a private, pre-authenticated
+          link to hand a human. It runs on plain <code>curl</code>, with no signup and no API key.
+        </p>
+
+        <div class="term">
+          <div class="term-bar">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="host">agent@agenthost · publish</span>
+          </div>
+          <div class="term-body">
+            <pre><code set:html={cmdHtml} /></pre>
+            <hr class="divider" />
+            <pre><code set:html={respHtml} /></pre>
+          </div>
+        </div>
+
+        <p class="altline">
+          <b>Just one file?</b> Skip the tar and pipe a lone <code style="font-family:var(--mono);font-size:12.5px;color:#cdb98f">.md</code>
+          or <code style="font-family:var(--mono);font-size:12.5px;color:#cdb98f">.html</code> straight in with its Content-Type:
+        </p>
+        <div class="code"><pre><code set:html={fileHtml} /></pre></div>
+
+        <div class="cta">
+          <a class="btn primary" href="#lifecycle">See the flow →</a>
+          <a class="btn ghost" href="#skill">Install as a skill</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section id="lifecycle">
+        <div class="wrap">
+          <h2>Publish, share, redeploy</h2>
+          <p class="lead">Three moves. The first mints an anonymous account on the spot; the last needs only the token you kept.</p>
+          <div class="steps">
+            <div class="step">
+              <span class="idx">01 · PUBLISH</span>
+              <h3>Pipe the archive</h3>
+              <p>gzip a tar of your build straight into <code>/publish</code>. Caps are enforced mid-stream, so an oversize upload fails fast.</p>
+            </div>
+            <div class="step">
+              <span class="idx">02 · SHARE</span>
+              <h3>Hand over shareUrl</h3>
+              <p>It's private and pre-authed. Opening it signs the human in via a cookie, while the bare <code>url</code> stays gated.</p>
+            </div>
+            <div class="step">
+              <span class="idx">03 · REDEPLOY</span>
+              <h3>Same URL, again</h3>
+              <p>Send the <code>ownerToken</code> and username to overwrite in place. Existing links and keys keep working.</p>
+            </div>
+          </div>
+          <div class="code" style="margin-top:22px"><pre><code set:html={redeployHtml} /></pre></div>
+        </div>
+      </section>
+
+      <section id="caps">
+        <div class="wrap">
+          <h2>More than a bucket with a URL</h2>
+          <div class="caps">
+            {caps.map(([t, d]) => (
+              <div class="cap">
+                <h3>{t}</h3>
+                <p set:html={d}></p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="skill">
+        <div class="wrap">
+          <h2>It ships as an Agent Skill</h2>
+          <p class="lead">
+            agenthost is a <code>SKILL.md</code>. Its description tells the model to reach for it
+            the moment built output needs to leave the machine, even without the word "publish."
+            Install it once and the publish contract is always in reach.
+          </p>
+          <table class="skill-tbl">
+            <thead>
+              <tr><th>CLI</th><th>Run</th></tr>
+            </thead>
+            <tbody>
+              {skillRows.map(([r, c]) => (
+                <tr><td>{r}</td><td><span set:html={c}></span></td></tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div class="handoffs">
+            <div class="handoff">
+              <span class="lbl">No CLI? Paste this to your agent</span>
+              <p class="quote">“Install the agenthost skill from <span class="u">https://agenthost.page</span>”</p>
+              <p class="sub">Works with Claude Code, Codex, and any agent that installs skills from a URL.</p>
+            </div>
+            <div class="handoff">
+              <span class="lbl">Reading this page as an agent?</span>
+              <p>Fetch <a href={skillTreeUrl}>{repoSlug}/skills/agenthost</a> and load its <code>SKILL.md</code> directly.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="limits">
+        <div class="wrap">
+          <h2>Free forever</h2>
+          <table>
+            <thead>
+              <tr><th>Limit</th><th class="free">Free</th><th class="paid">Paid</th></tr>
+            </thead>
+            <tbody>
+              {limits.map(([l, f, p]) => (
+                <tr><td>{l}</td><td class="free">{f}</td><td class="paid">{p}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          <p class="lead" style="margin-top:22px;font-size:14px;">
+            Every hosted site sends <code>X-Robots-Tag: noindex</code>.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>🚀 agenthost</span>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="#skill">skill</a>
+        <a href="#lifecycle">docs</a>
+        <a class="sp gh" href={githubUrl} target="_blank" rel="noopener" aria-label="GitHub">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        </a>
+      </div>
+    </footer>
+  </body>
+</html>

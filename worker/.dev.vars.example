@@ -1,0 +1,8 @@
+# Local development vars for `wrangler dev`. Copy to `.dev.vars` (git-ignored).
+# DEV_MODE=1 bypasses Cloudflare Access on the admin and enables the ?__host=
+# routing override so you can reach any host from localhost. NEVER set this in
+# production (it is intentionally absent from wrangler.jsonc).
+DEV_MODE=1
+
+# Custom domains need no vars/secrets: the admin records a `_domains` mapping and
+# completes routing + TLS in the Cloudflare dashboard (see DEPLOYING.md §5).
