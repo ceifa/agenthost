@@ -11,15 +11,13 @@ const mb = (bytes: number) => `${Math.round(bytes / MB)} MB`;
 export const llmsTxt = (apexHost: string): string => `# agenthost — publish a static site or docs, get a private share link. No signup.
 
 ## Publish (one command, zero install)
-# A single .md or .html — pipe it straight in with its Content-Type (md renders,
-# html is served as-is; the file lands at the site root /):
+# A single .md or .html — pipe it straight in (md renders, html is served as-is;
+# the file lands at the site root /):
 curl -s --data-binary @report.md \\
-  -H 'Content-Type: text/markdown' \\
   https://${apexHost}/publish?id=report
 
 # A whole folder — gzip a tar of it:
 tar czf - -C ./dist . | curl -s --data-binary @- \\
-  -H 'Content-Type: application/gzip' \\
   https://${apexHost}/publish?id=myblog
 
 ## Response (JSON)
@@ -33,7 +31,6 @@ tar czf - -C ./dist . | curl -s --data-binary @- \\
 
 ## Redeploy the SAME url (needs ownerToken)
 tar czf - -C ./dist . | curl --data-binary @- \\
-  -H 'Content-Type: application/gzip' \\
   -H 'Authorization: Bearer <ownerToken>' \\
   'https://${apexHost}/publish?id=myblog&username=<username>'
 
@@ -46,6 +43,8 @@ both absolute and relative asset paths work:
 ## Notes
 - Static files OR markdown. /index.html is the default doc; a folder of .md renders as a
   GitBook-style docs site (sidebar + README.md as home; optional SUMMARY.md for ordering).
+- No Content-Type needed: a tar body is a folder, anything else is one document. To publish a
+  single file of any other type, add ?file=<name>.
 - Sites are PRIVATE by default. Share the shareUrl; visitors stay logged in via a cookie.
   Every page has a "Share" button that copies a key-embedded link.
 - Limits (free): ${free.filesPerSite} files, ${mb(free.perFile)}/file, ${mb(free.perSite)}/site, ${mb(free.perUser)}/account. Hosted sites are noindex.

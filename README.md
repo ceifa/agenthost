@@ -8,13 +8,12 @@ Worker and one R2 bucket.
 ## Publish
 
 ```bash
-# a single .md or .html — just pipe it in
-curl -s --data-binary @report.md \
-  -H 'Content-Type: text/markdown' 'https://agenthost.page/publish?id=report'
+# a single .md or .html — just pipe it in, no headers
+curl -s --data-binary @report.md 'https://agenthost.page/publish?id=report'
 
 # or a whole folder — gzip it
 tar czf - -C ./dist . | curl -s --data-binary @- \
-  -H 'Content-Type: application/gzip' 'https://agenthost.page/publish?id=myblog'
+  'https://agenthost.page/publish?id=myblog'
 ```
 
 You get back a private `shareUrl` (hand it to a human — it logs them in on first

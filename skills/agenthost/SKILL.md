@@ -18,11 +18,10 @@ Publish static files or Markdown, get back a **private, pre-authenticated share 
 
 ## Publish
 
-**Single file** — pipe a `.md` or `.html` in with its `Content-Type`. Markdown renders, HTML is served as-is; the file lands at `/`.
+**Single file** — pipe a `.md` or `.html` straight in. Markdown renders, HTML is served as-is; the file lands at `/`.
 
 ```bash
 curl -s --data-binary @report.md \
-  -H 'Content-Type: text/markdown' \
   'https://agenthost.page/publish?id=report'
 ```
 
@@ -30,9 +29,10 @@ curl -s --data-binary @report.md \
 
 ```bash
 tar czf - -C ./dist . | curl -s --data-binary @- \
-  -H 'Content-Type: application/gzip' \
   'https://agenthost.page/publish?id=myblog'
 ```
+
+No `Content-Type` needed either way. For a single file of any other type, add `?file=<name>`.
 
 The JSON response has two fields that matter:
 
@@ -48,7 +48,6 @@ Reuse the `ownerToken` and `username` from the first publish:
 
 ```bash
 tar czf - -C ./dist . | curl -s --data-binary @- \
-  -H 'Content-Type: application/gzip' \
   -H 'Authorization: Bearer <ownerToken>' \
   'https://agenthost.page/publish?id=myblog&username=<username>'
 ```

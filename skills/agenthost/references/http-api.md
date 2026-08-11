@@ -13,7 +13,7 @@ Authenticated requests also need the account `username`, as `?username=<name>` o
 
 ## POST /publish
 
-Body is either a **gzipped tar** of a directory or a **single raw file**, selected by `Content-Type`.
+Body is either a **gzipped tar** of a directory or a **single raw file**. No `Content-Type` header required.
 
 | Param | Where | Notes |
 |---|---|---|
@@ -22,14 +22,13 @@ Body is either a **gzipped tar** of a directory or a **single raw file**, select
 | `file` | `?file=` | Single-file mode: names the stored file (sanitized). Optional. |
 | `Authorization: Bearer <ownerToken>` | header | Omit for a first/anonymous publish (mints an account); include to redeploy. |
 
-**Body format by `Content-Type`:**
+**Body:**
 
-- `application/gzip` (or any unrecognized/binary type) → **gzipped tar** of the site directory. Default.
-- `text/html` / `application/xhtml+xml` → **single HTML file**, stored as `index.html` (serves at `/`).
-- `text/markdown` / `text/x-markdown` → **single Markdown file**, stored as `README.md` (rendered at `/`).
-- Any request with `?file=<name>` → **single file** under that name, regardless of `Content-Type`.
+- A tar (gzipped or not) → the site directory.
+- Anything else → one document: Markdown as `README.md`, HTML as `index.html`. Both serve at `/`.
+- Any other file type → send `?file=<name>`; the extension sets the served `Content-Type`.
 
-Single-file publish replaces the whole site with that one file; use a tar body for multiple files. Curl examples for all three modes are in [SKILL.md](../SKILL.md).
+Single-file publish replaces the whole site with that one file. Curl examples are in [SKILL.md](../SKILL.md).
 
 ### Response (200)
 

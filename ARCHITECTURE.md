@@ -170,12 +170,20 @@ because usernames are auto-generated with entropy.
 
 ```bash
 tar czf - -C ./dist . | curl -s --data-binary @- \
-  -H 'Content-Type: application/gzip' \
   https://agenthost.page/publish
 ```
 
 **Server steps (`POST agenthost.page/publish`):**
 
+0. **Detect the body** (`src/sniff.ts`). Peek the first 1 KB *without consuming it* (the
+   peeked bytes are replayed ahead of the rest, so the stream stays intact) and branch on
+   what's actually there: gzip (`1f 8b`) or tar (`ustar`) magic → archive; otherwise a
+   single document, front matter → markdown and a doctype/markup opener → html. The
+   `Content-Type` header is only a tiebreaker — clients send nothing, `octet-stream`, or
+   curl's `x-www-form-urlencoded` far more often than the truth, and trusting it used to
+   push a perfectly good `.md` down the untar path to die as "bad archive". An explicit
+   `?file=<name>` still wins outright, and non-archive *binary* is rejected up front rather
+   than published as a document.
 1. **Resolve account.** No `Authorization` → generate a memorable `username`; create
    `_users/{username}` and mint an `ownerToken` (random 32 bytes; store only its
    `sha256`). With `Authorization: Bearer <ownerToken>` → verify against
@@ -216,8 +224,9 @@ tar czf - -C ./dist . | curl -s --data-binary @- \
    `shareUrl` is what the agent hands to a human — it logs them in on first visit. `url` is
    the bare (gated) URL. On redeploys, `accessKey`/`ownerToken` aren't re-shown.
 
-**One publish path only.** Tarball-in-one-POST is THE contract — no per-file PUT path, no
-file-vs-dir auto-detect. A single HTML file is just a one-entry tar.
+**One publish path only.** Everything-in-one-POST is THE contract — no per-file PUT path, no
+multi-request session. The body is either a tar or one document, and step 0 decides which
+from the bytes; the caller never has to declare it.
 
 ---
 
@@ -466,6 +475,7 @@ agenthost/
 │  ├─ src/admin.ts              # admin JSON routes (Hono sub-router, behind Cloudflare Access)
 │  ├─ src/ids.ts                # username gen, reserved-word denylist, content-type guess
 │  ├─ src/tar.ts                # streaming gzip+tar reader (no full buffering)
+│  ├─ src/sniff.ts              # peek the first 1 KB → archive vs md vs html (Content-Type optional)
 │  └─ wrangler.jsonc            # r2=SITES; assets binding + run_worker_first; routes; cron
 ├─ landing/                     # (1) LANDING PAGE for agents — Astro, static build → landing/dist
 │  └─ src/pages/index.astro     #   the one-liner + curl contract

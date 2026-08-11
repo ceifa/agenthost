@@ -18,6 +18,7 @@ import {
 import { verifyOwner } from "./auth";
 import { parseTar, TarLimitError } from "./tar";
 import { gunzipStream } from "./gunzip";
+import { peek, isGzip, isTar, isZip, sniffDocKind } from "./sniff";
 import {
   putUser,
   getMeta,
@@ -77,28 +78,93 @@ function safePath(raw: string): string | null {
   return p;
 }
 
+const mime = (contentType: string): string => contentType.split(";")[0]!.trim().toLowerCase();
+
 // Classify a Content-Type as a single raw document worth serving at `/`, or null
-// for archive/binary types (gzip, tar, octet-stream) that take the tar path.
+// for anything else (archives, binaries, and the useless defaults clients send).
 function singleFileKind(contentType: string): "html" | "md" | null {
-  const ct = contentType.split(";")[0]!.trim().toLowerCase();
+  const ct = mime(contentType);
   if (ct === "text/html" || ct === "application/xhtml+xml") return "html";
   if (ct === "text/markdown" || ct === "text/x-markdown") return "md";
   return null;
 }
 
-// A single raw document (a .md or .html piped straight in) instead of the
-// default gzipped tar. Triggered by an explicit `?file=` or a lone html/markdown
-// Content-Type.
-function isSingleFile(contentType: string, url: URL): boolean {
-  return url.searchParams.has("file") || singleFileKind(contentType) !== null;
+// Types that *claim* to be an archive. If the bytes disagree we still take the
+// tar path, so the error names the real problem instead of publishing garbage as
+// a document. `application/octet-stream` is deliberately absent — it's the
+// everything-default, so its body gets sniffed like an unlabelled one.
+function claimsArchive(contentType: string): boolean {
+  switch (mime(contentType)) {
+    case "application/gzip":
+    case "application/x-gzip":
+    case "application/tar":
+    case "application/x-tar":
+    case "application/x-gtar":
+    case "application/x-compressed-tar":
+    case "application/x-tgz":
+      return true;
+    default:
+      return false;
+  }
 }
 
-// Filename the single document is stored under, so it serves at `/`: an explicit
-// `?file=` wins (sanitized), else html → index.html and markdown → README.md.
-function singleFileName(contentType: string, url: URL): string | null {
+// A filename the body carries with it, the standard way. Weaker than `?file=`:
+// an uploader may attach it to a tarball, so it only names single documents.
+function dispositionFileName(req: Request): string | null {
+  const m = req.headers.get("content-disposition")?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]!.trim());
+  } catch {
+    return m[1]!.trim(); // stray % in the name — take it literally
+  }
+}
+
+// How to read the body. Byte magic outranks the Content-Type header: clients send
+// no type, `application/octet-stream`, or curl's `application/x-www-form-urlencoded`
+// far more often than the truth, but a gzip header is a gzip header.
+type Mode =
+  | { kind: "file"; name: string }
+  | { kind: "archive"; gzipped: boolean }
+  | { kind: "invalid"; message: string };
+
+const named = (raw: string): Mode => {
+  const name = safePath(raw);
+  return name ? { kind: "file", name } : { kind: "invalid", message: `invalid file name: ${raw}` };
+};
+
+function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
+  // `?file=` is the caller being explicit — it outranks everything, including the
+  // bytes, so a tarball can still be published as one downloadable file.
   const explicit = url.searchParams.get("file");
-  if (explicit !== null) return safePath(explicit);
-  return singleFileKind(contentType) === "html" ? "index.html" : "README.md";
+  if (explicit !== null) return named(explicit);
+
+  if (isGzip(head)) return { kind: "archive", gzipped: true };
+  if (isTar(head)) return { kind: "archive", gzipped: false };
+
+  const contentType = req.headers.get("content-type") ?? "";
+  if (claimsArchive(contentType)) return { kind: "archive", gzipped: true };
+
+  if (isZip(head)) {
+    return { kind: "invalid", message: "zip is not supported — send a gzipped tar (tar czf - -C ./dist .)" };
+  }
+
+  // Not an archive, so it's one document: prefer the name it came with, since the
+  // extension is a better signal than anything we can infer.
+  const filename = dispositionFileName(req);
+  if (filename !== null) return named(filename);
+
+  // Header next (it's an explicit claim), then the bytes themselves: front
+  // matter → markdown, a doctype/html tag → html, prose → markdown.
+  const kind = singleFileKind(contentType) ?? sniffDocKind(head);
+  if (kind === null) {
+    return {
+      kind: "invalid",
+      message: "unrecognized body — send a gzipped tar, a .md/.html document, or name it with ?file=<name>",
+    };
+  }
+  // Named so it serves at `/`: html as-is, markdown as the docs home.
+  return { kind: "file", name: kind === "html" ? "index.html" : "README.md" };
 }
 
 // Reads a request body fully into memory, aborting past `max` bytes. Only the
@@ -181,30 +247,34 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   let fileCount = 0;
   let perr: PublishError | null = null;
 
-  const contentType = req.headers.get("content-type") ?? "";
+  // Peek before branching: the payload's own bytes decide archive-vs-document,
+  // with the Content-Type header as a fallback rather than the source of truth.
+  const { head, stream: body } = await peek(req.body!);
+  const mode = detectMode(req, url, head);
+  if (mode.kind === "invalid") return json({ error: mode.message }, 400);
 
   try {
-    if (isSingleFile(contentType, url)) {
+    if (mode.kind === "file") {
       // Single raw document: no archive to stream, so read the body directly and
       // write it under a name that serves at `/`.
-      const name = singleFileName(contentType, url);
-      if (!name) perr = fail(400, "invalid ?file name");
-      else if (RESERVED_FILE(name)) perr = fail(400, `reserved filename: ${name}`);
+      const name = mode.name;
+      if (RESERVED_FILE(name)) perr = fail(400, `reserved filename: ${name}`);
       else {
-        const body = await readBounded(req.body!, limits.perFile);
-        if (body.byteLength === 0) perr = fail(400, "empty file");
-        else if (body.byteLength > totalBudget)
+        const bytes = await readBounded(body, limits.perFile);
+        if (bytes.byteLength === 0) perr = fail(400, "empty file");
+        else if (bytes.byteLength > totalBudget)
           perr = fail(413, `site exceeds size budget of ${totalBudget} bytes (plan ${plan})`);
         else {
-          totalBytes = body.byteLength;
+          totalBytes = bytes.byteLength;
           fileCount = 1;
           const key = siteFileKey(username, siteId, name);
           writtenKeys.add(key);
-          await env.SITES.put(key, body, { httpMetadata: { contentType: contentTypeFor(name) } });
+          await env.SITES.put(key, bytes, { httpMetadata: { contentType: contentTypeFor(name) } });
         }
       }
     } else {
-      const stream = gunzipStream(req.body!);
+      // Bare tars are accepted too — only gzipped bodies go through the inflater.
+      const stream = mode.gzipped ? gunzipStream(body) : body;
       // Hard cap at the per-file limit so an inflated header size can't force the
       // parser to buffer a giant entry before publish's own check runs.
       for await (const entry of parseTar(stream, { maxEntrySize: limits.perFile })) {
