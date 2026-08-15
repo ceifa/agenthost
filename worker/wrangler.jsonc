@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "agenthost",
+  "account_id": "bbf56797ad865faf9657cf6163324b0f",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -39,7 +40,7 @@
     "APEX_HOST": "agenthost.page",
     // Public identifiers used to construct presigned R2 URLs. The matching S3
     // access key and secret are Wrangler secrets (see DEPLOYING.md).
-    "R2_ACCOUNT_ID": "412280fd6c5cfa4c34989ab598b5668f",
+    "R2_ACCOUNT_ID": "bbf56797ad865faf9657cf6163324b0f",
     "R2_BUCKET_NAME": "agenthost-sites"
     // Admin auth (ALLOWED_ADMIN_EMAIL, ACCESS_TEAM_DOMAIN, ACCESS_AUD) and R2
     // signing credentials (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) are NOT set

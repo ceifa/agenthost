@@ -19,6 +19,7 @@ Log in once: `pnpm -C worker exec wrangler login`.
 
 Edit `worker/wrangler.jsonc`:
 
+- `account_id` → your Cloudflare account ID (`wrangler whoami`).
 - `vars.APEX_HOST` → your apex, e.g. `"example.com"`.
 - `routes` → point both patterns at your zone:
   ```jsonc
