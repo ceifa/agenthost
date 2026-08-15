@@ -1,6 +1,7 @@
 // Tunable limits & quotas. All sizes in bytes.
 
 export const MB = 1024 * 1024;
+export const GB = 1024 * MB;
 
 export interface PlanLimits {
   perFile: number;
@@ -25,6 +26,14 @@ export const LIMITS: Record<"free" | "paid", PlanLimits> = {
     perUser: Number.MAX_SAFE_INTEGER,
     retentionDays: null,
   },
+};
+
+// Direct assets have a separate budget from static sites. Free accounts get a
+// useful but abuse-resistant allowance; paid accounts can use R2's maximum
+// single-PUT size. The signed Content-Length prevents uploading past perAsset.
+export const ASSET_LIMITS: Record<"free" | "paid", { perAsset: number; perUser: number }> = {
+  free: { perAsset: 100 * MB, perUser: 500 * MB },
+  paid: { perAsset: 5 * GB, perUser: Number.MAX_SAFE_INTEGER },
 };
 
 // In-flight R2 puts during untar. Each holds its entry buffer alive, so

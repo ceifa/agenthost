@@ -24,6 +24,7 @@ import {
   getMeta,
   putMeta,
   bumpGen,
+  assetUsage,
   userUsage,
   listAll,
   siteFileKey,
@@ -238,7 +239,12 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   const limits = LIMITS[plan];
   const [otherUsage, existingMeta] = isNewUser
     ? ([0, null] as const)
-    : await Promise.all([userUsage(env.SITES, username, siteId), getMeta(env.SITES, username, siteId)]);
+    : await Promise.all([
+        Promise.all([userUsage(env.SITES, username, siteId), assetUsage(env.SITES, username)]).then(
+          ([siteBytes, assetBytes]) => siteBytes + assetBytes,
+        ),
+        getMeta(env.SITES, username, siteId),
+      ]);
   const totalBudget = Math.min(limits.perSite, Math.max(0, limits.perUser - otherUsage));
 
   const gate = new PutGate(PUT_CONCURRENCY);

@@ -4,6 +4,7 @@
   let users = $state([]);
   let selected = $state(null);
   let sites = $state([]);
+  let assets = $state([]);
   let loading = $state(true);
   let error = $state("");
   let toast = $state("");
@@ -36,9 +37,15 @@
   async function selectUser(u) {
     selected = u;
     sites = [];
+    assets = [];
     try {
-      const d = await api(`/sites?username=${encodeURIComponent(u.username)}`);
-      sites = d.sites;
+      const username = encodeURIComponent(u.username);
+      const [siteData, assetData] = await Promise.all([
+        api(`/sites?username=${username}`),
+        api(`/assets?username=${username}`),
+      ]);
+      sites = siteData.sites;
+      assets = assetData.assets;
     } catch (e) {
       error = e.message;
     }
@@ -79,6 +86,17 @@
     }
   }
 
+  async function removeAsset(asset) {
+    if (!confirm(`Delete ${asset.name}? This cannot be undone.`)) return;
+    try {
+      await api(`/asset?username=${encodeURIComponent(selected.username)}&id=${encodeURIComponent(asset.id)}`, { method: "DELETE" });
+      assets = assets.filter((a) => a.id !== asset.id);
+      flash(`${asset.name} deleted`);
+    } catch (e) {
+      error = e.message;
+    }
+  }
+
   async function attachDomain(s) {
     const host = prompt(`Custom domain for ${selected.username}/${s.siteId}:`);
     if (!host) return;
@@ -94,7 +112,7 @@
     }
   }
 
-  const fmtBytes = (b) => (b < 1024 ? b + " B" : b < 1048576 ? (b / 1024).toFixed(1) + " KB" : (b / 1048576).toFixed(1) + " MB");
+  const fmtBytes = (b) => (b < 1024 ? b + " B" : b < 1048576 ? (b / 1024).toFixed(1) + " KB" : b < 1073741824 ? (b / 1048576).toFixed(1) + " MB" : (b / 1073741824).toFixed(2) + " GB");
   const fmtDate = (t) => new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 
   loadUsers();
@@ -169,6 +187,26 @@
                   {/if}
                 </td>
                 <td><button class="ghost sm" onclick={() => attachDomain(s)}>+ domain</button></td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+
+      <h3>Assets <span class="count">{assets.length}</span></h3>
+      {#if assets.length === 0}
+        <p class="muted">No assets.</p>
+      {:else}
+        <table>
+          <thead><tr><th>file</th><th>size</th><th>type</th><th>status</th><th></th></tr></thead>
+          <tbody>
+            {#each assets as asset (asset.id)}
+              <tr>
+                <td><b>{asset.name}</b></td>
+                <td>{fmtBytes(asset.bytes)}</td>
+                <td>{asset.contentType}</td>
+                <td>{asset.status}</td>
+                <td><button class="danger sm" onclick={() => removeAsset(asset)}>delete</button></td>
               </tr>
             {/each}
           </tbody>

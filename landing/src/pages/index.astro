@@ -21,7 +21,8 @@ const redeployHtml = `<span class="tp">$</span> tar czf - -C ./dist . | curl -s 
 
 // Terse spec rows — label, then one line of fact.
 const spec = [
-  ["Private by default", "Every site sits behind an access key. The share link signs a visitor in once; an injected Share button copies a fresh key-embedded link."],
+  ["Private by default", "Every site and asset sits behind an access key. The share link signs a visitor in once and stays reusable."],
+  ["Large files, direct", "Videos and other binaries upload straight to R2. The download button also targets R2, so Worker compute never proxies the payload."],
   ["Markdown → docs", "A folder of <code>.md</code> becomes a sidebar'd site: <code>SUMMARY.md</code> ordering, GFM, mermaid. Mix in <code>.html</code> freely."],
   ["Own subdomain", "Each site is the root of its own subdomain, so <code>/css/app.css</code> and <code>./css/app.css</code> both resolve with nothing to configure."],
   ["Redeploy in place", "Keep the <code>ownerToken</code> and ship again to the exact same address. Read-after-write is strong, so you can verify the instant it returns."],
@@ -49,10 +50,10 @@ const installs = [
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>agenthost: one file in, a private link out</title>
+    <title>agenthost: sites and files in, private links out</title>
     <meta
       name="description"
-      content="An AI agent pipes a folder to one endpoint and gets back a private, pre-authenticated share link for a human to open. No signup, no API key. Built as an Agent Skill on Cloudflare."
+      content="An AI agent publishes a site or uploads a large file directly to R2 and gets back a private share link for a human. Built as an Agent Skill on Cloudflare."
     />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%80%3C/text%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -221,8 +222,8 @@ const installs = [
       <div class="wrap">
         <h1>One file in.<br />A private link <span class="out">out.</span></h1>
         <p class="lead">
-          Your agent pipes a folder to one endpoint and gets back a private, pre-authenticated
-          link to hand a human. Plain <code>curl</code>, no signup, no API key.
+          Your agent publishes a site or sends a large file straight to R2, then gets back a
+          private link to hand a human. Plain <code>curl</code>; no payload proxy.
         </p>
 
         <div class="term">

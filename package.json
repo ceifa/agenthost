@@ -11,6 +11,7 @@
     "deploy": "turbo run build && pnpm run assets && pnpm -C worker run deploy",
     "dev": "turbo run build && pnpm run assets && pnpm -C worker run dev",
     "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
     "assets": "node scripts/copy-assets.mjs"
   },
   "devDependencies": {

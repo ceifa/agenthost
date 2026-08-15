@@ -3,7 +3,7 @@
 
 import type { Env } from "./env";
 import { LIMITS } from "./config";
-import { listUsers, listSiteMetas, deleteSite } from "./storage";
+import { assetMetaKey, listAssetMetas, listUsers, listSiteMetas, deleteSite } from "./storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -15,7 +15,7 @@ export interface SweepResult {
 export async function runRetentionSweep(env: Env, now: number): Promise<SweepResult> {
   const planOf = new Map((await listUsers(env.SITES)).map(({ username, user }) => [username, user.plan]));
 
-  const metas = await listSiteMetas(env.SITES);
+  const [metas, assets] = await Promise.all([listSiteMetas(env.SITES), listAssetMetas(env.SITES)]);
   const deleted: string[] = [];
 
   for (const { username, siteId, meta } of metas) {
@@ -27,5 +27,20 @@ export async function runRetentionSweep(env: Env, now: number): Promise<SweepRes
     }
   }
 
-  return { checked: metas.length, deleted };
+  for (const asset of assets) {
+    const days = LIMITS[planOf.get(asset.username) ?? "free"].retentionDays;
+    // Failed/abandoned direct uploads should not reserve quota until the normal
+    // retention window; one day is ample for a 5 GB signed PUT.
+    const expiredPending = asset.status === "pending" && now - asset.createdAt > DAY_MS;
+    const expiredReady = days !== null && now - asset.lastDeployAt > days * DAY_MS;
+    if (expiredPending || expiredReady) {
+      await Promise.all([
+        env.SITES.delete(asset.objectKey),
+        env.SITES.delete(assetMetaKey(asset.username, asset.id)),
+      ]);
+      deleted.push(`asset:${asset.username}/${asset.id}`);
+    }
+  }
+
+  return { checked: metas.length + assets.length, deleted };
 }

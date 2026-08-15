@@ -58,6 +58,17 @@ pnpm -C worker exec wrangler r2 bucket create agenthost-sites
 
 Use the same name you put in `wrangler.jsonc`.
 
+### Direct-asset S3 credentials
+
+Direct uploads/downloads need object-scoped presigned URLs. In **R2 → Manage R2 API Tokens**, create a token with **Object Read & Write** restricted to this bucket. Put its S3 credentials into Worker secrets:
+
+```bash
+pnpm -C worker exec wrangler secret put R2_ACCESS_KEY_ID
+pnpm -C worker exec wrangler secret put R2_SECRET_ACCESS_KEY
+```
+
+Set `vars.R2_ACCOUNT_ID` and `vars.R2_BUCKET_NAME` in `wrangler.jsonc`. Account ID and bucket name are public identifiers; only the access key and secret are sensitive. The Worker uses them to sign URLs but never proxies asset bodies. No public-bucket setting is required.
+
 ## 4. Admin auth (Cloudflare Access)
 
 The admin console lives on `admin.example.com` and is protected by Cloudflare
@@ -156,6 +167,10 @@ publish → serve loop runs offline against a fixture directory.
 | Name | Where | Required | Purpose |
 |------|-------|----------|---------|
 | `APEX_HOST` | `wrangler.jsonc` var | yes | Your apex/control-plane domain. |
+| `R2_ACCOUNT_ID` | `wrangler.jsonc` var | assets | Public account identifier used in the R2 S3 endpoint. |
+| `R2_BUCKET_NAME` | `wrangler.jsonc` var | assets | Bucket receiving direct asset uploads. |
+| `R2_ACCESS_KEY_ID` | secret | assets | Bucket-scoped S3 access key used only to sign URLs. |
+| `R2_SECRET_ACCESS_KEY` | secret | assets | Bucket-scoped S3 secret used only to sign URLs. |
 | `ALLOWED_ADMIN_EMAIL` | secret (`wrangler secret put`) | admin only | Email allowed into the admin. |
 | `ACCESS_TEAM_DOMAIN` | secret (`wrangler secret put`) | admin only | Zero Trust team name. |
 | `ACCESS_AUD` | secret (`wrangler secret put`) | admin only | Access Application AUD tag. |

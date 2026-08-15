@@ -25,6 +25,21 @@ export interface DomainRecord {
   siteId: string;
 }
 
+export interface AssetMeta {
+  id: string;
+  username: string;
+  name: string;
+  contentType: string;
+  bytes: number;
+  objectKey: string;
+  keyHash: string;
+  public: boolean;
+  status: "pending" | "ready";
+  createdAt: number;
+  lastDeployAt: number;
+  readyAt?: number;
+}
+
 export const siteFileKey = (u: string, s: string, path: string) => `sites/${u}/${s}/${path}`;
 export const sitePrefix = (u: string, s: string) => `sites/${u}/${s}/`;
 export const userSitesPrefix = (u: string) => `sites/${u}/`;
@@ -32,6 +47,9 @@ export const genKey = (u: string, s: string) => `sites/${u}/${s}/_gen`;
 export const metaKey = (u: string, s: string) => `sites/${u}/${s}/_meta`;
 export const userKey = (u: string) => `_users/${u}`;
 export const domainKey = (host: string) => `_domains/${host}`;
+export const assetObjectKey = (u: string, id: string) => `assets/${u}/${id}/blob`;
+export const assetMetaKey = (u: string, id: string) => `_assets/${u}/${id}/_meta`;
+export const userAssetsPrefix = (u: string) => `_assets/${u}/`;
 
 // Control objects, never part of the served site.
 export const RESERVED_FILE = (path: string) => path === "_gen" || path === "_meta";
@@ -71,6 +89,8 @@ export const getUser = (b: R2Bucket, u: string) => getJson<UserRecord>(b, userKe
 export const putUser = (b: R2Bucket, u: string, rec: UserRecord) => putJson(b, userKey(u), rec);
 export const getDomain = (b: R2Bucket, host: string) => getJson<DomainRecord>(b, domainKey(host));
 export const putDomain = (b: R2Bucket, host: string, rec: DomainRecord) => putJson(b, domainKey(host), rec);
+export const getAssetMeta = (b: R2Bucket, u: string, id: string) => getJson<AssetMeta>(b, assetMetaKey(u, id));
+export const putAssetMeta = (b: R2Bucket, u: string, id: string, meta: AssetMeta) => putJson(b, assetMetaKey(u, id), meta);
 
 // Follows pagination cursors to return every key under a prefix.
 export async function listAll(b: R2Bucket, prefix: string, opts?: R2ListOptions): Promise<R2Object[]> {
@@ -148,4 +168,17 @@ export async function userUsage(b: R2Bucket, username: string, exceptSite?: stri
 export async function deleteSite(b: R2Bucket, username: string, siteId: string): Promise<void> {
   const objs = await listAll(b, sitePrefix(username, siteId));
   await deleteKeys(b, objs.map((o) => o.key));
+}
+
+export async function listAssetMetas(b: R2Bucket, username?: string): Promise<AssetMeta[]> {
+  const objs = await listAll(b, username ? userAssetsPrefix(username) : "_assets/");
+  const metas = await Promise.all(
+    objs.filter((o) => o.key.endsWith("/_meta")).map((o) => getJson<AssetMeta>(b, o.key)),
+  );
+  return metas.filter((m): m is AssetMeta => m !== null);
+}
+
+export async function assetUsage(b: R2Bucket, username: string): Promise<number> {
+  const metas = await listAssetMetas(b, username);
+  return metas.reduce((total, meta) => total + (meta.bytes ?? 0), 0);
 }

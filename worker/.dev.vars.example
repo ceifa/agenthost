@@ -4,5 +4,12 @@
 # production (it is intentionally absent from wrangler.jsonc).
 DEV_MODE=1
 
+# Required only for exercising direct asset transfers against a real R2 bucket.
+# Use bucket-scoped Object Read & Write credentials; never commit .dev.vars.
+R2_ACCOUNT_ID=
+R2_BUCKET_NAME=agenthost-sites
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+
 # Custom domains need no vars/secrets: the admin records a `_domains` mapping and
 # completes routing + TLS in the Cloudflare dashboard (see DEPLOYING.md §5).

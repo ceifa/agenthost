@@ -36,9 +36,14 @@
     // Apex/control-plane host — set this to YOUR domain. Everything else that is
     // a *.{APEX_HOST} subdomain is treated as a hosted-site request; the admin
     // lives on admin.{APEX_HOST} (an Access-protected hostname in this zone).
-    "APEX_HOST": "agenthost.page"
-    // Admin auth (ALLOWED_ADMIN_EMAIL, ACCESS_TEAM_DOMAIN, ACCESS_AUD) is NOT set
-    // here — these carry the operator's identity, so they ship as Wrangler secrets
+    "APEX_HOST": "agenthost.page",
+    // Public identifiers used to construct presigned R2 URLs. The matching S3
+    // access key and secret are Wrangler secrets (see DEPLOYING.md).
+    "R2_ACCOUNT_ID": "412280fd6c5cfa4c34989ab598b5668f",
+    "R2_BUCKET_NAME": "agenthost-sites"
+    // Admin auth (ALLOWED_ADMIN_EMAIL, ACCESS_TEAM_DOMAIN, ACCESS_AUD) and R2
+    // signing credentials (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) are NOT set
+    // here — they ship as Wrangler secrets
     // instead of repo config: `wrangler secret put <NAME>` (see DEPLOYING.md §4).
     // Secrets are read via env.* exactly like vars, survive `wrangler deploy`
     // untouched, and never live in the repo. While unset, the admin fails closed

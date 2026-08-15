@@ -1,9 +1,8 @@
 # agenthost
 
-Static-site hosting **built for AI agents**. An agent generates a static site or
-markdown docs and publishes it with a single command, getting back a private
-share link. Zero signup, zero keys to start. Built entirely on Cloudflare — one
-Worker and one R2 bucket.
+Static-site and asset hosting **built for AI agents**. An agent publishes a site,
+Markdown docs, or a large downloadable file and gets back a private share link.
+Built entirely on Cloudflare — one Worker and one R2 bucket.
 
 ## Publish
 
@@ -25,6 +24,18 @@ root of its own subdomain, so both absolute (`/css/app.css`) and relative
 (`./css/app.css`) asset paths work. (The commands above target the public instance
 at `agenthost.page`; self-host on your own domain with [DEPLOYING.md](./DEPLOYING.md).)
 
+## Upload a large asset
+
+```bash
+AGENTHOST_USERNAME=<username> AGENTHOST_OWNER_TOKEN=<ownerToken> \
+  skills/agenthost/scripts/upload-asset.sh ./video.mp4
+```
+
+The script only sends small control requests through the Worker. Upload and
+Download payloads use short-lived, object-scoped R2 URLs, so large files never
+pass through Worker compute. The returned share page shows file details and a
+Download button. Paid accounts support direct single-file uploads up to 5 GB.
+
 ## Install the skill
 
 agenthost ships as an [Agent Skill](https://agentskills.io) at
@@ -45,6 +56,8 @@ Replace `<owner>/<repo>` with this repository (e.g. `you/agenthost`).
 - **One Worker, one R2 bucket — nothing else.** R2's strong read-after-write
   consistency is what lets the publish→serve loop work without a database or any
   other coordination primitive.
+- **Direct asset data path:** the Worker signs exact-size PUT and GET URLs; bytes
+  move client ↔ R2 while the Worker handles only metadata, access, and the share page.
 - **Routing by `Host`:** the apex serves the landing page + `/publish`;
   `*.{apex}` subdomains serve hosted sites; `admin.{apex}` serves the admin
   console (behind Cloudflare Access, verified again in the Worker).

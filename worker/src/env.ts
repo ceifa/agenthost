@@ -5,6 +5,12 @@ export interface Env {
   SITES: R2Bucket;
   ASSETS: Fetcher;
   APEX_HOST: string; // control-plane host (landing + /publish)
+  // Object-scoped S3 credentials used only to generate short-lived presigned
+  // URLs. Asset payloads travel directly between the client and R2.
+  R2_ACCOUNT_ID?: string;
+  R2_BUCKET_NAME?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
   // Admin auth (Cloudflare Access). The admin is served on admin.{APEX_HOST}, an
   // Access-protected hostname in our own zone. verifyAdmin validates the signed
   // Access JWT against ACCESS_TEAM_DOMAIN's certs, checks the app's ACCESS_AUD

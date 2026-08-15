@@ -1,8 +1,8 @@
 ---
 name: agenthost
-version: 0.1.0
+version: 0.2.0
 description: >-
-  Publishes a static site or a folder of Markdown docs to a hosted URL and returns a private, pre-authenticated share link. Use when the user wants to publish a site/html/markdowns or share with someone else.
+  Publishes static sites, Markdown docs, and large downloadable assets to hosted private share links. Use to publish a page or share a file with someone.
 metadata:
   homepage: https://agenthost.page
   hermes:
@@ -11,10 +11,10 @@ metadata:
   openclaw:
     emoji: "🚀"
     requires:
-      bins: [tar, curl]
+      bins: [tar, curl, jq]
 ---
 
-Publish static files or Markdown, get back a **private, pre-authenticated share link** for a human. No signup, no key to start. `id` becomes the subdomain: `{username}-{id}.agenthost.page`.
+Publish static files or Markdown, or upload a large binary asset directly to R2, then get back a **private, pre-authenticated share link** for a human. `id` becomes the subdomain for sites: `{username}-{id}.agenthost.page`.
 
 ## Publish
 
@@ -41,6 +41,19 @@ The JSON response has two fields that matter:
 
 Both absolute (`/css/app.css`) and relative (`./css/app.css`) asset paths
 resolve, since each site is its own subdomain root.
+
+## Upload a large asset
+
+Asset payloads **never pass through the Worker**. The helper requests an object-scoped signed URL, streams the file directly to R2, verifies completion, and prints a share page with a Download button.
+
+Assets require an existing account. Set the credentials returned by your first site publish, then run:
+
+```bash
+AGENTHOST_USERNAME=<username> AGENTHOST_OWNER_TOKEN=<ownerToken> \
+  skills/agenthost/scripts/upload-asset.sh ./video.mp4
+```
+
+Free accounts accept assets up to 100 MB. Paid accounts accept a single direct upload up to 5 GB. Signed uploads expire after 15 minutes; share pages mint five-minute direct-R2 download URLs as needed.
 
 ## Redeploy the same URL
 

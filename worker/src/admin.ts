@@ -18,6 +18,10 @@ import {
   putDomain,
   userSitesPrefix,
   userKey,
+  assetMetaKey,
+  getAssetMeta,
+  listAssetMetas,
+  putAssetMeta,
 } from "./storage";
 import { isValidUsername } from "./ids";
 import { customDomainSetup } from "./domains";
@@ -55,6 +59,30 @@ api.get("/sites", async (c) => {
   return c.json({ username, sites });
 });
 
+api.get("/assets", async (c) => {
+  const username = c.req.query("username");
+  if (!username) return c.json({ error: "username required" }, 400);
+  const assets = (await listAssetMetas(c.env.SITES, username)).map((m) => ({
+    id: m.id,
+    name: m.name,
+    bytes: m.bytes,
+    contentType: m.contentType,
+    status: m.status,
+    createdAt: m.createdAt,
+  }));
+  return c.json({ username, assets });
+});
+
+api.delete("/asset", async (c) => {
+  const username = c.req.query("username");
+  const id = c.req.query("id");
+  if (!username || !id) return c.json({ error: "username and id required" }, 400);
+  const meta = await getAssetMeta(c.env.SITES, username, id);
+  if (!meta) return c.json({ error: "asset not found" }, 404);
+  await Promise.all([c.env.SITES.delete(meta.objectKey), c.env.SITES.delete(assetMetaKey(username, id))]);
+  return c.json({ ok: true });
+});
+
 api.post("/plan", async (c) => {
   const { username, plan } = await c.req.json<{ username: string; plan: "free" | "paid" }>();
   const user = await getUser(c.env.SITES, username);
@@ -85,6 +113,16 @@ api.post("/rename", async (c) => {
     );
   }
   await deleteKeys(c.env.SITES, objs.map((o) => o.key));
+
+  // Asset payloads stay at their immutable R2 keys; only their tiny metadata
+  // moves to the renamed account, avoiding a multi-gigabyte copy through Worker.
+  const assets = await listAssetMetas(c.env.SITES, from);
+  await Promise.all(
+    assets.map(async (asset) => {
+      await putAssetMeta(c.env.SITES, to, asset.id, { ...asset, username: to });
+      await c.env.SITES.delete(assetMetaKey(from, asset.id));
+    }),
+  );
   await c.env.SITES.delete(userKey(from));
   return c.json({ ok: true, from, to });
 });

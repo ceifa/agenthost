@@ -91,6 +91,51 @@ export function markdownShell(opts: {
 </div>${mermaidScript}</body></html>`;
 }
 
+function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
+export function assetDownloadHtml(opts: {
+  name: string;
+  bytes: number;
+  contentType: string;
+  downloadUrl: string;
+  shareUrl: string;
+}): string {
+  const share = JSON.stringify(opts.shareUrl);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>${esc(opts.name)} · agenthost</title>
+<style>
+:root{--bg:#f5f7fa;--surface:#fff;--text:#111827;--muted:#667085;--line:#d9dee7;--button:#1d4ed8;--button-text:#fff;--shadow:0 18px 50px rgba(28,39,60,.10)}
+:root[data-theme="dark"]{--bg:#0d1117;--surface:#161b22;--text:#f0f3f6;--muted:#9aa7b5;--line:#30363d;--button:#4f8cff;--button-text:#07101f;--shadow:0 18px 50px rgba(0,0,0,.32)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1117;--surface:#161b22;--text:#f0f3f6;--muted:#9aa7b5;--line:#30363d;--button:#4f8cff;--button-text:#07101f;--shadow:0 18px 50px rgba(0,0,0,.32)}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.card{width:min(100%,520px);background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);padding:32px}
+.mark{width:48px;height:48px;display:grid;place-items:center;border:1px solid var(--line);margin-bottom:24px;color:var(--button)}
+.mark svg{width:23px;height:23px}h1{font-size:22px;line-height:1.25;letter-spacing:-.02em;text-wrap:balance;overflow-wrap:anywhere;margin:0 0 8px}.meta{color:var(--muted);font-size:13px;margin-bottom:28px}.actions{display:grid;grid-template-columns:1fr auto;gap:10px}
+.button{min-height:46px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);padding:0 18px;color:var(--text);background:transparent;font:600 14px/1 inherit;text-decoration:none;cursor:pointer}.button.primary{background:var(--button);border-color:var(--button);color:var(--button-text)}.button:hover{filter:brightness(.96)}.button:focus-visible{outline:3px solid color-mix(in srgb,var(--button) 35%,transparent);outline-offset:2px}.brand{margin-top:24px;color:var(--muted);font-size:12px}.brand a{color:inherit}
+@media(max-width:460px){.card{padding:24px}.actions{grid-template-columns:1fr}.button{width:100%}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style></head><body><main class="card">
+<div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg></div>
+<h1>${esc(opts.name)}</h1><div class="meta">${esc(formatBytes(opts.bytes))} · ${esc(opts.contentType)}</div>
+<div class="actions"><a class="button primary" href="${esc(opts.downloadUrl)}">Download</a><button class="button" id="share" type="button">Copy link</button></div>
+<div class="brand">Shared with <a href="https://agenthost.page">agenthost</a></div>
+</main><script>(function(){var b=document.getElementById('share'),u=${share};b.addEventListener('click',function(){var done=function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy link'},1400)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u).then(done).catch(function(){prompt('Copy this link:',u)})}else{prompt('Copy this link:',u)}})})();</script></body></html>`;
+}
+
+export function assetPendingHtml(name: string): string {
+  return errorHtml(425, esc(name), "The upload has not completed yet.", 28);
+}
+
 function errorHtml(code: number, heading: string, message: string, h1Size: number): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

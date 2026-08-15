@@ -3,9 +3,10 @@
 // deployment, and limits are rendered from config so a quota bump can't silently
 // make this lie.
 
-import { LIMITS, MB } from "./config";
+import { ASSET_LIMITS, LIMITS, MB } from "./config";
 
 const free = LIMITS.free;
+const freeAssets = ASSET_LIMITS.free;
 const mb = (bytes: number) => `${Math.round(bytes / MB)} MB`;
 
 export const llmsTxt = (apexHost: string): string => `# agenthost — publish a static site or docs, get a private share link. No signup.
@@ -34,14 +35,21 @@ tar czf - -C ./dist . | curl --data-binary @- \\
   -H 'Authorization: Bearer <ownerToken>' \\
   'https://${apexHost}/publish?id=myblog&username=<username>'
 
-## Asset paths
+## Large downloadable assets (existing account required)
+Use the skill's scripts/upload-asset.sh helper with AGENTHOST_USERNAME and
+AGENTHOST_OWNER_TOKEN set. It initiates a signed upload, streams the file directly
+from the client to R2, completes it, and prints a private shareUrl. Opening the
+shareUrl shows a Download button whose bytes also come directly from R2.
+Free max: ${mb(freeAssets.perAsset)} per asset. Paid max: 5 GB per asset.
+
+## Site asset paths
 Each site is the root of its own subdomain ({username}-{id}.${apexHost}), so
 both absolute and relative asset paths work:
   <link href="/css/app.css">     GOOD
   <link href="./css/app.css">    GOOD
 
 ## Notes
-- Static files OR markdown. /index.html is the default doc; a folder of .md renders as a
+- Static sites, markdown docs, OR direct-R2 downloadable assets. /index.html is the default doc; a folder of .md renders as a
   GitBook-style docs site (sidebar + README.md as home; optional SUMMARY.md for ordering).
 - No Content-Type needed: a tar body is a folder, anything else is one document. To publish a
   single file of any other type, add ?file=<name>.

@@ -1,7 +1,7 @@
 # agenthost — Architecture
 
-> Static-site hosting **built for AI agents**. An agent generates a static site and
-> publishes it with a single command, getting back a public URL. Zero signup, zero key
+> Static-site and asset hosting **built for AI agents**. An agent publishes a static site
+> or a large downloadable file and gets back a private share URL. Zero signup, zero key
 > to start. Inspired by [postplan](https://www.npmjs.com/package/postplan) (friction-zero
 > publish) and [lakebed.dev](https://lakebed.dev) (optional claim-to-upgrade), built
 > entirely on **Cloudflare**.
@@ -115,6 +115,8 @@ site-root-relative.
 sites/{username}/{siteId}/{path}        # current static files, OVERWRITTEN IN PLACE (no history)
 sites/{username}/{siteId}/_gen          # tiny pointer object; body = integer "deploy generation"
 sites/{username}/{siteId}/_meta         # JSON: { createdAt, lastDeployAt, bytes, fileCount, keyHash, public }
+assets/{username}/{assetId}/blob        # payload, uploaded/downloaded directly through R2 S3
+_assets/{username}/{assetId}/_meta      # metadata + access-key hash + upload state
 _users/{username}                       # JSON, see below
 _domains/{host}                         # JSON: { username, siteId }  (paid custom domains)
 ```
@@ -224,9 +226,30 @@ tar czf - -C ./dist . | curl -s --data-binary @- \
    `shareUrl` is what the agent hands to a human — it logs them in on first visit. `url` is
    the bare (gated) URL. On redeploys, `accessKey`/`ownerToken` aren't re-shown.
 
-**One publish path only.** Everything-in-one-POST is THE contract — no per-file PUT path, no
-multi-request session. The body is either a tar or one document, and step 0 decides which
-from the bytes; the caller never has to declare it.
+**One site-publish path only.** Everything-in-one-POST remains the static-site contract. Large
+binary assets deliberately use the direct-R2 flow below because proxying those bytes through
+a Worker is wasteful and hits Worker upload limits.
+
+### 5.5 Direct asset flow
+
+Assets are account-authenticated and private by default. The control plane is a three-request
+flow around an R2 S3 presigned URL:
+
+1. `POST /asset` sends only `{name, bytes, contentType}`. The Worker checks account quota,
+   writes pending metadata, and returns a 15-minute presigned PUT URL plus exact signed
+   `Content-Length`, `Content-Type`, and `Content-Disposition` headers.
+2. The caller PUTs the payload **directly to `<account>.r2.cloudflarestorage.com`**. No asset
+   bytes cross the Worker. Signing the content length prevents using the URL to exceed quota;
+   the URL is scoped to one object key.
+3. `POST /a/{username}/{assetId}/complete` asks the Worker to `R2.head` the object and verify
+   its size before marking it ready. Abandoned pending uploads are swept after one day.
+
+The private share page lives at `/a/{username}/{assetId}?k=…`. After access-key validation it
+renders file metadata and a Download button carrying a fresh five-minute presigned R2 GET.
+The PUT stores `Content-Disposition: attachment`, so the direct GET downloads rather than
+opening inline. The Worker serves HTML and metadata only; **downloads are R2 → browser**.
+Presigned URLs require a bucket-scoped R2 S3 access key stored as Worker secrets; public
+account/bucket identifiers are vars. R2 caps a single PUT at 5 GB, which is the paid asset cap.
 
 ---
 
@@ -427,6 +450,7 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
 | Size per site | 250 MB | 1 GB |
 | **Total per user** | **500 MB** | effectively unlimited |
 | **Retention** | **15 days** since last publish | **infinite** |
+| Direct asset | 100 MB | 5 GB |
 
 Per-file / per-site / file-count caps are enforced **during the untar stream** (fail fast,
 §5 step 4). The per-user total is enforced by folding it into the effective size budget
@@ -472,6 +496,8 @@ agenthost/
 │  ├─ src/index.ts              # Hono app: apex→landing/publish/admin ; *→serve ; custom-domain→serve
 │  ├─ src/publish.ts            # streaming untar → bounded R2 puts → delete orphans → bump _gen
 │  ├─ src/serve.ts              # host→username, read _gen, gen-keyed Cache API, R2 get, <base> inject
+│  ├─ src/assets.ts             # asset metadata/access pages + direct upload completion
+│  ├─ src/r2-signed.ts          # short-lived exact-size R2 PUT and direct GET signing
 │  ├─ src/admin.ts              # admin JSON routes (Hono sub-router, behind Cloudflare Access)
 │  ├─ src/ids.ts                # username gen, reserved-word denylist, content-type guess
 │  ├─ src/tar.ts                # streaming gzip+tar reader (no full buffering)

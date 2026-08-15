@@ -49,6 +49,26 @@ Single-file publish replaces the whole site with that one file. Curl examples ar
 
 `accessKey` and `ownerToken` are returned **only on a site's first publish**; redeploys preserve them silently.
 
+## Direct asset upload
+
+Large binary assets use a three-request control flow; the payload itself goes directly to R2.
+
+1. **Initiate** — `POST /asset?username=<username>` with owner auth and JSON `{ "name": "video.mp4", "bytes": 757603783, "contentType": "video/mp4" }`.
+2. **Upload** — `PUT` the file to the returned `uploadUrl`, sending every returned `uploadHeaders` value exactly. The hostname is `*.r2.cloudflarestorage.com`; the Worker never receives the body.
+3. **Complete** — `POST` the returned `completeUrl` with owner auth. Agenthost checks the R2 object size and marks the share page ready.
+
+Use `scripts/upload-asset.sh <file>` instead of assembling these calls manually. It prints the private `shareUrl`. Opening that URL shows the file name, type, size, and a **Download** button. The button targets a short-lived presigned R2 GET, so downloads also bypass the Worker. The object stores `Content-Disposition: attachment`, making browsers download instead of trying to render it.
+
+The upload URL expires after 15 minutes and is restricted by its signature to one object, exact byte length, content type, and download filename. The download URL expires after five minutes and is generated whenever the share page opens.
+
+| Asset limit | Free | Paid |
+|---|---:|---:|
+| Single asset | 100 MB | 5 GB |
+| Total account storage | 500 MB, shared with sites | effectively unlimited |
+| Retention | 15 days | infinite |
+
+Pending uploads are deleted after one day. `DELETE /a/:username/:assetId?username=<username>` with owner auth removes a completed or pending asset.
+
 ## Owner endpoints
 
 All require `Authorization: Bearer <ownerToken>` + `username`, and (except `/claim`) the site `id`.

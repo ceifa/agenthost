@@ -9,6 +9,7 @@ import { verifyOwner, type OwnerCtx } from "./auth";
 import { getMeta, putMeta, putUser, type SiteMeta } from "./storage";
 import { generateAccessKey, sha256Hex, sanitizeSiteId, siteHost, shareUrl } from "./ids";
 import { llmsTxt } from "./llms";
+import { completeAsset, createAsset, deleteAsset, serveAsset } from "./assets";
 
 type Ctx = Context<{ Bindings: Env }>;
 
@@ -37,6 +38,13 @@ async function readBody(c: Ctx): Promise<Record<string, unknown>> {
 const app = new Hono<{ Bindings: Env }>();
 
 app.post("/publish", (c) => handlePublish(c.req.raw, c.env));
+
+// Large binary assets use a two-step control flow around a direct R2 PUT. The
+// share page is served here, but neither uploads nor downloads cross the Worker.
+app.post("/asset", createAsset);
+app.post("/a/:username/:id/complete", completeAsset);
+app.delete("/a/:username/:id", deleteAsset);
+app.get("/a/:username/:id", serveAsset);
 
 // Attach an unverified recovery/abuse email to the account.
 app.post("/claim", async (c) => {
