@@ -65,7 +65,7 @@ Replace `<owner>/<repo>` with this repository (e.g. `you/agenthost`).
   signed in, and an injected Share button copies a key-embedded link.
 - **Markdown → docs.** A folder of `.md` renders as a GitBook-style site: nested
   sidebar (honoring `SUMMARY.md`), on-this-page outline, prev/next, GFM, mermaid,
-  light and dark.
+  server-side syntax highlighting, light and dark.
 - **Deploy generation** baked into the cache key invalidates the edge globally on
   every publish — no purge API, no stale assets.
 

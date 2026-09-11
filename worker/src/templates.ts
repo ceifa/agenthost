@@ -56,8 +56,9 @@ const DOC_CSS = `
 :root{color-scheme:light dark;
 --bg:#fbfaf8;--fg:#16181c;--dim:#5f636b;--line:#e4e1dc;--card:#f2f0ec;--accent:#8a5300;--sel:rgba(138,83,0,.13);
 --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+--add:#1b6b3a;--del:#a32b2b;
 --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
-@media(prefers-color-scheme:dark){:root{--bg:#0c0d0f;--fg:#e9e7e2;--dim:#83868c;--line:#23252a;--card:#141518;--accent:#f2b544;--sel:rgba(242,181,68,.18)}}
+@media(prefers-color-scheme:dark){:root{--bg:#0c0d0f;--fg:#e9e7e2;--dim:#83868c;--line:#23252a;--card:#141518;--accent:#f2b544;--sel:rgba(242,181,68,.18);--add:#7bc98e;--del:#f08a8a}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:400 16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
 ::selection{background:var(--sel)}
@@ -114,6 +115,20 @@ pre.mermaid{background:0;border:0;padding:0;text-align:center;line-height:normal
 pre.mermaid svg{max-width:100%;height:auto}
 .copy{position:absolute;top:7px;right:7px;opacity:0;transition:opacity .12s;background:var(--bg);color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:3px 9px;font:500 11px var(--mono);cursor:pointer}
 pre:hover .copy,.copy:focus{opacity:1}.copy:hover{color:var(--fg)}
+/* the language label hands its corner over to the copy button on hover */
+pre[data-lang]::before{content:attr(data-lang);position:absolute;top:10px;right:12px;font:400 11px var(--mono);color:var(--dim);transition:opacity .12s}
+pre[data-lang]:hover::before{opacity:0}
+
+/* Syntax, in the landing's three roles: dim for what is not the point
+   (comments, punctuation), accent for the language's own structure (keywords,
+   types, tags), plain ink for the author's values. No rainbow. */
+.hljs-comment,.hljs-quote,.hljs-meta,.hljs-operator,.hljs-punctuation{color:var(--dim)}
+.hljs-comment,.hljs-quote{font-style:italic}
+.hljs-keyword,.hljs-built_in,.hljs-type,.hljs-literal,.hljs-selector-tag,.hljs-section,.hljs-name,.hljs-attr,.hljs-attribute,.hljs-doctag,.hljs-meta .hljs-keyword,.hljs-meta .hljs-string{color:var(--accent)}
+.hljs-string,.hljs-number,.hljs-symbol,.hljs-regexp,.hljs-variable,.hljs-template-variable,.hljs-selector-class,.hljs-selector-id,.hljs-bullet,.hljs-link{color:var(--fg)}
+.hljs-title,.hljs-title.class_,.hljs-title.function_{color:var(--fg);font-weight:600}
+.hljs-emphasis{font-style:italic}.hljs-strong{font-weight:600}
+.hljs-addition{color:var(--add)}.hljs-deletion{color:var(--del)}
 
 /* ---- tables ---- */
 .scroll{overflow-x:auto;margin:0 0 18px}

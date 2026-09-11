@@ -1,0 +1,8 @@
+highlight.js ships `/// <reference lib="dom" />` inside its published types. In a
+Worker project that pulls the entire DOM lib in and shadows
+@cloudflare/workers-types: `caches.default` disappears, `BufferSource` narrows,
+and files that never touch highlight.js stop compiling.
+
+We use three functions. tsconfig `paths` points the two import shapes at the
+declarations here, so TypeScript never loads the package's own types. Runtime
+resolution is untouched — the bundler still reads node_modules.

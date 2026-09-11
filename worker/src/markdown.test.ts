@@ -103,7 +103,31 @@ Same heading twice.
 
     const plain = renderDoc("docs", "a.md", "# A\n\n```js\nvar a;\n```\n", index(["a.md"]));
     expect(plain).not.toContain("mermaid.esm.min.mjs");
-    expect(plain).toContain('<pre><code class="language-js">');
+  });
+
+  it("highlights declared languages, through their aliases", () => {
+    const html = renderDoc("docs", "a.md", "# A\n\n```js\nconst x = 1; // hi\n```\n", index(["a.md"]));
+    expect(html).toContain('<pre data-lang="javascript"><code class="hljs">');
+    expect(html).toContain('<span class="hljs-keyword">const</span>');
+    expect(html).toContain('<span class="hljs-comment">// hi</span>');
+
+    const yml = renderDoc("docs", "a.md", "# A\n\n```yml\nkey: value\n```\n", index(["a.md"]));
+    expect(yml).toContain('data-lang="yaml"');
+  });
+
+  it("leaves unknown and unlabelled blocks as plain code", () => {
+    const unknown = renderDoc("docs", "a.md", "# A\n\n```brainfuck\n+++.\n```\n", index(["a.md"]));
+    expect(unknown).toContain('<pre><code class="language-brainfuck">+++.');
+    expect(unknown).not.toContain('<code class="hljs">');
+
+    const bare = renderDoc("docs", "a.md", "# A\n\n```\nplain\n```\n", index(["a.md"]));
+    expect(bare).toContain("<pre><code>plain");
+  });
+
+  it("escapes markup inside a highlighted block", () => {
+    const html = renderDoc("docs", "a.md", "# A\n\n```html\n<script>alert(1)</script>\n```\n", index(["a.md"]));
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;");
   });
 
   it("escapes the site id and the title it puts in <title>", () => {

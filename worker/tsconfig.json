@@ -4,7 +4,11 @@
     "lib": ["ES2022"],
     "types": ["@cloudflare/workers-types/2023-07-01"],
     "jsx": "react-jsx",
-    "jsxImportSource": "hono/jsx"
+    "jsxImportSource": "hono/jsx",
+    "paths": {
+      "highlight.js/lib/core": ["./src/shims/highlight-core.d.ts"],
+      "highlight.js/lib/languages/*": ["./src/shims/highlight-language.d.ts"]
+    }
   },
   "include": ["src/**/*.ts"]
 }

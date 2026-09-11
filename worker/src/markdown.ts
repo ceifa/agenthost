@@ -2,6 +2,7 @@
 
 import { Marked } from "marked";
 import { markdownShell, esc } from "./templates";
+import { highlightCode, languageName } from "./highlight";
 import { listAll, sitePrefix } from "./storage";
 import type { Env } from "./env";
 
@@ -58,11 +59,14 @@ function createParser(headings: Heading[]) {
   parser.use({
     renderer: {
       // ```mermaid becomes <pre class="mermaid"> for the client-side runtime the
-      // shell loads; everything else falls through to marked's default.
+      // shell loads; a known language gets highlighted here, at render time;
+      // anything else falls through to marked's plain escaped block.
       code({ text, lang }) {
-        const language = (lang ?? "").trim().split(/\s+/)[0];
+        const language = (lang ?? "").trim().split(/\s+/)[0]!;
         if (language === "mermaid") return `<pre class="mermaid">${esc(text)}</pre>`;
-        return false;
+        const highlighted = highlightCode(text, language);
+        if (highlighted === null) return false;
+        return `<pre data-lang="${esc(languageName(language) ?? language)}"><code class="hljs">${highlighted}</code></pre>\n`;
       },
       heading({ tokens, depth }) {
         const html = this.parser.parseInline(tokens);
