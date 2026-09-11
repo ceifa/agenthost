@@ -397,14 +397,14 @@ renders it server-side into our **GitBook-style** shell instead of serving raw t
 - **Syntax highlighting** happens here, at render time, with `highlight.js/lib/core` and a
   curated set of ~27 languages (+68 KiB gzipped on the bundle, cached with the render, no
   CDN and no client script). Only *declared* languages are highlighted — auto-detection is a
-  coin flip on short snippets — and the theme keeps the landing's three token roles instead
-  of a rainbow: dim for comments and punctuation, accent for the language's own structure,
-  plain ink for the author's values. `diff` is the one exception, with a real green/red.
+  coin flip on short snippets — and the token colors are VS Code's own, Dark+ and Light+,
+  so a block looks like the editor the reader already reads code in.
   highlight.js publishes `/// <reference lib="dom" />` in its types, which would drag the
   DOM lib over `@cloudflare/workers-types`; `src/shims/` + tsconfig `paths` keep it out.
 - **Shell:** one amber accent over the landing's palette, prose in a ~72ch sans measure,
   chrome and code in mono. It follows `prefers-color-scheme` both ways, collapses the
-  sidebar behind a CSS-only toggle under 900px, and prints without the chrome. The only
+  sidebar behind a CSS-only hamburger under 900px (a hidden checkbox holds the state, so it
+  stays keyboard-reachable), and prints without the chrome. The only
   JavaScript is a copy button per code block and a scroll wrapper for wide tables — the page
   is complete without it.
 - **Mixed sites just work:** `.html` is served as-is (§6); only `.md` gets the renderer. The

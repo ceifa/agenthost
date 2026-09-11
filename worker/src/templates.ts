@@ -57,8 +57,11 @@ const DOC_CSS = `
 --bg:#fbfaf8;--fg:#16181c;--dim:#5f636b;--line:#e4e1dc;--card:#f2f0ec;--accent:#8a5300;--sel:rgba(138,83,0,.13);
 --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 --add:#1b6b3a;--del:#a32b2b;
+/* VS Code Light+ token colors */
+--t-comment:#008000;--t-keyword:#0000ff;--t-type:#267f99;--t-function:#795e26;--t-string:#a31515;
+--t-number:#098658;--t-variable:#001080;--t-tag:#800000;--t-regexp:#811f3f;--t-meta:#0000ff;
 --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
-@media(prefers-color-scheme:dark){:root{--bg:#0c0d0f;--fg:#e9e7e2;--dim:#83868c;--line:#23252a;--card:#141518;--accent:#f2b544;--sel:rgba(242,181,68,.18);--add:#7bc98e;--del:#f08a8a}}
+@media(prefers-color-scheme:dark){:root{--bg:#0c0d0f;--fg:#e9e7e2;--dim:#83868c;--line:#23252a;--card:#141518;--accent:#f2b544;--sel:rgba(242,181,68,.18);--add:#7bc98e;--del:#f08a8a;/* VS Code Dark+ */--t-comment:#6a9955;--t-keyword:#569cd6;--t-type:#4ec9b0;--t-function:#dcdcaa;--t-string:#ce9178;--t-number:#b5cea8;--t-variable:#9cdcfe;--t-tag:#569cd6;--t-regexp:#d16969;--t-meta:#569cd6}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:400 16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
 ::selection{background:var(--sel)}
@@ -76,7 +79,7 @@ a{color:var(--accent);text-decoration:none}
 .sidebar a:hover{color:var(--fg)}
 .sidebar a.active{color:var(--fg);border-left-color:var(--accent);background:var(--card)}
 .sidebar .d1 a{padding-left:24px}.sidebar .d2 a{padding-left:38px}
-.nav-btn{display:none}
+.nav-btn,.nav-state{display:none}
 
 /* ---- content ---- */
 .content{padding:52px 60px 80px;min-width:0}
@@ -119,14 +122,18 @@ pre:hover .copy,.copy:focus{opacity:1}.copy:hover{color:var(--fg)}
 pre[data-lang]::before{content:attr(data-lang);position:absolute;top:10px;right:12px;font:400 11px var(--mono);color:var(--dim);transition:opacity .12s}
 pre[data-lang]:hover::before{opacity:0}
 
-/* Syntax, in the landing's three roles: dim for what is not the point
-   (comments, punctuation), accent for the language's own structure (keywords,
-   types, tags), plain ink for the author's values. No rainbow. */
-.hljs-comment,.hljs-quote,.hljs-meta,.hljs-operator,.hljs-punctuation{color:var(--dim)}
-.hljs-comment,.hljs-quote{font-style:italic}
-.hljs-keyword,.hljs-built_in,.hljs-type,.hljs-literal,.hljs-selector-tag,.hljs-section,.hljs-name,.hljs-attr,.hljs-attribute,.hljs-doctag,.hljs-meta .hljs-keyword,.hljs-meta .hljs-string{color:var(--accent)}
-.hljs-string,.hljs-number,.hljs-symbol,.hljs-regexp,.hljs-variable,.hljs-template-variable,.hljs-selector-class,.hljs-selector-id,.hljs-bullet,.hljs-link{color:var(--fg)}
-.hljs-title,.hljs-title.class_,.hljs-title.function_{color:var(--fg);font-weight:600}
+/* Syntax: VS Code's own token colors — Dark+ and Light+ — because a code block
+   should look like the editor the reader already reads code in. */
+.hljs-comment,.hljs-quote{color:var(--t-comment)}
+.hljs-keyword,.hljs-literal,.hljs-selector-tag,.hljs-doctag,.hljs-meta .hljs-keyword{color:var(--t-keyword)}
+.hljs-built_in,.hljs-type,.hljs-title.class_,.hljs-class .hljs-title{color:var(--t-type)}
+.hljs-title,.hljs-title.function_,.hljs-section{color:var(--t-function)}
+.hljs-string,.hljs-meta .hljs-string,.hljs-char.escape_{color:var(--t-string)}
+.hljs-number,.hljs-symbol,.hljs-bullet{color:var(--t-number)}
+.hljs-attr,.hljs-attribute,.hljs-variable,.hljs-template-variable,.hljs-property,.hljs-params,.hljs-selector-attr,.hljs-selector-pseudo,.hljs-link{color:var(--t-variable)}
+.hljs-name,.hljs-selector-class,.hljs-selector-id{color:var(--t-tag)}
+.hljs-regexp{color:var(--t-regexp)}
+.hljs-meta{color:var(--t-meta)}
 .hljs-emphasis{font-style:italic}.hljs-strong{font-weight:600}
 .hljs-addition{color:var(--add)}.hljs-deletion{color:var(--del)}
 
@@ -156,8 +163,15 @@ th{background:var(--card);font-weight:600}
 .layout,.layout.has-toc{grid-template-columns:minmax(0,1fr)}
 .toc{display:none}
 .sidebar{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line);padding:14px 16px}
-.site{display:inline-block;padding:0}
-.nav-btn{display:block;float:right;color:var(--dim);font-size:13px;cursor:pointer;user-select:none}
+.site{display:inline-block;padding:0;line-height:26px}
+/* the checkbox is the open/closed state: invisible, but still tab-reachable */
+.nav-state{display:block;position:absolute;width:1px;height:1px;opacity:0;margin:0}
+.nav-btn{display:block;float:right;color:var(--dim);cursor:pointer;padding:1px 0 0}
+.nav-btn svg{display:block;width:22px;height:22px}
+.nav-btn .close{display:none}
+#nav:checked~.layout .nav-btn .open{display:none}
+#nav:checked~.layout .nav-btn .close{display:block}
+#nav:focus-visible~.layout .nav-btn{outline:2px solid var(--accent);outline-offset:4px;border-radius:3px}
 .sidebar ul{display:none;padding-top:12px;clear:both}
 #nav:checked~.layout .sidebar ul{display:block}
 .content{padding:28px 22px 64px}
@@ -173,6 +187,11 @@ table{min-width:34em}
 pre,code{background:0}
 }
 `;
+
+// Hamburger / close, drawn once and swapped by the nav checkbox in CSS.
+const MENU_ICONS =
+  '<svg class="open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>' +
+  '<svg class="close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg>';
 
 export function markdownShell(opts: {
   siteId: string;
@@ -198,9 +217,9 @@ export function markdownShell(opts: {
 <meta name="robots" content="noindex,nofollow">
 <title>${esc(opts.title)} · ${esc(opts.siteId)}</title>
 <style>${DOC_CSS}</style></head><body>
-<input type="checkbox" id="nav" hidden>
+<input type="checkbox" id="nav" class="nav-state" aria-label="Menu">
 <div class="layout${toc ? " has-toc" : ""}">
-<nav class="sidebar"><label class="nav-btn" for="nav">Contents</label><a class="site" href="/">${esc(opts.siteId)}</a>${opts.sidebarHtml}</nav>
+<nav class="sidebar"><label class="nav-btn" for="nav" aria-hidden="true">${MENU_ICONS}</label><a class="site" href="/">${esc(opts.siteId)}</a>${opts.sidebarHtml}</nav>
 <main class="content"><article>${opts.contentHtml}</article>${pager}</main>
 ${toc}</div>
 <script>${DOC_JS}</script>${mermaidScript}</body></html>`;
