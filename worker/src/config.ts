@@ -44,3 +44,9 @@ export const PUT_CONCURRENCY = 3;
 export const DEFAULT_SITE_ID = "site";
 export const AUTH_COOKIE_PREFIX = "as_auth_";
 export const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // ~1 year, seconds
+
+// Rendered markdown is cached per deploy generation, which a *site* bumps when it
+// publishes — a Worker deploy doesn't. Without this, shipping a change to the
+// renderer or the shell would only reach sites that happen to republish. Bump it
+// whenever the markdown output changes.
+export const RENDER_VERSION = 2;

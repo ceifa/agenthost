@@ -3,7 +3,7 @@
 // markdown render → Share-widget injection → noindex.
 
 import type { Env } from "./env";
-import { AUTH_COOKIE_PREFIX, AUTH_COOKIE_MAX_AGE } from "./config";
+import { AUTH_COOKIE_PREFIX, AUTH_COOKIE_MAX_AGE, RENDER_VERSION } from "./config";
 import { sha256Hex, timingSafeEqual, contentTypeFor, shareUrl, clientIp } from "./ids";
 import { getMeta, getGen, siteFileKey, RESERVED_FILE, type SiteMeta } from "./storage";
 import { renderMarkdown, defaultMarkdownDoc, type DocIndex } from "./markdown";
@@ -130,6 +130,22 @@ const CACHE_HOST = "https://as-cache.internal";
 // fresh cache key and orphans the old entry. Clients always get no-cache (above).
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
 
+// Static bytes are the file the site published, so the generation alone pins them.
+// A rendered markdown page is *our* HTML, so it also depends on the renderer that
+// produced it — RENDER_VERSION puts that in the key, which is what lets a Worker
+// deploy reach sites that never republish.
+export function cacheKeyPath(
+  username: string,
+  siteId: string,
+  gen: number,
+  target: { kind: TargetKind; relPath: string },
+  raw: boolean,
+): string {
+  const rendered = target.kind === "md" && !raw;
+  const version = rendered ? `/r${RENDER_VERSION}` : "";
+  return `${CACHE_HOST}/${username}/${siteId}/g${gen}${version}/${target.relPath}${raw ? "?raw" : ""}`;
+}
+
 export async function handleSite(
   req: Request,
   env: Env,
@@ -162,7 +178,7 @@ export async function handleSite(
   }
 
   const cache = caches.default;
-  const cacheReq = new Request(`${CACHE_HOST}/${username}/${siteId}/g${gen}/${target.relPath}${raw ? "?raw" : ""}`);
+  const cacheReq = new Request(cacheKeyPath(username, siteId, gen, target, raw));
 
   // Cache the undecorated body (gen-keyed, no access key); inject the Share
   // widget per request so a rotated key or public toggle takes effect without a

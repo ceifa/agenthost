@@ -276,7 +276,11 @@ Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` ena
 5. **Cache check:** `cache.match` on a synthetic, generation-pinned key
    `cache://{username}/{siteId}/g{gen}/{rest}` (the `gen` is in the *cache* key, never the
    public URL). Hit → return. Because the key embeds `gen`, a deploy bumping `gen` orphans
-   every old entry globally — no purge API, no mixed assets.
+   every old entry globally — no purge API, no mixed assets. A **rendered** markdown page
+   gets one extra segment, `/r{RENDER_VERSION}`: the bytes of a static file belong to the
+   site, but that HTML belongs to *our* renderer, and `gen` only moves when the site
+   republishes. Without it, shipping a renderer change would reach only sites that happen
+   to publish again (`config.ts` — bump it when the markdown output changes).
 6. **Miss:** `R2.get(key, { onlyIf, range })` so R2 natively emits `304`/`206`. Miss →
    try `{rest}/index.html`, else the site's `404.html`, else a generic 404. Set
    content-type + `ETag` from `writeHttpMetadata`; respond with `Cache-Control: no-cache`
@@ -381,8 +385,8 @@ renders it server-side into our **GitBook-style** shell instead of serving raw t
 
 - **Render at serve time** with a `workerd`-safe pure-JS markdown lib (e.g. `marked`),
   wrapped in our template: a left **sidebar** listing the site's other `.md` files + the
-  rendered content on the right. Result is cached under the same gen-keyed Cache API entry,
-  so it's only rendered once per deploy.
+  rendered content on the right. Result is cached under the same gen-keyed Cache API entry
+  (plus `RENDER_VERSION`, §6), so it's only rendered once per deploy.
 - **Sidebar / menu** = `R2.list` the site prefix, filter to `*.md`, build a nav tree. If the
   site ships a **`SUMMARY.md`** (GitBook convention), honor its ordering *and* its list
   indentation as nesting; otherwise sort by path. Files the `SUMMARY` forgot are appended
@@ -517,7 +521,7 @@ agenthost/
 ├─ worker/                      # (2) THE BACKEND — the entire server (Hono on Workers)
 │  ├─ src/index.ts              # Hono app: apex→landing/publish/admin ; *→serve ; custom-domain→serve
 │  ├─ src/publish.ts            # streaming untar → bounded R2 puts → delete orphans → bump _gen
-│  ├─ src/serve.ts              # host→username, read _gen, gen-keyed Cache API, R2 get, <base> inject
+│  ├─ src/serve.ts              # host→username, read _gen, gen-keyed Cache API, R2 get, share-widget inject
 │  ├─ src/assets.ts             # asset metadata/access pages + direct upload completion
 │  ├─ src/r2-signed.ts          # short-lived exact-size R2 PUT and direct GET signing
 │  ├─ src/admin.ts              # admin JSON routes (Hono sub-router, behind Cloudflare Access)
