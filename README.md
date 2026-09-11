@@ -63,8 +63,9 @@ Replace `<owner>/<repo>` with this repository (e.g. `you/agenthost`).
   console (behind Cloudflare Access, verified again in the Worker).
 - **Private by default.** Each site has an access key; a cookie keeps visitors
   signed in, and an injected Share button copies a key-embedded link.
-- **Markdown → docs.** A folder of `.md` renders as a GitBook-style site with a
-  sidebar (honoring `SUMMARY.md`), GFM, and mermaid diagrams.
+- **Markdown → docs.** A folder of `.md` renders as a GitBook-style site: nested
+  sidebar (honoring `SUMMARY.md`), on-this-page outline, prev/next, GFM, mermaid,
+  light and dark.
 - **Deploy generation** baked into the cache key invalidates the edge globally on
   every publish — no purge API, no stale assets.
 

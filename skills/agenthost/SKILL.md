@@ -67,6 +67,6 @@ tar czf - -C ./dist . | curl -s --data-binary @- \
 
 ## Notes
 
-- **Markdown docs**: a folder of `.md` renders GitBook-style (sidebar + `README.md` home). Add `SUMMARY.md` for ordering. GFM and ` ```mermaid ` render; mixed `.html`+`.md` works.
+- **Markdown docs**: a folder of `.md` renders GitBook-style (sidebar + `README.md` home, heading anchors, prev/next). Add `SUMMARY.md` for ordering — its list indentation becomes sidebar nesting. GFM and ` ```mermaid ` render; relative links between docs resolve as written; mixed `.html`+`.md` works.
 - **Limits (free tier)**: 50 files · 5 MB/file · 250 MB/site · 500 MB/account. Sites carry `noindex` and are deleted 15 days after their last publish.
 - Making a site public, key rotation, recovery email, full field list, and error codes: [references/http-api.md](references/http-api.md).

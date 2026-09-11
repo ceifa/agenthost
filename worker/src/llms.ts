@@ -50,7 +50,7 @@ both absolute and relative asset paths work:
 
 ## Notes
 - Static sites, markdown docs, OR direct-R2 downloadable assets. /index.html is the default doc; a folder of .md renders as a
-  GitBook-style docs site (sidebar + README.md as home; optional SUMMARY.md for ordering).
+  GitBook-style docs site (sidebar + README.md as home; optional SUMMARY.md for ordering and nesting).
 - No Content-Type needed: a tar body is a folder, anything else is one document. To publish a
   single file of any other type, add ?file=<name>.
 - Sites are PRIVATE by default. Share the shareUrl; visitors stay logged in via a cookie.

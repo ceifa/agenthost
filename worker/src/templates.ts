@@ -9,7 +9,7 @@ export function esc(s: string): string {
 }
 
 const SHELL_CSS = `
-:root{--bg:#0b0d10;--fg:#e7ebef;--muted:#9aa4af;--accent:#5b8cff;--card:#15181d;--border:#252a31}
+:root{--bg:#0c0d0f;--fg:#e9e7e2;--muted:#83868c;--accent:#f2b544;--card:#141518;--border:#23252a}
 *{box-sizing:border-box}
 body{margin:0;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -25,9 +25,9 @@ export function interstitialHtml(opts: { siteId: string; apexHost: string; wrong
 .card{width:100%;max-width:380px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px}
 h1{font-size:18px;margin:0 0 6px}p{color:var(--muted);margin:0 0 20px;font-size:14px}
 form{display:flex;gap:8px}
-input{flex:1;background:#0b0d10;border:1px solid var(--border);color:var(--fg);border-radius:9px;padding:11px 12px;font-size:15px}
+input{flex:1;background:#0c0d0f;border:1px solid var(--border);color:var(--fg);border-radius:9px;padding:11px 12px;font-size:15px}
 input:focus{outline:2px solid var(--accent);border-color:transparent}
-button{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:0 16px;font-size:15px;font-weight:600;cursor:pointer}
+button{background:var(--accent);color:#0c0d0f;border:0;border-radius:9px;padding:0 16px;font-size:15px;font-weight:600;cursor:pointer}
 .err{color:#ff6b6b;font-size:13px;margin-top:12px}.brand{font-size:12px;color:var(--muted);margin-top:18px;text-align:center}
 </style></head><body><div class="wrap"><div class="card">
 <h1>🔒 This site is private</h1>
@@ -44,52 +44,161 @@ ${opts.wrong ? '<div class="err">Incorrect key — try again.</div>' : ""}
 export function shareWidget(shareUrl: string): string {
   const safe = JSON.stringify(shareUrl);
   return `<div id="as-share" style="position:fixed;right:16px;bottom:16px;z-index:2147483647;font:13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
-<button id="as-share-btn" style="display:flex;align-items:center;gap:6px;background:#5b8cff;color:#fff;border:0;border-radius:999px;padding:10px 16px;font-weight:600;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25)">
+<button id="as-share-btn" style="display:flex;align-items:center;gap:7px;background:#16181c;color:#e9e7e2;border:1px solid #32343a;border-radius:999px;padding:9px 15px;font-weight:500;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.28)">
 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
 <span id="as-share-label">Share</span></button></div>
 <script>(function(){var u=${safe};var b=document.getElementById('as-share-btn'),l=document.getElementById('as-share-label');b.addEventListener('click',function(){var done=function(){l.textContent='Copied!';setTimeout(function(){l.textContent='Share'},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u).then(done).catch(function(){prompt('Copy this link:',u)})}else{prompt('Copy this link:',u)}})})();</script>`;
 }
+
+// Docs shell: prose in a sans measure of ~72ch, chrome and code in mono, one
+// amber accent — the landing's palette, adapted to both color schemes.
+const DOC_CSS = `
+:root{color-scheme:light dark;
+--bg:#fbfaf8;--fg:#16181c;--dim:#5f636b;--line:#e4e1dc;--card:#f2f0ec;--accent:#8a5300;--sel:rgba(138,83,0,.13);
+--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#0c0d0f;--fg:#e9e7e2;--dim:#83868c;--line:#23252a;--card:#141518;--accent:#f2b544;--sel:rgba(242,181,68,.18)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:400 16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+::selection{background:var(--sel)}
+a{color:var(--accent);text-decoration:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+.layout{display:grid;grid-template-columns:266px minmax(0,1fr);align-items:start}
+.layout.has-toc{grid-template-columns:266px minmax(0,1fr) 216px}
+
+/* ---- sidebar ---- */
+.sidebar{position:sticky;top:0;max-height:100vh;overflow-y:auto;border-right:1px solid var(--line);padding:26px 16px 40px;font-family:var(--mono)}
+.site{display:block;padding:0 10px 18px;font-size:13px;font-weight:600;color:var(--fg);letter-spacing:-.01em;overflow-wrap:anywhere}
+.sidebar ul{list-style:none;margin:0;padding:0}
+.sidebar a{display:block;padding:5px 10px;border-left:2px solid transparent;color:var(--dim);font-size:13px;line-height:1.45}
+.sidebar a:hover{color:var(--fg)}
+.sidebar a.active{color:var(--fg);border-left-color:var(--accent);background:var(--card)}
+.sidebar .d1 a{padding-left:24px}.sidebar .d2 a{padding-left:38px}
+.nav-btn{display:none}
+
+/* ---- content ---- */
+.content{padding:52px 60px 80px;min-width:0}
+article,.pager{max-width:72ch;margin-inline:auto}
+article>:first-child{margin-top:0}
+h1,h2,h3,h4{line-height:1.25;letter-spacing:-.02em;overflow-wrap:break-word}
+h1{font-size:32px;margin:0 0 24px}
+h2{font-size:23px;margin:52px 0 16px;padding-top:20px;border-top:1px solid var(--line)}
+h3{font-size:18px;margin:32px 0 12px}
+h4{font-size:16px;margin:26px 0 10px}
+.anchor{opacity:0;margin-left:.35em;color:var(--dim);font-weight:400;transition:opacity .12s}
+h2:hover .anchor,h3:hover .anchor,.anchor:focus{opacity:1}
+p,ul,ol,blockquote,table,pre,details{margin:0 0 18px}
+ul,ol{padding-left:22px}li{margin:5px 0}li>ul,li>ol{margin:5px 0}
+li::marker{color:var(--dim)}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+blockquote{border-left:2px solid var(--accent);padding:2px 0 2px 18px;color:var(--dim)}
+blockquote>:last-child{margin-bottom:0}
+img{max-width:100%;height:auto}
+strong{font-weight:600}
+kbd{font:500 12px var(--mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 5px;background:var(--card)}
+abbr{text-decoration-color:var(--dim)}
+article a{text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--accent) 40%,transparent);text-underline-offset:3px}
+article a:hover{text-decoration-color:var(--accent)}
+
+/* GFM task lists — no bullet, checkbox on the text baseline */
+li:has(>input[type=checkbox]){list-style:none;margin-left:-22px;padding-left:22px}
+li>input[type=checkbox]{margin:0 8px 0 -22px;accent-color:var(--accent);vertical-align:middle}
+
+/* ---- code ---- */
+code{font-family:var(--mono);font-size:.875em}
+:not(pre)>code{background:var(--card);border:1px solid var(--line);padding:.5px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{position:relative;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;line-height:1.6}
+pre code{background:0;border:0;padding:0;font-size:13.5px}
+pre.mermaid{background:0;border:0;padding:0;text-align:center;line-height:normal}
+pre.mermaid svg{max-width:100%;height:auto}
+.copy{position:absolute;top:7px;right:7px;opacity:0;transition:opacity .12s;background:var(--bg);color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:3px 9px;font:500 11px var(--mono);cursor:pointer}
+pre:hover .copy,.copy:focus{opacity:1}.copy:hover{color:var(--fg)}
+
+/* ---- tables ---- */
+.scroll{overflow-x:auto;margin:0 0 18px}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+th{background:var(--card);font-weight:600}
+
+/* ---- on this page ---- */
+.toc{position:sticky;top:0;max-height:100vh;overflow-y:auto;padding:56px 24px 40px 0;font-family:var(--mono);font-size:12px}
+.toc h2{all:unset;display:block;color:var(--dim);margin-bottom:10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.toc ul{list-style:none;margin:0;padding:0}
+.toc a{display:block;padding:4px 0;color:var(--dim);line-height:1.45}
+.toc a:hover{color:var(--fg)}
+.toc .h3 a{padding-left:14px}
+
+/* ---- prev / next ---- */
+.pager{display:flex;justify-content:space-between;gap:14px;margin-top:56px;border-top:1px solid var(--line);padding-top:22px}
+.pager a{flex:0 1 48%;border:1px solid var(--line);border-radius:8px;padding:12px 16px;color:var(--fg);font-size:14px;font-weight:500}
+.pager a:hover{border-color:var(--accent)}
+.pager .next{margin-left:auto;text-align:right}
+.pager span{display:block;color:var(--dim);font:400 11px/2 var(--mono);text-transform:uppercase;letter-spacing:.06em}
+
+/* ---- mobile: the sidebar collapses behind a pure-CSS toggle ---- */
+@media(max-width:900px){
+.layout,.layout.has-toc{grid-template-columns:minmax(0,1fr)}
+.toc{display:none}
+.sidebar{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line);padding:14px 16px}
+.site{display:inline-block;padding:0}
+.nav-btn{display:block;float:right;color:var(--dim);font-size:13px;cursor:pointer;user-select:none}
+.sidebar ul{display:none;padding-top:12px;clear:both}
+#nav:checked~.layout .sidebar ul{display:block}
+.content{padding:28px 22px 64px}
+h1{font-size:27px}h2{font-size:21px}
+/* a table scrolls in its wrapper instead of squeezing into four unreadable columns */
+table{min-width:34em}
+.pager a{font-size:13px}
+}
+@media print{
+.sidebar,.toc,.pager,.copy,.anchor,#as-share{display:none!important}
+.layout,.layout.has-toc{grid-template-columns:1fr}
+.content{padding:0}article{max-width:none}
+pre,code{background:0}
+}
+`;
 
 export function markdownShell(opts: {
   siteId: string;
   title: string;
   contentHtml: string;
   sidebarHtml: string;
+  tocHtml?: string;
+  pagerHtml?: string;
   mermaid?: boolean;
 }): string {
   // Mermaid diagrams render client-side from <pre class="mermaid"> blocks. Loaded
-  // lazily as an ES module only on pages that actually use a ```mermaid fence.
+  // lazily as an ES module only on pages that actually use a ```mermaid fence,
+  // and themed to whatever scheme the reader's OS is in.
   const mermaidScript = opts.mermaid
-    ? `<script type="module">import m from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";m.initialize({startOnLoad:true,theme:"dark"});</script>`
+    ? `<script type="module">import m from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";m.initialize({startOnLoad:true,theme:matchMedia("(prefers-color-scheme:dark)").matches?"dark":"neutral"});</script>`
     : "";
+  const toc = opts.tocHtml
+    ? `<aside class="toc"><h2>On this page</h2>${opts.tocHtml}</aside>`
+    : "";
+  const pager = opts.pagerHtml ? `<nav class="pager">${opts.pagerHtml}</nav>` : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<base href="/">
-<title>${esc(opts.title)}</title>
-<style>${SHELL_CSS}
-.layout{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
-.sidebar{background:var(--card);border-right:1px solid var(--border);padding:24px 18px;overflow-y:auto}
-.sidebar h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 12px}
-.sidebar ul{list-style:none;margin:0;padding:0}
-.sidebar li{margin:2px 0}
-.sidebar a{display:block;padding:6px 10px;border-radius:7px;color:var(--fg);font-size:14px}
-.sidebar a:hover{background:rgba(255,255,255,.04);text-decoration:none}
-.sidebar a.active{background:var(--accent);color:#fff}
-.content{padding:48px 56px;max-width:820px;overflow-x:auto}
-.content h1,.content h2,.content h3{line-height:1.25}
-.content h1{font-size:30px;margin-top:0}
-.content pre{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto}
-.content pre.mermaid{background:transparent;border:0;padding:0;text-align:center;line-height:normal}
-.content code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px}
-.content :not(pre)>code{background:var(--card);border:1px solid var(--border);padding:1px 5px;border-radius:5px}
-.content table{border-collapse:collapse;width:100%}.content th,.content td{border:1px solid var(--border);padding:7px 11px}
-.content img{max-width:100%}.content blockquote{border-left:3px solid var(--accent);margin:0;padding:4px 16px;color:var(--muted)}
-@media(max-width:720px){.layout{grid-template-columns:1fr}.sidebar{border-right:0;border-bottom:1px solid var(--border)}.content{padding:28px 22px}}
-</style></head><body><div class="layout">
-<nav class="sidebar"><h2>${esc(opts.siteId)}</h2>${opts.sidebarHtml}</nav>
-<main class="content">${opts.contentHtml}</main>
-</div>${mermaidScript}</body></html>`;
+<meta name="robots" content="noindex,nofollow">
+<title>${esc(opts.title)} · ${esc(opts.siteId)}</title>
+<style>${DOC_CSS}</style></head><body>
+<input type="checkbox" id="nav" hidden>
+<div class="layout${toc ? " has-toc" : ""}">
+<nav class="sidebar"><label class="nav-btn" for="nav">Contents</label><a class="site" href="/">${esc(opts.siteId)}</a>${opts.sidebarHtml}</nav>
+<main class="content"><article>${opts.contentHtml}</article>${pager}</main>
+${toc}</div>
+<script>${DOC_JS}</script>${mermaidScript}</body></html>`;
 }
+
+// Progressive enhancement only: a copy button per code block, and wide tables
+// get their own scroll container so they never stretch the prose column.
+const DOC_JS = `(function(){
+var t=document.querySelectorAll("article table");for(var i=0;i<t.length;i++){var w=document.createElement("div");w.className="scroll";t[i].parentNode.insertBefore(w,t[i]);w.appendChild(t[i])}
+if(!navigator.clipboard)return;
+document.querySelectorAll("article pre>code").forEach(function(c){var b=document.createElement("button");b.className="copy";b.type="button";b.textContent="Copy";
+b.addEventListener("click",function(){navigator.clipboard.writeText(c.textContent).then(function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1400)})});
+c.parentNode.appendChild(b)})})();`;
 
 function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];

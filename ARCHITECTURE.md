@@ -103,9 +103,12 @@ asset references resolve correctly with no rewriting:
 - `<link href="/css/app.css">` → `{username}-{siteId}.agenthost.page/css/app.css` ✅
 - `<link href="./css/app.css">` → resolves relative to the page ✅
 
-The Worker injects **no `<base>` tag** for plain HTML (sites serve like normal static
-hosting). The markdown shell keeps `<base href="/">` because its sidebar links are
-site-root-relative.
+The Worker injects **no `<base>` tag** anywhere (sites serve like normal static hosting).
+The markdown shell used to carry `<base href="/">` so that its site-root-relative sidebar
+links would work from a nested page — which also re-based every relative link *inside* a
+nested document to the site root. The sidebar now emits root-absolute, percent-encoded
+hrefs (`/guide/intro.md`), so `[api](./api.md)` in `guide/intro.md` resolves where the
+author meant.
 
 ---
 
@@ -381,13 +384,24 @@ renders it server-side into our **GitBook-style** shell instead of serving raw t
   rendered content on the right. Result is cached under the same gen-keyed Cache API entry,
   so it's only rendered once per deploy.
 - **Sidebar / menu** = `R2.list` the site prefix, filter to `*.md`, build a nav tree. If the
-  site ships a **`SUMMARY.md`** (GitBook convention), honor its ordering; otherwise sort by
-  path. The set of `.md` files changes per deploy → `_gen` bump invalidates the cache.
+  site ships a **`SUMMARY.md`** (GitBook convention), honor its ordering *and* its list
+  indentation as nesting; otherwise sort by path. Files the `SUMMARY` forgot are appended
+  rather than hidden. The set of `.md` files changes per deploy → `_gen` bump invalidates
+  the cache.
 - **Default doc:** for a markdown-only site, `/` renders `README.md` (or the first entry in
   `SUMMARY.md`) so the root is the docs home.
+- **Page furniture:** headings get GitHub-style slugs (deduped per document) and a hover
+  anchor; three or more of them earn an "on this page" column; the sidebar order also drives
+  prev/next links under the article. A per-render `Marked` instance keeps that state from
+  leaking between documents in a reused isolate.
+- **Shell:** one amber accent over the landing's palette, prose in a ~72ch sans measure,
+  chrome and code in mono. It follows `prefers-color-scheme` both ways, collapses the
+  sidebar behind a CSS-only toggle under 900px, and prints without the chrome. The only
+  JavaScript is a copy button per code block and a scroll wrapper for wide tables — the page
+  is complete without it.
 - **Mixed sites just work:** `.html` is served as-is (§6); only `.md` gets the renderer. The
-  `<base>` rewrite, the share widget (§6.5), `noindex`, and the private gate all still apply
-  to the rendered page (it's our HTML).
+  share widget (§6.5), `noindex`, and the private gate all still apply to the rendered page
+  (it's our HTML).
 - **Raw access** via `?raw` returns the unrendered markdown.
 - Markdown may embed raw HTML; since sites are private and origin-isolated (§6.6) this is
   low-risk, but sanitizing is an easy optional hardening.
