@@ -19,16 +19,6 @@ const redeployHtml = `<span class="p">$</span> tar czf - -C ./dist . | curl -s -
     -H <span class="s">'Authorization: Bearer $OWNER_TOKEN'</span> \\
     <span class="s">'https://agenthost.page/publish?id=myblog&username=$USER'</span>`;
 
-// Terse spec rows — label, then one line of fact.
-const spec = [
-  ["Private by default", "Every site sits behind an access key, and the share link signs a visitor in once. One POST makes it public, or rotates the key and kills every old link."],
-  ["Large files, direct", "Videos and other binaries upload straight to R2, and the download button targets R2 too. Worker compute never touches the payload."],
-  ["Markdown → docs", "A folder of <code>.md</code> becomes a sidebar'd site: <code>SUMMARY.md</code> ordering, GFM, mermaid. Mix in <code>.html</code> freely."],
-  ["Own subdomain", "Each site is the root of its own subdomain, so <code>/css/app.css</code> and <code>./css/app.css</code> both resolve with nothing to configure."],
-  ["Redeploy in place", "Keep the <code>ownerToken</code> and ship again to the exact same address. Read-after-write is strong, so you can verify the instant it returns."],
-  ["Custom domains", "Bring your own domain, with larger caps and no retention window."],
-];
-
 // Source repo, configurable at build time: `PUBLIC_GITHUB_URL=https://github.com/you/agenthost`.
 const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
 // owner/repo slug for the install commands, derived from the URL above.
@@ -52,7 +42,7 @@ const installs = [
     <title>agenthost: sites and files in, private links out</title>
     <meta
       name="description"
-      content="An AI agent publishes a site or uploads a large file directly to R2 and gets back a private share link for a human. Built as an Agent Skill on Cloudflare."
+      content="An AI agent publishes a site or uploads a large file and gets back a private share link for a human. Built as an Agent Skill."
     />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%80%3C/text%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -128,20 +118,6 @@ const installs = [
       h2 { font-weight: 400; font-size: 15px; color: var(--dim); margin: 0 0 22px; }
       h2::before { content: "# "; }
 
-      /* ---- spec rows: label | one line of fact ---- */
-      .spec { margin: 0; padding: 0; }
-      .spec > div {
-        display: grid;
-        grid-template-columns: 13em 1fr;
-        gap: 28px;
-        padding: 18px 0;
-        border-top: 1px solid var(--line);
-      }
-      .spec > div:last-child { border-bottom: 1px solid var(--line); }
-      .spec dt { font-weight: 500; font-size: 14px; }
-      .spec dd { margin: 0; font-size: 14px; color: var(--dim); }
-      .spec dd code { white-space: nowrap; }
-
       /* ---- install rows ---- */
       .installs { margin: 26px 0 0; padding: 0; list-style: none; font-size: 13px; }
       .installs li { display: flex; gap: 20px; padding: 7px 0; }
@@ -175,7 +151,6 @@ const installs = [
       }
 
       @media (max-width: 620px) {
-        .spec > div { grid-template-columns: 1fr; gap: 6px; }
         .installs li { flex-direction: column; gap: 2px; }
         .installs .who { width: auto; }
       }
@@ -197,8 +172,8 @@ const installs = [
       <div class="wrap">
         <h1>One file in.<br />A private link <span class="out">out.</span></h1>
         <p class="lead">
-          Your agent publishes a site or sends a large file straight to R2, then gets back a
-          private link to hand a human. Plain <code>curl</code>, nothing to install.
+          Your agent publishes a site or sends a large file, then gets back a private link to
+          hand a human. Plain <code>curl</code>, nothing to install.
         </p>
 
         <div class="block transcript bleed">
@@ -218,20 +193,6 @@ const installs = [
     </header>
 
     <main>
-      <section>
-        <div class="wrap">
-          <h2>What you get</h2>
-          <dl class="spec">
-            {spec.map(([t, d]) => (
-              <div>
-                <dt>{t}</dt>
-                <dd set:html={d}></dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </section>
-
       <section id="skill">
         <div class="wrap">
           <h2>Install as an Agent Skill</h2>
