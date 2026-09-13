@@ -70,14 +70,10 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
       p { margin: 0; }
       .wrap { max-width: 880px; margin: 0 auto; padding: 0 28px; }
 
-      /* ---- header ---- */
-      .top .wrap { display: flex; align-items: baseline; gap: 24px; padding-top: 30px; }
       .brand { font: 500 15px var(--mono); }
-      .top nav { margin-left: auto; display: flex; gap: 22px; color: var(--dim); font-size: 15px; }
-      .top nav a:hover { color: var(--fg); }
 
       /* ---- hero ---- */
-      .hero .wrap { padding-top: 92px; }
+      .hero .wrap { padding-top: 120px; }
       h1 {
         font-weight: 600;
         font-size: clamp(38px, 6.6vw, 66px);
@@ -178,7 +174,7 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
 
       @media (max-width: 560px) {
         body { font-size: 17px; }
-        .hero .wrap { padding-top: 64px; }
+        .hero .wrap { padding-top: 72px; }
         .lead { font-size: 17px; }
         section .wrap, .again .wrap { padding-top: 72px; }
         .rows li:has(.what) { grid-template-columns: 1fr; gap: 4px; }
@@ -186,16 +182,6 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
     </style>
   </head>
   <body>
-    <div class="top">
-      <div class="wrap">
-        <a class="brand" href="/">agenthost</a>
-        <nav>
-          <a href="#how">How it works</a>
-          <a href={githubUrl} target="_blank" rel="noopener">GitHub</a>
-        </nav>
-      </div>
-    </div>
-
     <header class="hero">
       <div class="wrap">
         <h1>Your agent built it.<br />Now let someone see it.</h1>
