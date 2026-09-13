@@ -50,10 +50,10 @@ export function shareWidget(shareUrl: string): string {
 <script>(function(){var u=${safe};var b=document.getElementById('as-share-btn'),l=document.getElementById('as-share-label');b.addEventListener('click',function(){var done=function(){l.textContent='Copied!';setTimeout(function(){l.textContent='Share'},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u).then(done).catch(function(){prompt('Copy this link:',u)})}else{prompt('Copy this link:',u)}})})();</script>`;
 }
 
-// Docs shell: prose in a sans measure of ~72ch, chrome and code in mono, one
+// Docs shell: prose in a sans measure of ~82ch, chrome and code in mono, one
 // amber accent — the landing's palette, adapted to both color schemes.
 const DOC_CSS = `
-:root{color-scheme:light dark;
+:root{color-scheme:light dark;--measure:82ch;
 --bg:#fbfaf8;--fg:#16181c;--dim:#5f636b;--line:#e4e1dc;--card:#f2f0ec;--accent:#8a5300;--sel:rgba(138,83,0,.13);
 --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 --add:#1b6b3a;--del:#a32b2b;
@@ -83,7 +83,7 @@ a{color:var(--accent);text-decoration:none}
 
 /* ---- content ---- */
 .content{padding:52px 60px 80px;min-width:0}
-article,.pager{max-width:72ch;margin-inline:auto}
+article,.pager,.doc-actions,.raw{max-width:var(--measure);margin-inline:auto}
 article>:first-child{margin-top:0}
 h1,h2,h3,h4{line-height:1.25;letter-spacing:-.02em;overflow-wrap:break-word}
 h1{font-size:32px;margin:0 0 24px}
@@ -109,18 +109,38 @@ article a:hover{text-decoration-color:var(--accent)}
 li:has(>input[type=checkbox]){list-style:none;margin-left:-22px;padding-left:22px}
 li>input[type=checkbox]{margin:0 8px 0 -22px;accent-color:var(--accent);vertical-align:middle}
 
+/* ---- source view: the same pure-CSS checkbox trick as the nav, so the raw
+   markdown is one click away and still there with JS off ---- */
+.raw-state{position:absolute;width:1px;height:1px;opacity:0;margin:0}
+.doc-actions{display:flex;justify-content:flex-end;gap:8px;margin-bottom:14px}
+.act{display:inline-flex;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:6px;color:var(--dim);font:500 11px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:7px 10px;cursor:pointer}
+.act:hover{color:var(--fg);border-color:var(--accent)}
+#raw:focus-visible~.layout .act[for=raw]{outline:2px solid var(--accent);outline-offset:3px}
+.act .rendered{display:none}
+.raw{display:none;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px 20px;font:400 13.5px/1.75 var(--mono)}
+#raw:checked~.layout .act .rendered{display:inline}
+#raw:checked~.layout .act .source{display:none}
+/* the toc column stays reserved while its links are hidden, so toggling the
+   source never shifts the text sideways */
+#raw:checked~.layout article,#raw:checked~.layout .pager,#raw:checked~.layout .toc{display:none}
+#raw:checked~.layout .raw{display:block}
+
 /* ---- code ---- */
 code{font-family:var(--mono);font-size:.875em}
 :not(pre)>code{background:var(--card);border:1px solid var(--line);padding:.5px 5px;border-radius:4px;overflow-wrap:anywhere}
-pre{position:relative;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;line-height:1.6}
+pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;line-height:1.6}
 pre code{background:0;border:0;padding:0;font-size:13.5px}
 pre.mermaid{background:0;border:0;padding:0;text-align:center;line-height:normal}
 pre.mermaid svg{max-width:100%;height:auto}
+/* the wrapper, not the <pre>, is the positioning context: <pre> scrolls, so
+   anything absolute inside it would scroll away with the code */
+.codeblock{position:relative;margin:0 0 18px}
+.codeblock pre{margin:0}
 .copy{position:absolute;top:7px;right:7px;opacity:0;transition:opacity .12s;background:var(--bg);color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:3px 9px;font:500 11px var(--mono);cursor:pointer}
-pre:hover .copy,.copy:focus{opacity:1}.copy:hover{color:var(--fg)}
+.codeblock:hover .copy,.copy:focus{opacity:1}.copy:hover{color:var(--fg)}
 /* the language label hands its corner over to the copy button on hover */
-pre[data-lang]::before{content:attr(data-lang);position:absolute;top:10px;right:12px;font:400 11px var(--mono);color:var(--dim);transition:opacity .12s}
-pre[data-lang]:hover::before{opacity:0}
+.codeblock[data-lang]::before{content:attr(data-lang);position:absolute;top:10px;right:12px;font:400 11px var(--mono);color:var(--dim);transition:opacity .12s}
+.codeblock[data-lang]:hover::before{opacity:0}
 
 /* Syntax: VS Code's own token colors — Dark+ and Light+ — because a code block
    should look like the editor the reader already reads code in. */
@@ -176,14 +196,15 @@ th{background:var(--card);font-weight:600}
 #nav:checked~.layout .sidebar ul{display:block}
 .content{padding:28px 22px 64px}
 h1{font-size:27px}h2{font-size:21px}
+.raw{padding:14px 14px;font-size:12.5px}
 /* a table scrolls in its wrapper instead of squeezing into four unreadable columns */
 table{min-width:34em}
 .pager a{font-size:13px}
 }
 @media print{
-.sidebar,.toc,.pager,.copy,.anchor,#as-share{display:none!important}
+.sidebar,.toc,.pager,.copy,.anchor,.doc-actions,.raw,#as-share{display:none!important}
 .layout,.layout.has-toc{grid-template-columns:1fr}
-.content{padding:0}article{max-width:none}
+.content{padding:0}article{display:block!important;max-width:none}
 pre,code{background:0}
 }
 `;
@@ -197,6 +218,7 @@ export function markdownShell(opts: {
   siteId: string;
   title: string;
   contentHtml: string;
+  source: string;
   sidebarHtml: string;
   tocHtml?: string;
   pagerHtml?: string;
@@ -218,21 +240,28 @@ export function markdownShell(opts: {
 <title>${esc(opts.title)} · ${esc(opts.siteId)}</title>
 <style>${DOC_CSS}</style></head><body>
 <input type="checkbox" id="nav" class="nav-state" aria-label="Menu">
+<input type="checkbox" id="raw" class="raw-state" aria-label="Show markdown source">
 <div class="layout${toc ? " has-toc" : ""}">
 <nav class="sidebar"><label class="nav-btn" for="nav" aria-hidden="true">${MENU_ICONS}</label><a class="site" href="/">${esc(opts.siteId)}</a>${opts.sidebarHtml}</nav>
-<main class="content"><article>${opts.contentHtml}</article>${pager}</main>
+<main class="content">
+<div class="doc-actions"><label class="act" for="raw"><span class="source">Markdown</span><span class="rendered">Rendered</span></label></div>
+<article>${opts.contentHtml}</article><pre class="raw" id="raw-src">${esc(opts.source)}</pre>${pager}</main>
 ${toc}</div>
 <script>${DOC_JS}</script>${mermaidScript}</body></html>`;
 }
 
-// Progressive enhancement only: a copy button per code block, and wide tables
-// get their own scroll container so they never stretch the prose column.
+// Progressive enhancement only: a copy button per code block, one for the whole
+// markdown source, and wide tables get their own scroll container so they never
+// stretch the prose column.
 const DOC_JS = `(function(){
 var t=document.querySelectorAll("article table");for(var i=0;i<t.length;i++){var w=document.createElement("div");w.className="scroll";t[i].parentNode.insertBefore(w,t[i]);w.appendChild(t[i])}
 if(!navigator.clipboard)return;
-document.querySelectorAll("article pre>code").forEach(function(c){var b=document.createElement("button");b.className="copy";b.type="button";b.textContent="Copy";
-b.addEventListener("click",function(){navigator.clipboard.writeText(c.textContent).then(function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1400)})});
-c.parentNode.appendChild(b)})})();`;
+var flash=function(b,text){return function(){navigator.clipboard.writeText(text()).then(function(){var prev=b.getAttribute("data-label");b.textContent="Copied";setTimeout(function(){b.textContent=prev},1400)})}};
+document.querySelectorAll("article .codeblock>pre>code").forEach(function(c){var b=document.createElement("button");b.className="copy";b.type="button";b.textContent="Copy";b.setAttribute("data-label","Copy");
+b.addEventListener("click",flash(b,function(){return c.textContent}));c.parentNode.parentNode.appendChild(b)});
+var src=document.getElementById("raw-src");
+if(src){var cb=document.createElement("button");cb.className="act";cb.type="button";cb.textContent="Copy";cb.setAttribute("data-label","Copy");
+cb.addEventListener("click",flash(cb,function(){return src.textContent}));document.querySelector(".doc-actions").appendChild(cb)}})();`;
 
 function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];

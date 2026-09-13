@@ -105,9 +105,20 @@ Same heading twice.
     expect(plain).not.toContain("mermaid.esm.min.mjs");
   });
 
+  // Regression: the copy button and the language label used to be positioned
+  // against the <pre> — which is the horizontal scroll container, so both slid
+  // away with the code. They now anchor to a non-scrolling wrapper.
+  it("wraps every code block in a non-scrolling positioning context", () => {
+    const html = renderDoc("docs", "a.md", "# A\n\n```js\nconst x = 1;\n```\n\n```\nplain\n```\n", index(["a.md"]));
+
+    expect(html).toContain('<div class="codeblock" data-lang="javascript"><pre><code class="hljs">');
+    expect(html).toContain('<div class="codeblock"><pre><code>plain');
+    expect(html).not.toContain("<pre data-lang=");
+  });
+
   it("highlights declared languages, through their aliases", () => {
     const html = renderDoc("docs", "a.md", "# A\n\n```js\nconst x = 1; // hi\n```\n", index(["a.md"]));
-    expect(html).toContain('<pre data-lang="javascript"><code class="hljs">');
+    expect(html).toContain('<code class="hljs">');
     expect(html).toContain('<span class="hljs-keyword">const</span>');
     expect(html).toContain('<span class="hljs-comment">// hi</span>');
 
@@ -119,6 +130,7 @@ Same heading twice.
     const unknown = renderDoc("docs", "a.md", "# A\n\n```brainfuck\n+++.\n```\n", index(["a.md"]));
     expect(unknown).toContain('<pre><code class="language-brainfuck">+++.');
     expect(unknown).not.toContain('<code class="hljs">');
+    expect(unknown).toContain('<div class="codeblock"><pre>'); // no label we can trust
 
     const bare = renderDoc("docs", "a.md", "# A\n\n```\nplain\n```\n", index(["a.md"]));
     expect(bare).toContain("<pre><code>plain");
@@ -128,6 +140,16 @@ Same heading twice.
     const html = renderDoc("docs", "a.md", "# A\n\n```html\n<script>alert(1)</script>\n```\n", index(["a.md"]));
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;");
+  });
+
+  it("ships the markdown source alongside the render, escaped", () => {
+    const source = "# A\n\n<script>alert(1)</script>\n\n- item & \"quote\"\n";
+    const html = renderDoc("docs", "a.md", source, index(["a.md"]));
+
+    expect(html).toContain('<label class="act" for="raw">');
+    expect(html).toContain(
+      '<pre class="raw" id="raw-src"># A\n\n&lt;script&gt;alert(1)&lt;/script&gt;\n\n- item &amp; &quot;quote&quot;\n</pre>',
+    );
   });
 
   it("escapes the site id and the title it puts in <title>", () => {

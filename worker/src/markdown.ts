@@ -60,13 +60,21 @@ function createParser(headings: Heading[]) {
     renderer: {
       // ```mermaid becomes <pre class="mermaid"> for the client-side runtime the
       // shell loads; a known language gets highlighted here, at render time;
-      // anything else falls through to marked's plain escaped block.
+      // anything else stays plain, escaped text.
+      //
+      // Every code block is wrapped in a .codeblock div because <pre> is the
+      // horizontal scroll container: the language label and the copy button are
+      // positioned against the wrapper so they stay put while the code scrolls.
       code({ text, lang }) {
         const language = (lang ?? "").trim().split(/\s+/)[0]!;
         if (language === "mermaid") return `<pre class="mermaid">${esc(text)}</pre>`;
         const highlighted = highlightCode(text, language);
-        if (highlighted === null) return false;
-        return `<pre data-lang="${esc(languageName(language) ?? language)}"><code class="hljs">${highlighted}</code></pre>\n`;
+        const body =
+          highlighted === null
+            ? `<code${language ? ` class="language-${esc(language)}"` : ""}>${esc(text)}\n</code>`
+            : `<code class="hljs">${highlighted}</code>`;
+        const label = highlighted === null ? "" : ` data-lang="${esc(languageName(language) ?? language)}"`;
+        return `<div class="codeblock"${label}><pre>${body}</pre></div>\n`;
       },
       heading({ tokens, depth }) {
         const html = this.parser.parseInline(tokens);
@@ -191,6 +199,7 @@ export function renderDoc(siteId: string, mdPath: string, source: string, index:
     siteId,
     title,
     contentHtml,
+    source,
     sidebarHtml: renderSidebar(entries, mdPath),
     tocHtml: renderToc(headings),
     pagerHtml: renderPager(entries, mdPath),
