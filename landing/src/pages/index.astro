@@ -1,37 +1,28 @@
 ---
-// Three token roles only: prompt/punctuation (dim), values (fg), the payoff (accent).
-const cmdHtml = `<span class="p">$</span> tar czf - -C ./dist . | curl -s --data-binary @- <span class="s">'https://agenthost.page/publish?id=myblog'</span>`;
-
-// The JSON that comes back. shareUrl is the payoff and the only accent on the page.
-const respHtml = `<span class="p">{</span>
-  <span class="k">"shareUrl":</span>   <span class="hi">"https://cleverotter4f2-myblog.agenthost.page/?k=•••"</span>  <span class="c"># give this to a human</span>
-  <span class="k">"url":</span>        <span class="s">"https://cleverotter4f2-myblog.agenthost.page/"</span>
-  <span class="k">"username":</span>   <span class="s">"cleverotter4f2"</span>
-  <span class="k">"ownerToken":</span> <span class="c">"••••••••••"</span>   <span class="c"># shown once, keep it</span>
-  <span class="k">"accessKey":</span>  <span class="c">"••••••••••"</span>
-<span class="p">}</span>`;
-
-// Single-file publish, no tar step. The body is sniffed, so no header either.
-const fileHtml = `<span class="p">$</span> curl -s --data-binary @report.md <span class="s">'https://agenthost.page/publish?id=report'</span>`;
-
-// Same address, second time — needs only the token you kept.
-const redeployHtml = `<span class="p">$</span> tar czf - -C ./dist . | curl -s --data-binary @- \\
-    -H <span class="s">'Authorization: Bearer $OWNER_TOKEN'</span> \\
-    <span class="s">'https://agenthost.page/publish?id=myblog&username=$USER'</span>`;
+// The page is for the human. The only "code" on it is the sentence they say to
+// their agent; the agent finds everything else in /llms.txt and the skill.
+const ask = "Publish this with agenthost.page and send me the private link.";
 
 // Source repo, configurable at build time: `PUBLIC_GITHUB_URL=https://github.com/you/agenthost`.
 const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
-// owner/repo slug for the install commands, derived from the URL above.
-const repoSlug = githubUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "") || "<owner>/<repo>";
-// GitHub tree path to the skill folder, for agents that install from source.
 const skillTreeUrl = `${githubUrl}/tree/main/skills/agenthost`;
 
-// CLI installers — commands you run yourself.
-const installs = [
-  ["skills.sh", `npx skills add ${repoSlug} --skill agenthost`],
-  ["Hermes", `hermes skills tap add ${repoSlug}`],
-  ["OpenClaw", `openclaw skills install @ceifa/agenthost`],
+// A real sequence, so it is numbered.
+const steps = [
+  ["You ask.", "One sentence, in the agent you already use. Nothing to install, no account to create."],
+  ["It publishes.", "The agent reads the instructions at agenthost.page on its own and uploads what it built."],
+  ["You get a link.", "Private, ready to open, safe to forward. Publish again and the address stays the same."],
 ];
+
+// Plain-language reasons to reach for it. Each one is something a person recognizes.
+const uses = [
+  ["The report it just wrote", "A real page with a link, instead of a wall of text pasted into chat."],
+  ["A folder of markdown", "Turns into a docs site with a sidebar, search-friendly headings and next/previous."],
+  ["The prototype", "The built site, live, exactly as it renders. Send it to someone before it is finished."],
+  ["A big file", "Videos, datasets, builds. Up to 100 MB free, 5 GB on paid accounts, straight download."],
+];
+
+const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
 ---
 
 <!doctype html>
@@ -39,189 +30,281 @@ const installs = [
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>agenthost: sites and files in, private links out</title>
+    <title>agenthost: ask your agent, get a private link</title>
     <meta
       name="description"
-      content="An AI agent publishes a site or uploads a large file and gets back a private share link for a human. Built as an Agent Skill."
+      content="Ask your AI agent to publish a page, a docs folder or a large file with agenthost, and it hands you a private link. Free, no signup, nothing to install."
     />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%80%3C/text%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <style is:global>
-      /* One typeface, four ink values. The amber appears exactly twice: the word
-         "out." in the headline, and the shareUrl it produces in the transcript. */
+      /* Same ink and amber as before. Prose is now a sans; the mono voice is kept
+         for exactly one thing: the sentence you say to your agent. */
       :root {
         --bg: #0c0d0f;
-        --fg: #e9e7e2;
-        --dim: #83868c;
-        --line: #23252a;
+        --panel: #131110;
+        --fg: #ebe8e1;
+        --dim: #8b8d92;
+        --line: #24262b;
         --accent: #f2b544;
+        --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
         --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       }
       * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
       body {
         margin: 0;
         background: var(--bg);
         color: var(--fg);
-        font: 400 15px/1.7 var(--mono);
+        font: 400 17px/1.6 var(--sans);
         -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
       }
       a { color: inherit; text-decoration: none; }
-      code { font: inherit; color: var(--fg); }
-      .wrap { max-width: 720px; margin: 0 auto; padding: 0 26px; }
+      p { margin: 0; }
+      .wrap { max-width: 640px; margin: 0 auto; padding: 0 24px; }
 
       /* ---- header ---- */
-      .top .wrap { display: flex; align-items: baseline; gap: 24px; padding-top: 32px; }
-      .brand { font-weight: 600; letter-spacing: -0.01em; }
-      .top nav { margin-left: auto; display: flex; gap: 20px; color: var(--dim); font-size: 14px; }
+      .top .wrap { display: flex; align-items: baseline; gap: 24px; padding-top: 30px; }
+      .brand { font: 500 15px var(--mono); }
+      .top nav { margin-left: auto; display: flex; gap: 22px; color: var(--dim); font-size: 15px; }
       .top nav a:hover { color: var(--fg); }
 
       /* ---- hero ---- */
-      .hero .wrap { padding-top: 76px; }
+      .hero .wrap { padding-top: 92px; }
       h1 {
         font-weight: 600;
-        font-size: clamp(30px, 6vw, 52px);
-        line-height: 1.1;
+        font-size: clamp(36px, 6.6vw, 54px);
+        line-height: 1.06;
         letter-spacing: -0.035em;
-        margin: 0 0 18px;
+        margin: 0 0 24px;
+        text-wrap: balance;
       }
-      h1 .out { color: var(--accent); }
-      p { margin: 0; }
-      .lead { color: var(--dim); max-width: 60ch; }
+      .lead { color: var(--dim); font-size: 19px; max-width: 34em; }
+      .lead strong { color: var(--fg); font-weight: 500; }
 
-      /* ---- the one code treatment, used for every command on the page ---- */
-      .block { margin-top: 38px; }
-      .block .label { display: block; color: var(--dim); font-size: 13px; margin-bottom: 10px; }
-      .block pre {
-        margin: 0;
-        font-family: var(--mono);
-        font-size: 13px;
-        line-height: 1.9;
-        overflow-x: auto;
+      /* ---- the ask: the one moment on the page ---- */
+      .ask {
+        margin-top: 44px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--accent);
+        padding: 22px 24px 20px;
       }
-      /* Only the hero transcript is boxed — it is the one moment on the page. */
-      .transcript pre { padding: 20px 24px; border: 1px solid var(--line); }
-      .block .rule { height: 1px; background: var(--line); margin: 14px 0; border: 0; }
-      .p { color: var(--dim); }
-      .k { color: var(--dim); }
-      .s { color: var(--fg); }
-      .c { color: var(--dim); }
-      .hi { color: var(--accent); }
+      .ask .hint { color: var(--dim); font-size: 14px; margin-bottom: 12px; }
+      .ask blockquote {
+        margin: 0;
+        font: 500 clamp(17px, 2.6vw, 21px)/1.5 var(--mono);
+        color: var(--fg);
+        letter-spacing: -0.01em;
+      }
+      .ask blockquote::before { content: "“"; color: var(--accent); }
+      .ask blockquote::after { content: "”"; color: var(--accent); }
+      .ask .row { display: flex; align-items: center; gap: 16px; margin-top: 18px; flex-wrap: wrap; }
+      .copy {
+        font: 500 14px var(--sans);
+        color: var(--bg);
+        background: var(--accent);
+        border: 0;
+        padding: 9px 16px;
+        cursor: pointer;
+      }
+      .copy:hover { filter: brightness(1.07); }
+      .copy[data-done] { background: var(--fg); }
+      .works { color: var(--dim); font-size: 14px; }
+      .works span { color: var(--fg); }
 
       /* ---- sections ---- */
-      section .wrap { padding-top: 76px; }
-      /* Section headings read as shell comments — this whole page is a transcript. */
-      h2 { font-weight: 400; font-size: 15px; color: var(--dim); margin: 0 0 22px; }
-      h2::before { content: "# "; }
+      section .wrap { padding-top: 96px; }
+      h2 {
+        font-weight: 600;
+        font-size: 26px;
+        letter-spacing: -0.025em;
+        line-height: 1.2;
+        margin: 0 0 8px;
+      }
+      .sub { color: var(--dim); max-width: 34em; }
 
-      /* ---- install rows ---- */
-      .installs { margin: 26px 0 0; padding: 0; list-style: none; font-size: 13px; }
-      .installs li { display: flex; gap: 20px; padding: 7px 0; }
-      .installs .who { width: 9em; flex: none; color: var(--dim); }
-      .note { margin-top: 28px; font-size: 14px; color: var(--dim); }
-      .note a { border-bottom: 1px solid var(--line); }
-      .note a:hover { color: var(--fg); border-bottom-color: var(--dim); }
+      /* Hairline rows carry every list on the page. */
+      .rows { margin: 30px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+      .rows li {
+        display: grid;
+        grid-template-columns: 2.2em 1fr;
+        gap: 0 18px;
+        padding: 20px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .rows li:has(.what) { grid-template-columns: 13em 1fr; }
+      .rows .n { color: var(--accent); font: 400 15px var(--mono); padding-top: 3px; }
+      .rows .what { font-weight: 500; }
+      .rows .how { color: var(--dim); }
+      .rows b { font-weight: 500; color: var(--fg); }
+
+      /* Facts about privacy read as three short paragraphs, no boxes. */
+      .facts { margin-top: 28px; display: grid; gap: 18px; color: var(--dim); }
+      .facts p b { color: var(--fg); font-weight: 500; }
+
+      .note { margin-top: 28px; color: var(--dim); font-size: 15px; }
+      .note a, .facts a, .sub a { border-bottom: 1px solid var(--line); }
+      .note a:hover, .facts a:hover, .sub a:hover { color: var(--fg); border-bottom-color: var(--dim); }
+
+      /* ---- closing ask ---- */
+      .again .wrap { padding-top: 96px; }
+      .again .ask { margin-top: 28px; }
 
       /* ---- footer ---- */
-      footer .wrap {
-        margin-top: 76px;
+      footer .wrap { margin-top: 96px; padding-bottom: 64px; }
+      footer .foot {
         border-top: 1px solid var(--line);
         padding-top: 24px;
-        padding-bottom: 60px;
         display: flex;
         flex-wrap: wrap;
         gap: 10px 22px;
         align-items: center;
-        font-size: 13px;
+        font-size: 14px;
         color: var(--dim);
       }
+      footer .brand { color: var(--fg); }
       footer a:hover { color: var(--fg); }
       footer .gh { margin-left: auto; display: inline-flex; }
 
       :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
-      /* The transcript bleeds past the prose measure so the publish one-liner and
-         the shareUrl fit without a horizontal scroll. */
-      @media (min-width: 880px) {
-        .bleed { margin-left: -70px; margin-right: -70px; }
-      }
-
-      @media (max-width: 620px) {
-        .installs li { flex-direction: column; gap: 2px; }
-        .installs .who { width: auto; }
+      @media (max-width: 560px) {
+        body { font-size: 16px; }
+        .hero .wrap { padding-top: 64px; }
+        .lead { font-size: 17px; }
+        section .wrap, .again .wrap { padding-top: 72px; }
+        .rows li:has(.what) { grid-template-columns: 1fr; gap: 4px; }
       }
     </style>
   </head>
   <body>
     <div class="top">
       <div class="wrap">
-        <span class="brand">agenthost</span>
+        <a class="brand" href="/">agenthost</a>
         <nav>
-          <a href="#skill">skill</a>
-          <a href="/llms.txt">llms.txt</a>
-          <a href={githubUrl} target="_blank" rel="noopener">github</a>
+          <a href="#how">How it works</a>
+          <a href={githubUrl} target="_blank" rel="noopener">GitHub</a>
         </nav>
       </div>
     </div>
 
     <header class="hero">
       <div class="wrap">
-        <h1>One file in.<br />A private link <span class="out">out.</span></h1>
+        <h1>Your agent built it.<br />Now let someone see it.</h1>
         <p class="lead">
-          Your agent publishes a site or sends a large file, then gets back a private link to
-          hand a human. Plain <code>curl</code>, nothing to install.
+          Ask your AI agent to publish a page, a docs folder or a large file with agenthost.
+          It hands you back a private link. <strong>Free, no signup, nothing to install.</strong>
         </p>
 
-        <div class="block transcript bleed">
-          <pre><code set:html={cmdHtml} /><hr class="rule" /><code set:html={respHtml} /></pre>
-        </div>
-
-        <div class="block">
-          <span class="label">One file — skip the tar</span>
-          <pre><code set:html={fileHtml} /></pre>
-        </div>
-
-        <div class="block">
-          <span class="label">Redeploy — same URL, existing links keep working</span>
-          <pre><code set:html={redeployHtml} /></pre>
+        <div class="ask">
+          <p class="hint">Try it now. Say this to your agent:</p>
+          <blockquote id="ask-text">{ask}</blockquote>
+          <div class="row">
+            <button class="copy" type="button" data-copy={ask}>Copy the sentence</button>
+            <p class="works">Works in <span>{agents.join(", ")}</span> and any agent that can run a shell.</p>
+          </div>
         </div>
       </div>
     </header>
 
     <main>
-      <section id="skill">
+      <section id="how">
         <div class="wrap">
-          <h2>Install as an Agent Skill</h2>
-          <p class="lead">
-            agenthost is a <code>SKILL.md</code>. Its description tells the model to reach for it
-            the moment built output needs to leave the machine.
-          </p>
-          <ul class="installs">
-            {installs.map(([who, cmd]) => (
-              <li><span class="who">{who}</span><span class="cmd">{cmd}</span></li>
+          <h2>What happens next</h2>
+          <p class="sub">About ten seconds, start to finish.</p>
+          <ol class="rows">
+            {steps.map(([what, how], i) => (
+              <li><span class="n">{i + 1}</span><p><b>{what}</b> <span class="how">{how}</span></p></li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section id="uses">
+        <div class="wrap">
+          <h2>Anything that needs to leave the machine</h2>
+          <p class="sub">The moment an agent finishes something, the next question is how to show it to a person.</p>
+          <ul class="rows">
+            {uses.map(([what, how]) => (
+              <li><span class="what">{what}</span><span class="how">{how}</span></li>
             ))}
           </ul>
-          <p class="note">
-            No CLI? Tell your agent to install the agenthost skill from agenthost.page.
-            Reading this as an agent? Load <a href={skillTreeUrl}>{repoSlug}/skills/agenthost</a> directly.
+        </div>
+      </section>
+
+      <section id="private">
+        <div class="wrap">
+          <h2>Private unless you decide otherwise</h2>
+          <div class="facts">
+            <p><b>Only people with the link get in.</b> Each link carries its own key. The bare address asks for it, and every page has a share button that makes a fresh link.</p>
+            <p><b>Search engines never see it.</b> Every hosted site is marked not to be indexed.</p>
+            <p><b>Nothing lingers.</b> A free site is removed 15 days after its last publish. Publish again and the clock resets, at the same address.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="open">
+        <div class="wrap">
+          <h2>Free and open</h2>
+          <p class="sub">
+            Anonymous publishing is free and needs no card. The whole thing is open source under MIT,
+            so you can read exactly what runs, or <a href={githubUrl}>host your own</a>.
           </p>
+          <p class="note">
+            Building an agent? The publish contract lives at <a href="/llms.txt">agenthost.page/llms.txt</a>,
+            and ships as an <a href={skillTreeUrl}>Agent Skill</a> you can install once and keep.
+          </p>
+        </div>
+      </section>
+
+      <section class="again">
+        <div class="wrap">
+          <h2>Still curious? That is the whole product.</h2>
+          <div class="ask">
+            <p class="hint">Say this to your agent:</p>
+            <blockquote>{ask}</blockquote>
+            <div class="row">
+              <button class="copy" type="button" data-copy={ask}>Copy the sentence</button>
+            </div>
+          </div>
         </div>
       </section>
     </main>
 
     <footer>
-      <div class="wrap">
-        <span>agenthost</span>
+      <div class="wrap foot-wrap"><div class="foot">
+        <span class="brand">agenthost</span>
         <a href="/llms.txt">llms.txt</a>
-        <span>Free to use. Hosted sites send <code>X-Robots-Tag: noindex</code>.</span>
+        <a href={`${githubUrl}/blob/main/LICENSE`} target="_blank" rel="noopener">MIT</a>
         <a class="gh" href={githubUrl} target="_blank" rel="noopener" aria-label="GitHub">
           <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         </a>
-      </div>
+      </div></div>
     </footer>
+
+    <script>
+      // The copy button is the only interaction. Label flips to confirm, then returns.
+      for (const btn of document.querySelectorAll<HTMLButtonElement>(".copy")) {
+        const label = btn.textContent;
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(btn.dataset.copy ?? "");
+            btn.textContent = "Copied";
+            btn.dataset.done = "";
+            setTimeout(() => { btn.textContent = label; delete btn.dataset.done; }, 1600);
+          } catch {
+            btn.textContent = "Select it and copy";
+          }
+        });
+      }
+    </script>
   </body>
 </html>
