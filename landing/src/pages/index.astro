@@ -62,13 +62,13 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
         margin: 0;
         background: var(--bg);
         color: var(--fg);
-        font: 400 17px/1.6 var(--sans);
+        font: 400 18px/1.6 var(--sans);
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
       }
       a { color: inherit; text-decoration: none; }
       p { margin: 0; }
-      .wrap { max-width: 640px; margin: 0 auto; padding: 0 24px; }
+      .wrap { max-width: 880px; margin: 0 auto; padding: 0 28px; }
 
       /* ---- header ---- */
       .top .wrap { display: flex; align-items: baseline; gap: 24px; padding-top: 30px; }
@@ -80,13 +80,13 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
       .hero .wrap { padding-top: 92px; }
       h1 {
         font-weight: 600;
-        font-size: clamp(36px, 6.6vw, 54px);
+        font-size: clamp(38px, 6.6vw, 66px);
         line-height: 1.06;
         letter-spacing: -0.035em;
         margin: 0 0 24px;
         text-wrap: balance;
       }
-      .lead { color: var(--dim); font-size: 19px; max-width: 34em; }
+      .lead { color: var(--dim); font-size: 20px; max-width: 36em; }
       .lead strong { color: var(--fg); font-weight: 500; }
 
       /* ---- the ask: the one moment on the page ---- */
@@ -95,12 +95,12 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
         background: var(--panel);
         border: 1px solid var(--line);
         border-left: 3px solid var(--accent);
-        padding: 22px 24px 20px;
+        padding: 26px 30px 24px;
       }
       .ask .hint { color: var(--dim); font-size: 14px; margin-bottom: 12px; }
       .ask blockquote {
         margin: 0;
-        font: 500 clamp(17px, 2.6vw, 21px)/1.5 var(--mono);
+        font: 500 clamp(17px, 2.4vw, 24px)/1.5 var(--mono);
         color: var(--fg);
         letter-spacing: -0.01em;
       }
@@ -124,30 +124,30 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
       section .wrap { padding-top: 96px; }
       h2 {
         font-weight: 600;
-        font-size: 26px;
+        font-size: 30px;
         letter-spacing: -0.025em;
         line-height: 1.2;
         margin: 0 0 8px;
       }
-      .sub { color: var(--dim); max-width: 34em; }
+      .sub { color: var(--dim); max-width: 38em; font-size: 18px; }
 
       /* Hairline rows carry every list on the page. */
       .rows { margin: 30px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
       .rows li {
         display: grid;
         grid-template-columns: 2.2em 1fr;
-        gap: 0 18px;
-        padding: 20px 0;
+        gap: 0 22px;
+        padding: 22px 0;
         border-bottom: 1px solid var(--line);
       }
-      .rows li:has(.what) { grid-template-columns: 13em 1fr; }
+      .rows li:has(.what) { grid-template-columns: 16em 1fr; }
       .rows .n { color: var(--accent); font: 400 15px var(--mono); padding-top: 3px; }
       .rows .what { font-weight: 500; }
       .rows .how { color: var(--dim); }
       .rows b { font-weight: 500; color: var(--fg); }
 
       /* Facts about privacy read as three short paragraphs, no boxes. */
-      .facts { margin-top: 28px; display: grid; gap: 18px; color: var(--dim); }
+      .facts { margin-top: 28px; display: grid; gap: 18px; color: var(--dim); max-width: 40em; }
       .facts p b { color: var(--fg); font-weight: 500; }
 
       .note { margin-top: 28px; color: var(--dim); font-size: 15px; }
@@ -177,7 +177,7 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
       :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
       @media (max-width: 560px) {
-        body { font-size: 16px; }
+        body { font-size: 17px; }
         .hero .wrap { padding-top: 64px; }
         .lead { font-size: 17px; }
         section .wrap, .again .wrap { padding-top: 72px; }
