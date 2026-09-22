@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { cacheKeyPath } from "./serve";
-import { RENDER_VERSION } from "./config";
+import { cacheKeyPath, versionTag, genResponse } from "./serve";
+import { liveScript } from "./templates";
+import LIVE_JS from "./client/gen/live";
+import { RENDER_VERSION, LIVE } from "./config";
 
 describe("edge cache key", () => {
   const md = { kind: "md" as const, relPath: "guide/intro.md" };
@@ -24,5 +26,43 @@ describe("edge cache key", () => {
     expect(a).not.toBe(cacheKeyPath("u", "docs", 4, md, false));
     expect(a).not.toBe(cacheKeyPath("u", "other", 3, md, false));
     expect(a).not.toBe(cacheKeyPath("other", "docs", 3, md, false));
+  });
+});
+
+describe("live reload", () => {
+  it("tags a version with both the site generation and the renderer", () => {
+    expect(versionTag(7)).toBe(`g7-r${RENDER_VERSION}`);
+    expect(versionTag(7)).not.toBe(versionTag(8));
+  });
+
+  it("answers /_gen with the version, an ETag and no client caching", async () => {
+    const res = genResponse("g7-r3", null);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("g7-r3");
+    expect(res.headers.get("etag")).toBe('"g7-r3"');
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-robots-tag")).toContain("noindex");
+  });
+
+  it("returns 304 to a poll that already has the current version", async () => {
+    expect(genResponse("g7-r3", '"g7-r3"').status).toBe(304);
+    expect(genResponse("g7-r3", 'W/"g7-r3"').status).toBe(304);
+    expect(genResponse("g7-r3", '"old", "g7-r3"').status).toBe(304);
+    // A stale tag must get the new body so the page can compare and reload.
+    const stale = genResponse("g8-r3", '"g7-r3"');
+    expect(stale.status).toBe(200);
+    expect(await stale.text()).toBe("g8-r3");
+  });
+
+  it("hands the injected script its version and tuning via data attributes", () => {
+    const tag = liveScript("g7-r3");
+    expect(tag).toContain('data-version="g7-r3"');
+    expect(tag).toContain(`baseMs&quot;:${LIVE.baseMs}`);
+    expect(tag).toContain(LIVE_JS);
+    // The built script must parse and keep the behaviours the server relies on.
+    expect(() => new Function(LIVE_JS)).not.toThrow();
+    expect(LIVE_JS).toContain('meta[name="agenthost-live"][content="off"]');
+    expect(LIVE_JS).toContain("/_gen");
+    expect(LIVE_JS).toContain("location.reload()");
   });
 });

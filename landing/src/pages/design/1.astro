@@ -1,0 +1,168 @@
+---
+// DESIGN 1 — "Session": the entire page is one continuous shell session.
+// Nothing is a "section"; everything is a command someone ran, with timings
+// and exit codes. Signature: a live block cursor waiting at the bottom.
+const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
+const repoSlug = githubUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+
+const cmdHtml = `tar czf - -C ./dist . | curl -s --data-binary @- <span class="s">'https://agenthost.page/publish?id=myblog'</span>`;
+const respHtml = `<span class="p">{</span>
+  <span class="k">"shareUrl":</span>   <span class="hi">"https://cleverotter4f2-myblog.agenthost.page/?k=•••"</span>
+  <span class="k">"url":</span>        <span class="s">"https://cleverotter4f2-myblog.agenthost.page/"</span>
+  <span class="k">"username":</span>   <span class="s">"cleverotter4f2"</span>
+  <span class="k">"ownerToken":</span> <span class="c">"••••••••••"</span>
+  <span class="k">"accessKey":</span>  <span class="c">"••••••••••"</span>
+<span class="p">}</span>`;
+const fileHtml = `curl -s --data-binary @report.md <span class="s">'https://agenthost.page/publish?id=report'</span>`;
+const redeployHtml = `tar czf - -C ./dist . | curl -s --data-binary @- \\
+  -H <span class="s">'Authorization: Bearer $OWNER_TOKEN'</span> \\
+  <span class="s">'https://agenthost.page/publish?id=myblog&username=$USER'</span>`;
+
+const installs = [
+  ["skills.sh", `npx skills add ${repoSlug} --skill agenthost`],
+  ["Hermes", `hermes skills tap add ${repoSlug}`],
+  ["OpenClaw", `openclaw skills install @ceifa/agenthost`],
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agenthost — session</title>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <style is:global>
+      :root {
+        --bg: #0a0b0c;
+        --pane: #0e0f11;
+        --fg: #e6e4df;
+        --dim: #767a81;
+        --line: #1e2024;
+        --accent: #f2b544;
+        --ok: #7fb069;
+        --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--fg);
+        font: 400 14px/1.75 var(--mono); -webkit-font-smoothing: antialiased;
+      }
+      a { color: inherit; text-decoration: none; }
+
+      /* window chrome: the tab strip doubles as navigation */
+      .chrome {
+        position: sticky; top: 0; z-index: 2; background: var(--bg);
+        border-bottom: 1px solid var(--line);
+        display: flex; align-items: stretch; font-size: 12.5px;
+      }
+      .chrome .title {
+        padding: 11px 18px; color: var(--fg); font-weight: 600;
+        border-right: 1px solid var(--line);
+      }
+      .chrome nav { display: flex; margin-left: auto; }
+      .chrome nav a { padding: 11px 18px; color: var(--dim); border-left: 1px solid var(--line); }
+      .chrome nav a:hover { color: var(--fg); background: var(--pane); }
+
+      .session { max-width: 860px; margin: 0 auto; padding: 44px 22px 90px; }
+
+      /* one beat of the session */
+      .beat { margin-bottom: 40px; }
+      .cmd { display: flex; gap: 10px; align-items: flex-start; }
+      .ps1 { color: var(--ok); flex: none; }
+      .ps1 b { color: var(--dim); font-weight: 400; }
+      pre { margin: 0; font: inherit; font-size: 13px; line-height: 1.85; overflow-x: auto; white-space: pre; }
+      .cmd pre { flex: 1; }
+      .out { margin: 12px 0 0; padding-left: 0; }
+      .meta { color: var(--dim); font-size: 12.5px; margin-top: 10px; }
+      .meta .ok { color: var(--ok); }
+      .s { color: var(--fg); }
+      .k, .p, .c { color: var(--dim); }
+      .hi { color: var(--accent); }
+
+      /* the headline is itself program output */
+      .banner { margin: 8px 0 4px; }
+      .banner h1 {
+        font-weight: 600; font-size: clamp(26px, 5.2vw, 44px); line-height: 1.12;
+        letter-spacing: -0.035em; margin: 0;
+      }
+      .banner h1 em { font-style: normal; color: var(--accent); }
+      .banner p { margin: 14px 0 0; color: var(--dim); max-width: 62ch; font-size: 14px; }
+
+      .rows { margin: 12px 0 0; }
+      .rows div { display: flex; gap: 18px; }
+      .rows .who { width: 10em; flex: none; color: var(--dim); }
+      .note { color: var(--dim); font-size: 13px; margin: 16px 0 0; max-width: 68ch; }
+      .note a { color: var(--fg); border-bottom: 1px solid var(--line); }
+
+      /* signature: the session hasn't ended */
+      .waiting { display: flex; gap: 10px; align-items: center; }
+      .caret {
+        display: inline-block; width: 8px; height: 17px; background: var(--accent);
+        animation: blink 1.15s steps(1) infinite;
+      }
+      @keyframes blink { 50% { opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+      @media (max-width: 640px) {
+        .rows div { flex-direction: column; gap: 0; }
+        .rows .who { width: auto; }
+        .cmd { flex-direction: column; gap: 2px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="chrome">
+      <span class="title">agenthost — zsh</span>
+      <nav>
+        <a href="#skill">skill</a>
+        <a href="/llms.txt">llms.txt</a>
+        <a href={githubUrl}>github</a>
+      </nav>
+    </div>
+
+    <div class="session">
+      <div class="beat">
+        <div class="cmd"><span class="ps1"><b>~</b> $</span><pre>agenthost --what</pre></div>
+        <div class="out banner">
+          <h1>One file in.<br />A private link <em>out.</em></h1>
+          <p>Your agent publishes a site or sends a large file, then gets back a private link to
+          hand a human. Plain curl, nothing to install.</p>
+        </div>
+      </div>
+
+      <div class="beat">
+        <div class="cmd"><span class="ps1"><b>~/blog</b> $</span><pre set:html={cmdHtml} /></div>
+        <pre class="out" set:html={respHtml} />
+        <p class="meta"><span class="ok">✓</span> 42 files · 1.2 MB · 412 ms — hand <span class="hi">shareUrl</span> to a human, keep ownerToken</p>
+      </div>
+
+      <div class="beat">
+        <div class="cmd"><span class="ps1"><b>~</b> $</span><pre set:html={fileHtml} /></div>
+        <p class="meta">One file, no tar. The body is sniffed, so there is no header either.</p>
+      </div>
+
+      <div class="beat">
+        <div class="cmd"><span class="ps1"><b>~/blog</b> $</span><pre set:html={redeployHtml} /></div>
+        <p class="meta">Same address, second time. Existing links keep working.</p>
+      </div>
+
+      <div class="beat" id="skill">
+        <div class="cmd"><span class="ps1"><b>~</b> $</span><pre>agenthost --install</pre></div>
+        <div class="out">
+          <p class="meta">agenthost is a SKILL.md. Its description tells the model to reach for it
+          the moment built output needs to leave the machine.</p>
+          <div class="rows">
+            {installs.map(([who, cmd]) => (<div><span class="who">{who}</span><span>{cmd}</span></div>))}
+          </div>
+          <p class="note">No CLI? Tell your agent to install the agenthost skill from agenthost.page.
+          Reading this as an agent? Load <a href={`${githubUrl}/tree/main/skills/agenthost`}>{repoSlug}/skills/agenthost</a> directly.</p>
+        </div>
+      </div>
+
+      <div class="waiting"><span class="ps1"><b>~</b> $</span><span class="caret"></span></div>
+      <p class="meta">Free to use · hosted sites send X-Robots-Tag: noindex</p>
+    </div>
+  </body>
+</html>

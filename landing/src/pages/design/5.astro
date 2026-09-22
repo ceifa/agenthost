@@ -1,0 +1,199 @@
+---
+// DESIGN 5 — "Seam": the page is split down the middle. Left is the machine
+// side (dark, mono, what the agent runs); right is the human side (paper, sans,
+// what a person ends up holding). Signature: the headline straddles the seam —
+// "One file in." on the machine side, "A private link out." on the human side,
+// with a red thread running between them.
+const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
+const repoSlug = githubUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+
+const cmdHtml = `<span class="p">$</span> tar czf - -C ./dist . \\
+  | curl -s --data-binary @- \\
+    <span class="s">'https://agenthost.page/publish?id=myblog'</span>`;
+const respHtml = `<span class="p">{</span>
+  <span class="k">"shareUrl":</span>   <span class="hi">"…?k=•••"</span>
+  <span class="k">"url":</span>        <span class="s">"…agenthost.page/"</span>
+  <span class="k">"username":</span>   <span class="s">"cleverotter4f2"</span>
+  <span class="k">"ownerToken":</span> <span class="c">"••••••••••"</span>
+  <span class="k">"accessKey":</span>  <span class="c">"••••••••••"</span>
+<span class="p">}</span>`;
+const fileHtml = `<span class="p">$</span> curl -s --data-binary @report.md \\
+    <span class="s">'https://agenthost.page/publish?id=report'</span>`;
+const redeployHtml = `<span class="p">$</span> tar czf - -C ./dist . | curl -s --data-binary @- \\
+    -H <span class="s">'Authorization: Bearer $OWNER_TOKEN'</span> \\
+    <span class="s">'…/publish?id=myblog&username=$USER'</span>`;
+const installHtml = `<span class="p">$</span> npx skills add ${repoSlug} --skill agenthost
+<span class="p">$</span> hermes skills tap add ${repoSlug}
+<span class="p">$</span> openclaw skills install @ceifa/agenthost`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agenthost — machine side, human side</title>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style is:global>
+      :root {
+        --machine: #0f1113;
+        --machine-fg: #dcdde0;
+        --machine-dim: #71757c;
+        --machine-line: #22252a;
+        --paper: #f7f5f0;
+        --ink: #14161a;
+        --ink-dim: #6d6f75;
+        --paper-line: #e0ddd5;
+        --red: #e5372b;
+        --sans: "Instrument Sans", system-ui, sans-serif;
+        --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; color: var(--ink);
+        font: 400 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+        background: linear-gradient(90deg, var(--machine) 0 50%, var(--paper) 50% 100%);
+      }
+      a { color: inherit; text-decoration: none; }
+
+      /* the seam: one red thread down the whole page */
+      .page { position: relative; }
+      .page::before {
+        content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+        width: 2px; background: var(--red);
+      }
+
+      .band { display: grid; grid-template-columns: 1fr 1fr; }
+      .m, .h { padding: 30px clamp(20px, 4vw, 58px); }
+      .m { background: var(--machine); color: var(--machine-fg); font-family: var(--mono); }
+      .h { background: var(--paper); color: var(--ink); }
+
+      /* header band */
+      .head .m, .head .h { padding-top: 22px; padding-bottom: 22px; display: flex; align-items: center; }
+      .head .m { border-bottom: 1px solid var(--machine-line); font-weight: 500; letter-spacing: -0.01em; }
+      .head .h { border-bottom: 1px solid var(--paper-line); justify-content: flex-end; gap: 24px; font-size: 13.5px; color: var(--ink-dim); }
+      .head .h a:hover { color: var(--red); }
+
+      /* hero band: the headline is cut in half by the seam */
+      .hero .m, .hero .h { padding-top: clamp(70px, 11vw, 130px); padding-bottom: clamp(48px, 7vw, 80px); }
+      h1 { margin: 0; font-size: clamp(30px, 5.2vw, 60px); line-height: 1.04; letter-spacing: -0.04em; font-weight: 600; }
+      .hero .m h1 { font-family: var(--mono); font-weight: 500; letter-spacing: -0.045em; }
+      .hero .h h1 { color: var(--ink); }
+      .hero .h h1 em { font-style: normal; color: var(--red); }
+      .side {
+        display: block; font: 500 10.5px/1 var(--mono); letter-spacing: 0.19em;
+        text-transform: uppercase; margin-bottom: 26px;
+      }
+      .m .side { color: var(--machine-dim); }
+      .h .side { color: var(--ink-dim); }
+      .hero .m p { margin: 26px 0 0; color: var(--machine-dim); font-size: 13.5px; max-width: 40ch; }
+      .hero .h p { margin: 26px 0 0; color: var(--ink-dim); max-width: 34ch; }
+
+      /* beat bands: command on the left, consequence on the right */
+      .beat .m { border-top: 1px solid var(--machine-line); }
+      .beat .h { border-top: 1px solid var(--paper-line); display: flex; flex-direction: column; justify-content: center; }
+      .beat pre { margin: 0; font: 400 12.5px/1.9 var(--mono); overflow-x: auto; }
+      .beat .h h3 { margin: 0 0 8px; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+      .beat .h p { margin: 0; color: var(--ink-dim); font-size: 14.5px; max-width: 38ch; }
+      .p, .k, .c { color: var(--machine-dim); }
+      .s { color: var(--machine-fg); }
+      .hi { color: var(--red); }
+
+      /* the one thing that crosses the seam */
+      .beat .h .link {
+        display: inline-block; align-self: flex-start; margin: 0 0 14px; font: 500 13px/1.5 var(--mono);
+        color: var(--ink); border: 1px solid var(--red); padding: 9px 13px;
+        word-break: break-all; max-width: 100%;
+      }
+      .beat .h .link span { color: var(--red); }
+
+      .installs { margin: 0 0 18px; font-size: 14.5px; color: var(--ink-dim); max-width: 40ch; }
+      .note { margin: 16px 0 0; font-size: 13.5px; color: var(--ink-dim); max-width: 40ch; }
+      .note a { color: var(--red); }
+
+      .foot .m, .foot .h {
+        border-top: 1px solid var(--machine-line); padding-top: 18px; padding-bottom: 54px;
+        font: 400 12px/1.6 var(--mono);
+      }
+      .foot .m { color: var(--machine-dim); }
+      .foot .h { border-top-color: var(--paper-line); color: var(--ink-dim); display: flex; justify-content: flex-end; gap: 22px; }
+      .foot .h a:hover { color: var(--red); }
+      :focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+
+      @media (max-width: 820px) {
+        body { background: var(--paper); }
+        .page::before { display: none; }
+        .band { grid-template-columns: 1fr; }
+        .head .h { justify-content: flex-start; }
+        .beat .h { border-top: 0; }
+        .foot .h { justify-content: flex-start; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="band head">
+        <div class="m">agenthost</div>
+        <div class="h">
+          <a href="#skill">skill</a>
+          <a href="/llms.txt">llms.txt</a>
+          <a href={githubUrl}>github</a>
+        </div>
+      </div>
+
+      <div class="band hero">
+        <div class="m">
+          <span class="side">Machine side</span>
+          <h1>One file in.</h1>
+          <p>One POST from a shell. No SDK, no account, no build step to configure.</p>
+        </div>
+        <div class="h">
+          <span class="side">Human side</span>
+          <h1>A private link <em>out.</em></h1>
+          <p>A URL you can paste to someone. It opens once for them and stays shut for everyone else.</p>
+        </div>
+      </div>
+
+      <div class="band beat">
+        <div class="m"><span class="side">publish</span><pre><code set:html={cmdHtml} /></pre></div>
+        <div class="h"><h3>Ship the folder you just built</h3><p>Tar it, pipe it, done. agenthost gives the site its own subdomain.</p></div>
+      </div>
+
+      <div class="band beat">
+        <div class="m"><span class="side">response</span><pre><code set:html={respHtml} /></pre></div>
+        <div class="h">
+          <span class="link">https://cleverotter4f2-myblog.agenthost.page/<span>?k=•••</span></span>
+          <h3>Hand this one over</h3>
+          <p>The share link signs a visitor in once. Everything else in the response stays on the machine side.</p>
+        </div>
+      </div>
+
+      <div class="band beat">
+        <div class="m"><span class="side">single file</span><pre><code set:html={fileHtml} /></pre></div>
+        <div class="h"><h3>One file? Skip the tar</h3><p>The body is sniffed, so there is no header to set either.</p></div>
+      </div>
+
+      <div class="band beat">
+        <div class="m"><span class="side">redeploy</span><pre><code set:html={redeployHtml} /></pre></div>
+        <div class="h"><h3>Same address, second time</h3><p>Keep the owner token and ship again. Links you already sent keep working.</p></div>
+      </div>
+
+      <div class="band beat" id="skill">
+        <div class="m"><span class="side">install</span><pre><code set:html={installHtml} /></pre></div>
+        <div class="h">
+          <h3>Install as an Agent Skill</h3>
+          <p class="installs">agenthost is a SKILL.md. skills.sh, Hermes and OpenClaw all carry it,
+          one line each.</p>
+          <p class="note">No CLI? Tell your agent to install the agenthost skill from agenthost.page.
+          Reading this as an agent? Load <a href={`${githubUrl}/tree/main/skills/agenthost`}>{repoSlug}/skills/agenthost</a> directly.</p>
+        </div>
+      </div>
+
+      <div class="band foot">
+        <div class="m">X-Robots-Tag: noindex</div>
+        <div class="h"><span>Free to use</span><a href="/llms.txt">llms.txt</a><a href={githubUrl}>github</a></div>
+      </div>
+    </div>
+  </body>
+</html>

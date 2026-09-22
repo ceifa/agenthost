@@ -1,0 +1,185 @@
+---
+// DESIGN 4 — "Poster": the deliverable is the link, so the link is the hero.
+// The first screen is a single URL set at poster scale; everything else is
+// deliberately small and quiet underneath it.
+const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
+const repoSlug = githubUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+
+const cmdHtml = `<span class="p">$</span> tar czf - -C ./dist . | curl -s --data-binary @- <span class="s">'https://agenthost.page/publish?id=myblog'</span>`;
+const respHtml = `<span class="p">{</span>
+  <span class="k">"shareUrl":</span>   <span class="hi">"https://cleverotter4f2-myblog.agenthost.page/?k=•••"</span>
+  <span class="k">"url":</span>        <span class="s">"https://cleverotter4f2-myblog.agenthost.page/"</span>
+  <span class="k">"username":</span>   <span class="s">"cleverotter4f2"</span>
+  <span class="k">"ownerToken":</span> <span class="c">"••••••••••"</span>
+  <span class="k">"accessKey":</span>  <span class="c">"••••••••••"</span>
+<span class="p">}</span>`;
+const fileHtml = `<span class="p">$</span> curl -s --data-binary @report.md <span class="s">'https://agenthost.page/publish?id=report'</span>`;
+const redeployHtml = `<span class="p">$</span> tar czf - -C ./dist . | curl -s --data-binary @- \\
+    -H <span class="s">'Authorization: Bearer $OWNER_TOKEN'</span> \\
+    <span class="s">'https://agenthost.page/publish?id=myblog&username=$USER'</span>`;
+
+const installs = [
+  ["skills.sh", `npx skills add ${repoSlug} --skill agenthost`],
+  ["Hermes", `hermes skills tap add ${repoSlug}`],
+  ["OpenClaw", `openclaw skills install @ceifa/agenthost`],
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agenthost — the link is the product</title>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style is:global>
+      :root {
+        --bg: #14121c;
+        --fg: #f2ece4;
+        --dim: #8b86a0;
+        --line: #2a2637;
+        --lilac: #b98cff;
+        --grot: "Bricolage Grotesque", system-ui, sans-serif;
+        --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--fg);
+        font: 400 15px/1.65 var(--grot); -webkit-font-smoothing: antialiased;
+      }
+      a { color: inherit; text-decoration: none; }
+      .wrap { max-width: 940px; margin: 0 auto; padding: 0 30px; }
+
+      .top { display: flex; align-items: center; gap: 24px; padding: 24px 0; }
+      .brand { font: 800 16px/1 var(--grot); letter-spacing: -0.02em; }
+      .top nav { margin-left: auto; display: flex; gap: 22px; font-size: 13.5px; color: var(--dim); }
+      .top nav a:hover { color: var(--lilac); }
+
+      /* the poster */
+      .poster { padding: 80px 0 0; text-align: center; }
+      .eyebrow {
+        font: 500 11px/1 var(--mono); letter-spacing: 0.2em; text-transform: uppercase;
+        color: var(--dim); display: block; margin-bottom: 30px;
+      }
+      /* the URL breaks where a URL actually breaks: at the dot before the domain */
+      .url {
+        font-family: var(--grot); font-weight: 600;
+        font-size: clamp(23px, 5vw, 58px); line-height: 1.06; letter-spacing: -0.045em;
+        margin: 0 auto; display: inline-block; text-align: center;
+        padding-bottom: 15px; border-bottom: 3px solid var(--lilac);
+      }
+      .url > span { display: block; white-space: nowrap; color: var(--fg); }
+      .url .key { color: var(--lilac); font-style: normal; }
+      .poster .after {
+        margin: 30px auto 0; max-width: 46ch; color: var(--dim); font-size: 16px;
+      }
+      .poster .after b { color: var(--fg); font-weight: 600; }
+
+      h1 {
+        margin: 76px 0 0; text-align: center; font-weight: 800;
+        font-size: clamp(26px, 3.6vw, 40px); letter-spacing: -0.035em; line-height: 1.08;
+      }
+      h1 em { font-style: normal; color: var(--lilac); }
+      .lead { margin: 16px auto 0; max-width: 52ch; text-align: center; color: var(--dim); }
+
+      /* commands, kept small on purpose */
+      .cards { margin-top: 44px; display: grid; gap: 14px; }
+      .card { border: 1px solid var(--line); padding: 20px 22px; background: #191725; }
+      .card .cap {
+        display: block; font: 500 10.5px/1 var(--mono); letter-spacing: 0.16em;
+        text-transform: uppercase; color: var(--dim); margin-bottom: 14px;
+      }
+      .card pre { margin: 0; font: 400 12.5px/1.85 var(--mono); overflow-x: auto; }
+      .p, .k, .c { color: var(--dim); }
+      .s { color: var(--fg); }
+      .hi { color: var(--lilac); }
+
+      section { padding-top: 86px; }
+      h2 { margin: 0 0 14px; font-weight: 800; font-size: 27px; letter-spacing: -0.03em; }
+      .lede { margin: 0; color: var(--dim); max-width: 54ch; }
+      .installs { margin: 28px 0 0; padding: 0; list-style: none; }
+      .installs li {
+        display: grid; grid-template-columns: 9em 1fr; gap: 22px; padding: 12px 0;
+        border-top: 1px solid var(--line); font: 400 13px/1.5 var(--mono);
+      }
+      .installs li:last-child { border-bottom: 1px solid var(--line); }
+      .installs .who { color: var(--dim); font-family: var(--grot); font-size: 14px; }
+      .note { margin-top: 22px; font-size: 14px; color: var(--dim); max-width: 62ch; }
+      .note a { color: var(--lilac); }
+
+      footer {
+        margin-top: 90px; border-top: 1px solid var(--line); padding: 22px 0 60px;
+        display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center;
+        font-size: 13px; color: var(--dim);
+      }
+      footer a:hover { color: var(--lilac); }
+      footer .gh { margin-left: auto; }
+      :focus-visible { outline: 2px solid var(--lilac); outline-offset: 3px; }
+      @media (max-width: 700px) {
+        .poster { padding-top: 60px; }
+        .installs li { grid-template-columns: 1fr; gap: 2px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <span class="brand">agenthost</span>
+        <nav>
+          <a href="#skill">skill</a>
+          <a href="/llms.txt">llms.txt</a>
+          <a href={githubUrl}>github</a>
+        </nav>
+      </div>
+
+      <header class="poster">
+        <span class="eyebrow">Your agent just published</span>
+        <p class="url"><span>cleverotter4f2-myblog</span><span>.agenthost.page/<em class="key">?k=•••</em></span></p>
+        <p class="after">That is the whole handoff. The link is private, signs a visitor in once,
+        and came back from a single <b>POST</b>.</p>
+      </header>
+
+      <h1>One file in.<br />A private link <em>out.</em></h1>
+      <p class="lead">Your agent publishes a site or sends a large file, then gets back a private
+      link to hand a human. Plain curl, nothing to install.</p>
+
+      <div class="cards">
+        <div class="card">
+          <span class="cap">Publish a built folder</span>
+          <pre><code set:html={cmdHtml} /></pre>
+        </div>
+        <div class="card">
+          <span class="cap">The response</span>
+          <pre><code set:html={respHtml} /></pre>
+        </div>
+        <div class="card">
+          <span class="cap">One file — skip the tar</span>
+          <pre><code set:html={fileHtml} /></pre>
+        </div>
+        <div class="card">
+          <span class="cap">Redeploy — same URL, existing links keep working</span>
+          <pre><code set:html={redeployHtml} /></pre>
+        </div>
+      </div>
+
+      <section id="skill">
+        <h2>Install as an Agent Skill</h2>
+        <p class="lede">agenthost is a <code>SKILL.md</code>. Its description tells the model to
+        reach for it the moment built output needs to leave the machine.</p>
+        <ul class="installs">
+          {installs.map(([who, cmd]) => (<li><span class="who">{who}</span><span>{cmd}</span></li>))}
+        </ul>
+        <p class="note">No CLI? Tell your agent to install the agenthost skill from agenthost.page.
+        Reading this as an agent? Load <a href={`${githubUrl}/tree/main/skills/agenthost`}>{repoSlug}/skills/agenthost</a> directly.</p>
+      </section>
+
+      <footer>
+        <span>agenthost</span>
+        <a href="/llms.txt">llms.txt</a>
+        <span>Free to use. Hosted sites send X-Robots-Tag: noindex.</span>
+        <a class="gh" href={githubUrl}>github</a>
+      </footer>
+    </div>
+  </body>
+</html>

@@ -342,6 +342,27 @@ Only HTML is rewritten; other assets pass through untouched.
 > and the injected key live on the host serving untrusted user HTML. They must be isolated
 > from the control plane (admin/publish).
 
+**Injected live reload.** Next to the Share widget, every served HTML page gets a small
+script that polls **`/_gen`** and calls `location.reload()` when the site's version tag
+(`g{gen}-r{RENDER_VERSION}`) changes. No morphing, no scroll bookkeeping: the browser
+restores scroll natively on reload and the page's own JS starts clean, so the same
+mechanism works on our markdown shell and on user-published HTML. Cost is the whole design:
+
+- **Client polls rarely.** Only while the tab is visible, with an immediate check when it
+  becomes visible again. Fast cadence for the first minutes after load or after a change
+  (an agent iterating), a slow one once the reader is idle, exponential backoff on any
+  error — an error never reloads. A pending reload waits for a text selection or a focused
+  input to clear. Constants live in `LIVE` (`worker/src/config.ts`).
+- **Server answers from a per-site edge micro-cache.** `/_gen` is public (a version tag
+  reveals nothing the 401/404 pages don't) and handled before the access gate, so it never
+  reads `_meta` and never touches `ACCESS_LIMITER`. The version sits in the Cache API for
+  a few seconds, so R2 sees one read per site, per colo, per TTL regardless of readers.
+  ETag/304 keeps the steady-state poll to a header exchange. Every poll is still one Worker
+  invocation — that is the floor, and why the interval is long.
+- **Detection latency is poll interval + TTL by design.** `cache.delete` on publish would
+  only clear the publishing colo, so we don't pretend to invalidate.
+- Pages opt out with `<meta name="agenthost-live" content="off">`.
+
 ---
 
 ## 6.6 Control-plane isolation (decision needed)
@@ -509,7 +530,7 @@ Public-by-default publishing means day-one abuse risk. Controls, **no Durable Ob
 
 **Tooling:** **pnpm** (latest) workspaces · **Turborepo** (latest) for task orchestration ·
 TypeScript · **Hono** in the Worker · **Astro** for the landing · **Svelte** for the admin ·
-Wrangler to deploy. The landing and admin are each built to static output and copied into
+**rolldown** to minify the browser scripts the Worker inlines · Wrangler to deploy. The landing and admin are each built to static output and copied into
 `public/`, which the Worker serves via Static Assets — so it's still **one `wrangler
 deploy`**. No test framework, linter, or formatter — kept deliberately lean.
 
@@ -521,7 +542,9 @@ agenthost/
 ├─ worker/                      # (2) THE BACKEND — the entire server (Hono on Workers)
 │  ├─ src/index.ts              # Hono app: apex→landing/publish/admin ; *→serve ; custom-domain→serve
 │  ├─ src/publish.ts            # streaming untar → bounded R2 puts → delete orphans → bump _gen
-│  ├─ src/serve.ts              # host→username, read _gen, gen-keyed Cache API, R2 get, share-widget inject
+│  ├─ src/serve.ts              # host→username, read _gen, gen-keyed Cache API, R2 get, /_gen probe, widget + live-reload inject
+│  ├─ src/client/*.ts           # browser scripts (live reload, copy link, docs shell), readable TS with DOM types
+│  ├─ src/client/gen/           # ↑ minified into `export default "<js>"` modules by scripts/build-client.mjs (gitignored)
 │  ├─ src/assets.ts             # asset metadata/access pages + direct upload completion
 │  ├─ src/r2-signed.ts          # short-lived exact-size R2 PUT and direct GET signing
 │  ├─ src/admin.ts              # admin JSON routes (Hono sub-router, behind Cloudflare Access)

@@ -1,13 +1,13 @@
 // Serve flow for hosted sites:
-// (username, siteId from Host) → access gate → gen-keyed cache → R2 get /
-// markdown render → Share-widget injection → noindex.
+// (username, siteId from Host) → /_gen live probe | access gate → gen-keyed cache →
+// R2 get / markdown render → Share-widget + live-reload injection → noindex.
 
 import type { Env } from "./env";
-import { AUTH_COOKIE_PREFIX, AUTH_COOKIE_MAX_AGE, RENDER_VERSION } from "./config";
+import { AUTH_COOKIE_PREFIX, AUTH_COOKIE_MAX_AGE, RENDER_VERSION, LIVE } from "./config";
 import { sha256Hex, timingSafeEqual, contentTypeFor, shareUrl, clientIp } from "./ids";
 import { getMeta, getGen, siteFileKey, RESERVED_FILE, type SiteMeta } from "./storage";
 import { renderMarkdown, defaultMarkdownDoc, type DocIndex } from "./markdown";
-import { interstitialHtml, shareWidget, notFoundHtml, goneHtml } from "./templates";
+import { interstitialHtml, shareWidget, liveScript, notFoundHtml, goneHtml } from "./templates";
 
 function getCookie(req: Request, name: string): string | null {
   const header = req.headers.get("cookie");
@@ -36,19 +36,60 @@ function htmlResponse(body: string, status: number): Response {
 
 // A site is now the root of its own subdomain, so both absolute (/css/app.css)
 // and relative (./css/app.css) paths resolve correctly with no <base> tweaking —
-// we just append the per-request Share widget.
-function decorate(html: string, opts: { shareUrl: string | null }, status: number): Response {
+// we just append the per-request Share widget and the live-reload probe.
+function decorate(html: string, opts: { shareUrl: string | null; live: string }, status: number): Response {
   const input = htmlResponse(html, status);
-  let rw = new HTMLRewriter();
-  if (opts.shareUrl) {
-    const widget = shareWidget(opts.shareUrl);
-    rw = rw.on("body", {
-      element(e) {
-        e.append(widget, { html: true });
-      },
-    });
-  }
+  const tail = (opts.shareUrl ? shareWidget(opts.shareUrl) : "") + liveScript(opts.live);
+  const rw = new HTMLRewriter().on("body", {
+    element(e) {
+      e.append(tail, { html: true });
+    },
+  });
   return rw.transform(input);
+}
+
+// What a reader's page compares against /_gen. Both halves matter: a site publish
+// bumps the generation; a Worker deploy that changes what we render bumps
+// RENDER_VERSION, and readers of a site that never republishes should see that too.
+export function versionTag(gen: number): string {
+  return `g${gen}-r${RENDER_VERSION}`;
+}
+
+// The /_gen body, with ETag/304 so a steady-state poll moves almost no bytes.
+// no-store on the client side: the poll interval is the page's to control.
+export function genResponse(version: string, ifNoneMatch: string | null): Response {
+  const etag = `"${version}"`;
+  const h = siteHeaders({ etag, "cache-control": "no-store" });
+  const matches = ifNoneMatch?.split(",").some((t) => t.trim() === etag || t.trim() === `W/${etag}`) ?? false;
+  if (matches) return new Response(null, { status: 304, headers: h });
+  h.set("content-type", "text/plain; charset=utf-8");
+  return new Response(version, { status: 200, headers: h });
+}
+
+// Live-reload probe. Deliberately public and answered before the access gate: a
+// version tag reveals nothing the 401/404 pages don't, and skipping _meta means a
+// poll costs at most one R2 read — and usually none, because the answer sits in a
+// per-site edge micro-cache for LIVE.genCacheTtlSeconds. Every reader in a colo
+// shares that one read. (cache.delete on publish would only clear the publishing
+// colo, so detection latency is poll interval + TTL by design.)
+async function handleGen(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  username: string,
+  siteId: string,
+): Promise<Response> {
+  const cache = caches.default;
+  const cacheReq = new Request(`${CACHE_HOST}/${username}/${siteId}/_gen`);
+  let hit = await cache.match(cacheReq);
+  if (!hit) {
+    const gen = await getGen(env.SITES, username, siteId);
+    hit = new Response(versionTag(gen), {
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": `public, s-maxage=${LIVE.genCacheTtlSeconds}` },
+    });
+    ctx.waitUntil(cache.put(cacheReq, hit.clone()));
+  }
+  return genResponse(await hit.text(), req.headers.get("if-none-match"));
 }
 
 interface AccessResult {
@@ -159,6 +200,8 @@ export async function handleSite(
   // The whole path is now the file path within the site (siteId rides the host).
   const rest = url.pathname.replace(/^\/+/, "");
 
+  if (rest === "_gen") return handleGen(req, env, ctx, username, siteId);
+
   // Independent reads — fetch together.
   const [meta, gen] = await Promise.all([getMeta(env.SITES, username, siteId), getGen(env.SITES, username, siteId)]);
   if (!meta) return htmlResponse(notFoundHtml(), 404);
@@ -169,11 +212,12 @@ export async function handleSite(
 
   const raw = url.searchParams.has("raw");
   const share = shareUrl(host, gate.key);
+  const live = versionTag(gen);
 
   const target = await resolveTarget(env, username, siteId, rest);
   if (!target) {
     const custom = await env.SITES.get(siteFileKey(username, siteId, "404.html"));
-    if (custom) return decorate(await custom.text(), { shareUrl: share }, 404);
+    if (custom) return decorate(await custom.text(), { shareUrl: share, live }, 404);
     return htmlResponse(notFoundHtml(), 404);
   }
 
@@ -196,7 +240,7 @@ export async function handleSite(
         cache.put(cacheReq, new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": IMMUTABLE_CACHE } })),
       );
     }
-    return decorate(body, { shareUrl: share }, 200);
+    return decorate(body, { shareUrl: share, live }, 200);
   };
 
   if (target.kind === "md" && !raw) {

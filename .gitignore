@@ -8,3 +8,6 @@ worker/worker-configuration.d.ts
 *.log
 .DS_Store
 .dev.vars
+
+# built browser scripts (see worker/scripts/build-client.mjs)
+worker/src/client/gen/

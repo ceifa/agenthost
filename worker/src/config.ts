@@ -50,3 +50,24 @@ export const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // ~1 year, seconds
 // renderer or the shell would only reach sites that happen to republish. Bump it
 // whenever the markdown output changes.
 export const RENDER_VERSION = 3;
+
+// Live reload. Every open page polls /_gen and reloads when the site's version
+// changes. Each poll is a Worker invocation, so the client polls rarely and only
+// while visible; the Worker answers from a short edge micro-cache so R2 sees one
+// read per site, per colo, per TTL no matter how many readers there are. The
+// TTL adds to the poll interval as worst-case detection delay.
+export const LIVE = {
+  genCacheTtlSeconds: 15,
+  // Client cadence (ms). Fast right after load or after a detected change (an
+  // agent iterating on a page), base otherwise, slow once the reader is idle.
+  fastMs: 15_000,
+  fastForMs: 5 * 60_000,
+  baseMs: 60_000,
+  idleMs: 5 * 60_000,
+  idleAfterMs: 30 * 60_000,
+  // Errors (network, 5xx, 429) back off exponentially up to this, never reload.
+  maxBackoffMs: 10 * 60_000,
+  // Re-check this often while a pending reload waits for the reader to finish a
+  // text selection or leave a focused input.
+  busyRetryMs: 5_000,
+};

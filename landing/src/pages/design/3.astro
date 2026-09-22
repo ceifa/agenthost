@@ -1,0 +1,250 @@
+---
+// DESIGN 3 — "Manifest": the page treats a publish as a shipment. Hairline
+// grid, uppercase field labels, no radius anywhere. Signature: the response
+// rendered as a torn receipt with a perforated edge and a PRIVATE stamp.
+const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
+const repoSlug = githubUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+
+const cmdHtml = `<span class="p">$</span> tar czf - -C ./dist . | curl -s --data-binary @- \\
+    <span class="s">'https://agenthost.page/publish?id=myblog'</span>`;
+const fileHtml = `<span class="p">$</span> curl -s --data-binary @report.md \\
+    <span class="s">'https://agenthost.page/publish?id=report'</span>`;
+const redeployHtml = `<span class="p">$</span> tar czf - -C ./dist . | curl -s --data-binary @- \\
+    -H <span class="s">'Authorization: Bearer $OWNER_TOKEN'</span> \\
+    <span class="s">'https://agenthost.page/publish?id=myblog&username=$USER'</span>`;
+
+// The receipt: every key the API returns, and who it belongs to.
+const receipt = [
+  ["shareUrl", "https://cleverotter4f2-myblog.agenthost.page/?k=•••", "give to a human", true],
+  ["url", "https://cleverotter4f2-myblog.agenthost.page/", "the address itself", false],
+  ["username", "cleverotter4f2", "yours from now on", false],
+  ["ownerToken", "••••••••••", "shown once — keep it", false],
+  ["accessKey", "••••••••••", "opens the door", false],
+];
+
+const installs = [
+  ["skills.sh", `npx skills add ${repoSlug} --skill agenthost`],
+  ["Hermes", `hermes skills tap add ${repoSlug}`],
+  ["OpenClaw", `openclaw skills install @ceifa/agenthost`],
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agenthost — manifest</title>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style is:global>
+      :root {
+        --paper: #fff;
+        --ink: #000;
+        --mute: #6b6b6b;
+        --rule: #d8d8d8;
+        --orange: #ff4a00;
+        --grot: "Space Grotesk", system-ui, sans-serif;
+        --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--paper); color: var(--ink);
+        font: 400 15px/1.6 var(--grot); -webkit-font-smoothing: antialiased;
+      }
+      a { color: inherit; text-decoration: none; }
+      .wrap { max-width: 1120px; margin: 0 auto; border-left: 1px solid var(--rule); border-right: 1px solid var(--rule); }
+      .pad { padding: 0 34px; }
+      .lbl {
+        font: 500 10px/1 var(--mono); letter-spacing: 0.18em; text-transform: uppercase;
+        color: var(--mute);
+      }
+
+      header.top {
+        display: flex; align-items: center; border-bottom: 1px solid var(--ink);
+      }
+      header.top .brand {
+        font: 700 15px/1 var(--grot); letter-spacing: -0.01em; padding: 15px 20px;
+        background: var(--orange); color: #fff;
+      }
+      header.top .strip { padding: 0 20px; font: 500 10px/1 var(--mono); letter-spacing: 0.18em; color: var(--mute); text-transform: uppercase; }
+      header.top nav { margin-left: auto; display: flex; }
+      header.top nav a { padding: 15px 20px; border-left: 1px solid var(--rule); font-size: 13px; }
+      header.top nav a:hover { background: var(--orange); color: #fff; }
+
+      /* hero: headline block + a facing column of hard facts */
+      .hero { display: grid; grid-template-columns: 1.4fr 1fr; border-bottom: 1px solid var(--ink); }
+      .hero > div { padding: 52px 34px; }
+      .hero > div + div { border-left: 1px solid var(--rule); }
+      h1 {
+        margin: 18px 0 0; font-weight: 700; font-size: clamp(38px, 6vw, 70px);
+        line-height: 0.95; letter-spacing: -0.045em; text-transform: uppercase;
+      }
+      h1 span { color: var(--orange); }
+      .lead { margin: 26px 0 0; color: var(--mute); max-width: 46ch; }
+      .facts { display: flex; flex-direction: column; justify-content: center; height: 100%; }
+      .facts dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0; }
+      .facts dt { border-top: 1px solid var(--rule); padding: 11px 0; }
+      .facts dd { border-top: 1px solid var(--rule); padding: 11px 0; margin: 0; text-align: right; font: 500 13px/1.4 var(--mono); }
+
+      /* command rows */
+      .row { border-bottom: 1px solid var(--rule); padding: 26px 34px; }
+      .row .lbl { display: block; margin-bottom: 14px; }
+      .row pre { margin: 0; font: 400 13px/1.85 var(--mono); overflow-x: auto; }
+      .p, .c { color: var(--mute); }
+      .s { color: var(--ink); }
+
+      /* signature: the receipt */
+      .receipt-zone {
+        display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--ink);
+      }
+      .receipt-zone .why { padding: 34px; border-right: 1px solid var(--rule); }
+      .receipt-zone .why h2 { margin: 14px 0 0; font-size: 26px; font-weight: 700; letter-spacing: -0.03em; text-transform: uppercase; line-height: 1.05; }
+      .receipt-zone .why p { color: var(--mute); font-size: 14px; max-width: 38ch; }
+      .receipt-wrap { padding: 34px; display: flex; justify-content: center; }
+      .receipt {
+        position: relative; width: 100%; max-width: 400px; background: var(--paper);
+        border: 1px solid var(--ink); border-bottom: 0; padding: 22px 20px 22px;
+        font: 400 12px/1.7 var(--mono);
+        /* perforated bottom edge */
+        filter: drop-shadow(3px 3px 0 var(--ink));
+      }
+      /* torn edge: a row of half-circles bitten out of the bottom of the paper */
+      .receipt::after {
+        content: ""; position: absolute; left: 0; right: 0; bottom: -13px; height: 14px;
+        background: var(--paper);
+        border-left: 1px solid var(--ink); border-right: 1px solid var(--ink);
+        -webkit-mask: radial-gradient(circle 11px at 12px -2px, transparent 98%, #000) repeat-x 0 0 / 24px 100%;
+        mask: radial-gradient(circle 11px at 12px -2px, transparent 98%, #000) repeat-x 0 0 / 24px 100%;
+      }
+      .receipt h3 {
+        margin: 0 0 16px; font: 500 10px/1 var(--mono); letter-spacing: 0.18em;
+        text-transform: uppercase; padding-bottom: 12px; border-bottom: 1px dashed var(--rule);
+      }
+      .receipt .line { padding: 8px 0; border-bottom: 1px dashed var(--rule); }
+      .receipt .key { color: var(--mute); display: flex; justify-content: space-between; gap: 12px; }
+      .receipt .key em { font-style: normal; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+      .receipt .val { word-break: break-all; margin-top: 3px; }
+      .receipt .line.hot .val { color: var(--orange); font-weight: 500; }
+      .receipt .line.hot .key em { color: var(--orange); }
+      .stamp {
+        position: absolute; right: 12px; bottom: 16px; transform: rotate(-11deg);
+        border: 2px solid var(--orange); color: var(--orange);
+        font: 700 13px/1 var(--grot); letter-spacing: 0.2em; padding: 7px 10px; opacity: 0.85;
+      }
+
+      /* install */
+      .install { padding: 44px 34px 40px; }
+      .install h2 { margin: 14px 0 0; font-size: 26px; font-weight: 700; letter-spacing: -0.03em; text-transform: uppercase; }
+      .install p.lede { margin: 16px 0 0; color: var(--mute); max-width: 54ch; }
+      .installs { margin: 28px 0 0; padding: 0; list-style: none; }
+      .installs li {
+        display: grid; grid-template-columns: 9em 1fr; gap: 22px; padding: 12px 0;
+        border-top: 1px solid var(--rule); font: 400 13px/1.5 var(--mono);
+      }
+      .installs li:last-child { border-bottom: 1px solid var(--rule); }
+      .installs .who { color: var(--mute); }
+      .note { margin-top: 22px; font-size: 13.5px; color: var(--mute); max-width: 62ch; }
+      .note a { color: var(--orange); }
+
+      footer {
+        border-top: 1px solid var(--ink); padding: 18px 34px 46px;
+        display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center;
+        font: 500 10px/1.6 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute);
+      }
+      footer a:hover { color: var(--orange); }
+      footer .gh { margin-left: auto; }
+      :focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+      @media (max-width: 880px) {
+        .hero, .receipt-zone { grid-template-columns: 1fr; }
+        .hero > div + div, .receipt-zone .why { border-left: 0; border-right: 0; border-top: 1px solid var(--rule); }
+        .installs li { grid-template-columns: 1fr; gap: 2px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <span class="brand">agenthost</span>
+        <span class="strip">publish → private link</span>
+        <nav>
+          <a href="#skill">skill</a>
+          <a href="/llms.txt">llms.txt</a>
+          <a href={githubUrl}>github</a>
+        </nav>
+      </header>
+
+      <div class="hero">
+        <div>
+          <span class="lbl">Publishing for agents</span>
+          <h1>One file in.<br /><span>A private link out.</span></h1>
+          <p class="lead">Your agent publishes a site or sends a large file, then gets back a
+          private link to hand a human. Plain curl, nothing to install.</p>
+        </div>
+        <div class="facts">
+          <dl>
+            <dt class="lbl">Install step</dt><dd>none</dd>
+            <dt class="lbl">Transport</dt><dd>POST</dd>
+            <dt class="lbl">Visibility</dt><dd>private</dd>
+            <dt class="lbl">Typical publish</dt><dd>412 ms</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="lbl">01 — publish a built folder</span>
+        <pre><code set:html={cmdHtml} /></pre>
+      </div>
+
+      <div class="receipt-zone">
+        <div class="why">
+          <span class="lbl">02 — what comes back</span>
+          <h2>One of these<br />is for a person.</h2>
+          <p>The share link signs a visitor in once. Everything else on the receipt stays with
+          your agent — the owner token is shown exactly once.</p>
+        </div>
+        <div class="receipt-wrap">
+          <div class="receipt">
+            <h3>Publish receipt · myblog</h3>
+            {receipt.map(([k, v, note, hot]) => (
+              <div class:list={["line", hot && "hot"]}>
+                <div class="key"><span>{k}</span><em>{note}</em></div>
+                <div class="val">{v}</div>
+              </div>
+            ))}
+            <div class="stamp">PRIVATE</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="lbl">03 — one file, skip the tar</span>
+        <pre><code set:html={fileHtml} /></pre>
+      </div>
+
+      <div class="row">
+        <span class="lbl">04 — redeploy, same URL, existing links keep working</span>
+        <pre><code set:html={redeployHtml} /></pre>
+      </div>
+
+      <div class="install" id="skill">
+        <span class="lbl">Install as an Agent Skill</span>
+        <h2>It is a SKILL.md</h2>
+        <p class="lede">Its description tells the model to reach for it the moment built output
+        needs to leave the machine.</p>
+        <ul class="installs">
+          {installs.map(([who, cmd]) => (<li><span class="who">{who}</span><span>{cmd}</span></li>))}
+        </ul>
+        <p class="note">No CLI? Tell your agent to install the agenthost skill from agenthost.page.
+        Reading this as an agent? Load <a href={`${githubUrl}/tree/main/skills/agenthost`}>{repoSlug}/skills/agenthost</a> directly.</p>
+      </div>
+
+      <footer>
+        <span>agenthost</span>
+        <a href="/llms.txt">llms.txt</a>
+        <span>Free to use · X-Robots-Tag: noindex</span>
+        <a class="gh" href={githubUrl}>github</a>
+      </footer>
+    </div>
+  </body>
+</html>

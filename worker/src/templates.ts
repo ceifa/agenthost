@@ -1,4 +1,12 @@
-// Branded HTML the Worker generates: interstitial, share widget, markdown shell, 404.
+// Branded HTML the Worker generates: interstitial, share widget, live-reload probe, markdown shell, 404.
+
+import { LIVE } from "./config";
+// Browser scripts, written readably in ./client/*.ts and minified into strings by
+// scripts/build-client.mjs. Each reads its parameters from data- attributes on
+// its own <script> tag.
+import LIVE_JS from "./client/gen/live";
+import COPY_LINK_JS from "./client/gen/copy-link";
+import DOC_JS from "./client/gen/doc";
 
 export function esc(s: string): string {
   return s
@@ -42,12 +50,18 @@ ${opts.wrong ? '<div class="err">Incorrect key — try again.</div>' : ""}
 }
 
 export function shareWidget(shareUrl: string): string {
-  const safe = JSON.stringify(shareUrl);
   return `<div id="as-share" style="position:fixed;right:16px;bottom:16px;z-index:2147483647;font:13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
 <button id="as-share-btn" style="display:flex;align-items:center;gap:7px;background:#16181c;color:#e9e7e2;border:1px solid #32343a;border-radius:999px;padding:9px 15px;font-weight:500;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.28)">
 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
 <span id="as-share-label">Share</span></button></div>
-<script>(function(){var u=${safe};var b=document.getElementById('as-share-btn'),l=document.getElementById('as-share-label');b.addEventListener('click',function(){var done=function(){l.textContent='Copied!';setTimeout(function(){l.textContent='Share'},1500)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u).then(done).catch(function(){prompt('Copy this link:',u)})}else{prompt('Copy this link:',u)}})})();</script>`;
+<script data-url="${esc(shareUrl)}" data-button="as-share-btn" data-label="as-share-label">${COPY_LINK_JS}</script>`;
+}
+
+// Live reload, injected next to the Share widget on every served HTML page. The
+// behaviour is documented in client/live.ts; the version tag and the LIVE tuning
+// constants ride along as data- attributes so config.ts stays the single source.
+export function liveScript(version: string): string {
+  return `<script data-version="${esc(version)}" data-cfg="${esc(JSON.stringify(LIVE))}">${LIVE_JS}</script>`;
 }
 
 // Docs shell: prose in a sans measure of ~82ch, chrome and code in mono, one
@@ -87,7 +101,7 @@ article,.pager,.doc-actions,.raw{max-width:var(--measure);margin-inline:auto}
 article>:first-child{margin-top:0}
 h1,h2,h3,h4{line-height:1.25;letter-spacing:-.02em;overflow-wrap:break-word}
 h1{font-size:32px;margin:0 0 24px}
-h2{font-size:23px;margin:52px 0 16px;padding-top:20px;border-top:1px solid var(--line)}
+h2{font-size:23px;margin:56px 0 16px}
 h3{font-size:18px;margin:32px 0 12px}
 h4{font-size:16px;margin:26px 0 10px}
 .anchor{opacity:0;margin-left:.35em;color:var(--dim);font-weight:400;transition:opacity .12s}
@@ -250,19 +264,6 @@ ${toc}</div>
 <script>${DOC_JS}</script>${mermaidScript}</body></html>`;
 }
 
-// Progressive enhancement only: a copy button per code block, one for the whole
-// markdown source, and wide tables get their own scroll container so they never
-// stretch the prose column.
-const DOC_JS = `(function(){
-var t=document.querySelectorAll("article table");for(var i=0;i<t.length;i++){var w=document.createElement("div");w.className="scroll";t[i].parentNode.insertBefore(w,t[i]);w.appendChild(t[i])}
-if(!navigator.clipboard)return;
-var flash=function(b,text){return function(){navigator.clipboard.writeText(text()).then(function(){var prev=b.getAttribute("data-label");b.textContent="Copied";setTimeout(function(){b.textContent=prev},1400)})}};
-document.querySelectorAll("article .codeblock>pre>code").forEach(function(c){var b=document.createElement("button");b.className="copy";b.type="button";b.textContent="Copy";b.setAttribute("data-label","Copy");
-b.addEventListener("click",flash(b,function(){return c.textContent}));c.parentNode.parentNode.appendChild(b)});
-var src=document.getElementById("raw-src");
-if(src){var cb=document.createElement("button");cb.className="act";cb.type="button";cb.textContent="Copy";cb.setAttribute("data-label","Copy");
-cb.addEventListener("click",flash(cb,function(){return src.textContent}));document.querySelector(".doc-actions").appendChild(cb)}})();`;
-
 function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;
@@ -281,8 +282,7 @@ export function assetDownloadHtml(opts: {
   downloadUrl: string;
   shareUrl: string;
 }): string {
-  const share = JSON.stringify(opts.shareUrl);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><title>${esc(opts.name)} · agenthost</title>
 <style>
@@ -301,7 +301,7 @@ export function assetDownloadHtml(opts: {
 <h1>${esc(opts.name)}</h1><div class="meta">${esc(formatBytes(opts.bytes))} · ${esc(opts.contentType)}</div>
 <div class="actions"><a class="button primary" href="${esc(opts.downloadUrl)}">Download</a><button class="button" id="share" type="button">Copy link</button></div>
 <div class="brand">Shared with <a href="https://agenthost.page">agenthost</a></div>
-</main><script>(function(){var b=document.getElementById('share'),u=${share};b.addEventListener('click',function(){var done=function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy link'},1400)};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u).then(done).catch(function(){prompt('Copy this link:',u)})}else{prompt('Copy this link:',u)}})})();</script></body></html>`;
+</main><script data-url="${esc(opts.shareUrl)}" data-button="share">${COPY_LINK_JS}</script></body></html>`;
 }
 
 export function assetPendingHtml(name: string): string {
