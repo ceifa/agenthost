@@ -28,7 +28,7 @@ Body is either a **gzipped tar** of a directory or a **single raw file**. No `Co
 - Anything else → one document: Markdown as `README.md`, HTML as `index.html`. Both serve at `/`.
 - Any other file type → send `?file=<name>`; the extension sets the served `Content-Type`.
 
-Single-file publish replaces the whole site with that one file. Curl examples are in [SKILL.md](../SKILL.md).
+Single-file publish replaces the whole site with that one file. `id` defaults to `site` when omitted. A zip body is rejected with 400; send a gzipped tar. Curl examples are in [SKILL.md](../SKILL.md).
 
 ### Response (200)
 
@@ -47,7 +47,7 @@ Single-file publish replaces the whole site with that one file. Curl examples ar
 }
 ```
 
-`accessKey` and `ownerToken` are returned **only on a site's first publish**; redeploys preserve them silently.
+`accessKey` and `ownerToken` are returned **only on a site's first publish**; redeploys preserve them silently, and their `shareUrl` comes back bare (no `?k=`), identical to `url`. `ownerToken` and `claimUrl` appear only when the publish minted a new account, which every publish without `Authorization` does.
 
 ## Direct asset upload
 
@@ -57,7 +57,7 @@ Large binary assets use a three-request control flow; the payload itself goes di
 2. **Upload** — `PUT` the file to the returned `uploadUrl`, sending every returned `uploadHeaders` value exactly. The hostname is `*.r2.cloudflarestorage.com`; the Worker never receives the body.
 3. **Complete** — `POST` the returned `completeUrl` with owner auth. Agenthost checks the R2 object size and marks the share page ready.
 
-Use `scripts/upload-asset.sh <file>` instead of assembling these calls manually. It prints the private `shareUrl`. Opening that URL shows the file name, type, size, and a **Download** button. The button targets a short-lived presigned R2 GET, so downloads also bypass the Worker. The object stores `Content-Disposition: attachment`, making browsers download instead of trying to render it.
+The initiate response carries `assetId`, `uploadUrl`, `uploadHeaders` (`content-length`, `content-type`, `content-disposition`), `uploadExpiresIn`, `completeUrl`, `url`, `shareUrl` and `accessKey`. The asset's `shareUrl` and `accessKey` exist **only** in that response; complete returns `{ ok, url, name, bytes }`. Opening the `shareUrl` shows the file name, type, size, and a **Download** button. The button targets a short-lived presigned R2 GET, so downloads also bypass the Worker. The object stores `Content-Disposition: attachment`, making browsers download instead of trying to render it.
 
 The upload URL expires after 15 minutes and is restricted by its signature to one object, exact byte length, content type, and download filename. The download URL expires after five minutes and is generated whenever the share page opens.
 

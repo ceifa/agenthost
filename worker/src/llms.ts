@@ -36,10 +36,14 @@ tar czf - -C ./dist . | curl --data-binary @- \\
   'https://${apexHost}/publish?id=myblog&username=<username>'
 
 ## Large downloadable assets (existing account required)
-Use the skill's scripts/upload-asset.sh helper with AGENTHOST_USERNAME and
-AGENTHOST_OWNER_TOKEN set. It initiates a signed upload, streams the file directly
-from the client to R2, completes it, and prints a private shareUrl. Opening the
-shareUrl shows a Download button whose bytes also come directly from R2.
+Three calls, all with -H 'Authorization: Bearer <ownerToken>' except the PUT:
+1. POST https://${apexHost}/asset?username=<username> with JSON
+   {"name":"demo.mp4","bytes":<exact size>,"contentType":"video/mp4"}
+   → uploadUrl, uploadHeaders, completeUrl, shareUrl (the shareUrl only comes back here)
+2. curl --upload-file demo.mp4 -H '<each uploadHeaders entry>' '<uploadUrl>'   (within 15 min)
+3. POST <completeUrl> → {"ok":true}
+The file goes straight from the client to R2. Opening the shareUrl shows a Download
+button whose bytes also come directly from R2.
 Free max: ${mb(freeAssets.perAsset)} per asset. Paid max: 5 GB per asset.
 
 ## Site asset paths
