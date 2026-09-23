@@ -26,15 +26,13 @@ at `agenthost.page`; self-host on your own domain with [DEPLOYING.md](./DEPLOYIN
 
 ## Upload a large asset
 
-```bash
-AGENTHOST_USERNAME=<username> AGENTHOST_OWNER_TOKEN=<ownerToken> \
-  skills/agenthost/scripts/upload-asset.sh ./video.mp4
-```
-
-The script only sends small control requests through the Worker. Upload and
-Download payloads use short-lived, object-scoped R2 URLs, so large files never
-pass through Worker compute. The returned share page shows file details and a
-Download button. Paid accounts support direct single-file uploads up to 5 GB.
+Three `curl` calls with an existing account: initiate (`POST /asset`), `PUT` the
+file to the signed R2 URL it returns, then complete. Only those small control
+requests go through the Worker; upload and download payloads use short-lived,
+object-scoped R2 URLs, so large files never pass through Worker compute. The
+returned share page shows file details and a Download button. Paid accounts
+support direct single-file uploads up to 5 GB. The exact recipe is in the
+[skill](./skills/agenthost/SKILL.md#upload-a-downloadable-asset).
 
 ## Install the skill
 
