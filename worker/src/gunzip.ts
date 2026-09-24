@@ -11,34 +11,44 @@ import { Gunzip } from "fflate";
 
 export function gunzipStream(input: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
   const reader = input.getReader();
-  let producedAny = false;
+  let produced = 0;
   let gz: Gunzip;
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
       gz = new Gunzip((chunk) => {
         if (chunk.length) {
-          producedAny = true;
+          produced++;
           controller.enqueue(chunk);
         }
       });
     },
     async pull(controller) {
+      // A pull that returns without enqueuing is never called again, and the
+      // consumer's read hangs. Incompressible input (video, jpeg) deflates to
+      // stored blocks that fflate holds until whole, so one input chunk often
+      // inflates to nothing: keep feeding until something comes out.
+      const before = produced;
       try {
-        const { value, done } = await reader.read();
-        try {
-          gz.push(done ? new Uint8Array(0) : value!, done);
-        } catch (e) {
-          // Trailing padding after a complete member is fine; a throw before any
-          // output is real corruption and must surface.
-          if (producedAny) {
+        while (produced === before) {
+          const { value, done } = await reader.read();
+          try {
+            gz.push(done ? new Uint8Array(0) : value!, done);
+          } catch (e) {
+            // Trailing padding after a complete member is fine; a throw before any
+            // output is real corruption and must surface.
+            if (produced) {
+              controller.close();
+              await reader.cancel();
+              return;
+            }
+            throw e;
+          }
+          if (done) {
             controller.close();
-            await reader.cancel();
             return;
           }
-          throw e;
         }
-        if (done) controller.close();
       } catch (e) {
         controller.error(e);
       }

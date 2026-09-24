@@ -57,13 +57,17 @@ export async function peek(input: ReadableStream<Uint8Array>, n = SNIFF_BYTES): 
         return;
       }
       if (ended) return;
-      const { value, done } = await reader.read();
-      if (done) {
-        ended = true;
-        controller.close();
-        return;
+      // A pull that returns without enqueuing is never called again, so skip
+      // empty chunks here instead of handing back nothing.
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) {
+          ended = true;
+          controller.close();
+          return;
+        }
+        if (value?.byteLength) return controller.enqueue(value);
       }
-      if (value?.byteLength) controller.enqueue(value);
     },
     async cancel(reason) {
       await reader.cancel(reason);
