@@ -21,6 +21,10 @@ curl -s --data-binary @report.md \\
 tar czf - -C ./dist . | curl -s --data-binary @- \\
   https://${apexHost}/publish?id=myblog
 
+# Large or binary folder (images, video, 3D models, over a few MB)? Drop the z:
+# \`tar cf -\`. Gzip barely shrinks those, and inflating them costs the server
+# time a big publish may not have.
+
 ## Response (JSON)
 {
   "shareUrl": "https://cleverotter4f2-myblog.${apexHost}/?k=<key>",  // hand THIS to a human; private + pre-authed

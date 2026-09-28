@@ -198,11 +198,15 @@ tar czf - -C ./dist . | curl -s --data-binary @- \
    `_meta.bytes` (`R2.list` the user prefix). Effective cap for this deploy =
    `min(perSiteCap, userQuota − usageOfOtherSites)` (see §9 for the numbers). This makes the
    per-user quota fail *fast* during the stream rather than after.
-4. **Stream-untar to R2.** Pipe the body through `DecompressionStream('gzip')` + a
-   streaming tar parser; write each entry **straight** to
-   `sites/{username}/{siteId}/{path}` (overwrite-in-place) with **bounded concurrency (≤6
-   in-flight puts)** so the 128 MB per-isolate memory limit is never threatened. **Never
-   buffer the whole archive.** Tally total bytes + file count as you go. Reject: paths
+4. **Stream-untar to R2.** Pipe the body through native `node:zlib` gunzip (not
+   `DecompressionStream`, which rejects bsdtar's zero-padding after the member and drops
+   the archive's tail) + a streaming tar parser; stream each
+   entry **straight** to `sites/{username}/{siteId}/{path}` (overwrite-in-place) through a
+   `FixedLengthStream`, its bytes as slices of the input chunks, with **bounded concurrency
+   (≤3 in-flight puts)**. **Never buffer the whole archive, nor a whole file:** memory stays
+   flat, and on the Free plan's ~10 ms CPU budget the Worker can't afford to touch the
+   bytes. A bare tar skips inflation entirely, the cheapest path for large or
+   already-compressed payloads. Tally total bytes + file count as you go. Reject: paths
    containing `..`, symlinks, files over the per-file cap, file count over the cap, or total
    over the effective budget from step 3.
 5. **Delete orphans.** `R2.list` the site prefix and delete keys present in the previous

@@ -16,7 +16,7 @@ import {
   clientIp,
 } from "./ids";
 import { verifyOwner } from "./auth";
-import { parseTar, TarLimitError } from "./tar";
+import { parseTar, TarLimitError, type TarEntry } from "./tar";
 import { gunzipStream } from "./gunzip";
 import { peek, isGzip, isTar, isZip, sniffDocKind } from "./sniff";
 import {
@@ -64,6 +64,25 @@ class PutGate {
     while (this.inFlight.size) await Promise.race(this.inFlight);
     if (this.firstError) throw this.firstError;
   }
+}
+
+// Streams one tar entry into R2 without buffering it. `read` settles once the
+// entry's bytes are all consumed, and only then may the parser advance; `stored`
+// settles when R2 has the object.
+function streamEntry(
+  bucket: R2Bucket,
+  key: string,
+  entry: TarEntry,
+  contentType: string,
+): { read: Promise<void>; stored: Promise<unknown> } {
+  const opts = { httpMetadata: { contentType } };
+  if (entry.size === 0) return { read: Promise.resolve(), stored: bucket.put(key, new Uint8Array(0), opts) };
+  // R2 needs the length up front; FixedLengthStream carries it and rejects a mismatch.
+  const { readable, writable } = new FixedLengthStream(entry.size);
+  const stored = bucket.put(key, readable, opts);
+  // A failed put stops reading, so race it: otherwise the pipe waits forever.
+  const read = Promise.race([entry.body.pipeTo(writable), stored.then(() => {})]);
+  return { read, stored };
 }
 
 // Returns a safe relative key, or null to skip the entry.
@@ -318,10 +337,9 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
         fileCount += 1;
         const key = siteFileKey(username, siteId, path);
         writtenKeys.add(key);
-        const body = entry.body; // per-entry buffer, safe to hold across the put
-        await gate.add(() =>
-          env.SITES.put(key, body, { httpMetadata: { contentType: contentTypeFor(path) } }),
-        );
+        const { read, stored } = streamEntry(env.SITES, key, entry, contentTypeFor(path));
+        await gate.add(() => stored);
+        await read;
       }
       await gate.drain();
     }

@@ -36,10 +36,9 @@ export const ASSET_LIMITS: Record<"free" | "paid", { perAsset: number; perUser: 
   paid: { perAsset: 5 * GB, perUser: Number.MAX_SAFE_INTEGER },
 };
 
-// In-flight R2 puts during untar. Each holds its entry buffer alive, so
-// PUT_CONCURRENCY * perFile (25 MB) must stay well under the Worker's ~128 MB
-// isolate memory limit — 3 * 25 MB = 75 MB leaves room for the entry being read
-// plus gunzip/tar buffers. Raising perFile or this value together can OOM.
+// In-flight R2 puts during untar. Entries stream into R2 one at a time, so this
+// only overlaps a put's commit with reading the next entry; no put holds a
+// buffered file, and perFile no longer bounds memory.
 export const PUT_CONCURRENCY = 3;
 export const DEFAULT_SITE_ID = "site";
 export const AUTH_COOKIE_PREFIX = "as_auth_";
