@@ -2,8 +2,8 @@
 //
 // Inflation runs in native zlib: on the Free plan a publish gets ~10 ms of CPU,
 // and a JS inflater (fflate) spent several times that on a few MB. It has to be
-// node:zlib, not `DecompressionStream`: `bsdtar czf -` to a pipe (the canonical
-// publish command on macOS) zero-pads past the gzip member, and the web stream
+// node:zlib, not `DecompressionStream`: `bsdtar czf -` to a pipe (a gzipped
+// publish on macOS) zero-pads past the gzip member, and the web stream
 // rejects trailing bytes by erroring, which throws away output still queued —
 // the end of the archive. node:zlib ignores non-gzip bytes after a member, so
 // padding passes and any error that remains is real corruption.

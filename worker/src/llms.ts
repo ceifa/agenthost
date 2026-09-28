@@ -17,13 +17,9 @@ export const llmsTxt = (apexHost: string): string => `# agenthost — publish a 
 curl -s --data-binary @report.md \\
   https://${apexHost}/publish?id=report
 
-# A whole folder — gzip a tar of it:
-tar czf - -C ./dist . | curl -s --data-binary @- \\
+# A whole folder — pipe a tar of it:
+tar cf - -C ./dist . | curl -s --data-binary @- \\
   https://${apexHost}/publish?id=myblog
-
-# Large or binary folder (images, video, 3D models, over a few MB)? Drop the z:
-# \`tar cf -\`. Gzip barely shrinks those, and inflating them costs the server
-# time a big publish may not have.
 
 ## Response (JSON)
 {
@@ -35,7 +31,7 @@ tar czf - -C ./dist . | curl -s --data-binary @- \\
 }
 
 ## Redeploy the SAME url (needs ownerToken)
-tar czf - -C ./dist . | curl --data-binary @- \\
+tar cf - -C ./dist . | curl --data-binary @- \\
   -H 'Authorization: Bearer <ownerToken>' \\
   'https://${apexHost}/publish?id=myblog&username=<username>'
 

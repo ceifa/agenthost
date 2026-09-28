@@ -13,7 +13,7 @@ Authenticated requests also need the account `username`, as `?username=<name>` o
 
 ## POST /publish
 
-Body is either a **gzipped tar** of a directory or a **single raw file**. No `Content-Type` header required.
+Body is either a **tar** of a directory or a **single raw file**. No `Content-Type` header required.
 
 | Param | Where | Notes |
 |---|---|---|
@@ -28,7 +28,7 @@ Body is either a **gzipped tar** of a directory or a **single raw file**. No `Co
 - Anything else → one document: Markdown as `README.md`, HTML as `index.html`. Both serve at `/`.
 - Any other file type → send `?file=<name>`; the extension sets the served `Content-Type`.
 
-Single-file publish replaces the whole site with that one file. `id` defaults to `site` when omitted. A zip body is rejected with 400; send a gzipped tar. Curl examples are in [SKILL.md](../SKILL.md).
+Single-file publish replaces the whole site with that one file. `id` defaults to `site` when omitted. A zip body is rejected with 400; send a tar. Curl examples are in [SKILL.md](../SKILL.md).
 
 ### Response (200)
 

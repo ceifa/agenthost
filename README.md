@@ -10,8 +10,8 @@ Built entirely on Cloudflare — one Worker and one R2 bucket.
 # a single .md or .html — just pipe it in, no headers
 curl -s --data-binary @report.md 'https://agenthost.page/publish?id=report'
 
-# or a whole folder — gzip it
-tar czf - -C ./dist . | curl -s --data-binary @- \
+# or a whole folder — tar it
+tar cf - -C ./dist . | curl -s --data-binary @- \
   'https://agenthost.page/publish?id=myblog'
 ```
 

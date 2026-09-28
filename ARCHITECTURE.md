@@ -174,7 +174,7 @@ because usernames are auto-generated with entropy.
 **Canonical, zero-install command an agent runs:**
 
 ```bash
-tar czf - -C ./dist . | curl -s --data-binary @- \
+tar cf - -C ./dist . | curl -s --data-binary @- \
   https://agenthost.page/publish
 ```
 

@@ -38,7 +38,7 @@ curl -s --data-binary @report.md \
 What the body can be:
 
 - **One `.md` or `.html`**: served at `/`, Markdown rendered. The type is sniffed from the bytes, so no `Content-Type` is needed.
-- **A folder**: pipe a gzipped tar, `tar czf - -C ./dist . | curl -s --data-binary @- …`. Over a few MB of images, video or models, drop the `z` (`tar cf -`): gzip barely shrinks them, and inflating them can push a big publish over the server's time budget. Zip is rejected. A folder of `.md` becomes a docs site (sidebar, `README.md` as home, `SUMMARY.md` for order and nesting, GFM, mermaid, highlighted code).
+- **A folder**: pipe a tar, `tar cf - -C ./dist . | curl -s --data-binary @- …`. Zip is rejected. A folder of `.md` becomes a docs site (sidebar, `README.md` as home, `SUMMARY.md` for order and nesting, GFM, mermaid, highlighted code).
 - **Any other single file**: add `&file=<name>`; the extension sets the served type. It replaces the whole site.
 
 Absolute (`/css/app.css`) and relative (`./css/app.css`) asset paths both resolve, since each site is its own subdomain root.

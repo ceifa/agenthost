@@ -166,7 +166,7 @@ function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
   if (claimsArchive(contentType)) return { kind: "archive", gzipped: true };
 
   if (isZip(head)) {
-    return { kind: "invalid", message: "zip is not supported — send a gzipped tar (tar czf - -C ./dist .)" };
+    return { kind: "invalid", message: "zip is not supported — send a tar (tar cf - -C ./dist .)" };
   }
 
   // Not an archive, so it's one document: prefer the name it came with, since the
@@ -180,7 +180,7 @@ function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
   if (kind === null) {
     return {
       kind: "invalid",
-      message: "unrecognized body — send a gzipped tar, a .md/.html document, or name it with ?file=<name>",
+      message: "unrecognized body — send a tar, a .md/.html document, or name it with ?file=<name>",
     };
   }
   // Named so it serves at `/`: html as-is, markdown as the docs home.
@@ -222,7 +222,7 @@ const fail = (status: number, message: string): PublishError => ({ status, messa
 
 export async function handlePublish(req: Request, env: Env): Promise<Response> {
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
-  if (!req.body) return json({ error: "empty body — pipe a gzipped tar or a single file" }, 400);
+  if (!req.body) return json({ error: "empty body — pipe a tar or a single file" }, 400);
 
   // Per-IP throttle before any account minting or R2 work — this is the main
   // lever against anonymous mass-publishing / storage exhaustion.

@@ -5,7 +5,7 @@
 // contents as a stream of the input's own chunks — sliced, never copied or
 // buffered whole — so a file flows to R2 without the Worker touching its bytes.
 // Handles ustar, GNU long names ('L'), and PAX extended headers ('x', which
-// macOS/bsdtar emits) so the canonical `tar czf -` pipe works everywhere.
+// macOS/bsdtar emits) so the canonical `tar cf -` pipe works everywhere.
 
 export type TarEntryType = "file" | "dir" | "symlink" | "hardlink" | "other";
 
