@@ -27,7 +27,7 @@ function siteHeaders(extra?: Record<string, string>): Headers {
   return h;
 }
 
-function htmlResponse(body: string, status: number): Response {
+function htmlResponse(body: BodyInit | null, status: number): Response {
   return new Response(body, {
     status,
     headers: siteHeaders({ "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" }),
@@ -37,7 +37,7 @@ function htmlResponse(body: string, status: number): Response {
 // A site is now the root of its own subdomain, so both absolute (/css/app.css)
 // and relative (./css/app.css) paths resolve correctly with no <base> tweaking —
 // we just append the per-request Share widget and the live-reload probe.
-function decorate(html: string, opts: { shareUrl: string | null; live: string }, status: number): Response {
+function decorate(html: BodyInit | null, opts: { shareUrl: string | null; live: string }, status: number): Response {
   const input = htmlResponse(html, status);
   const tail = (opts.shareUrl ? shareWidget(opts.shareUrl) : "") + liveScript(opts.live);
   const rw = new HTMLRewriter().on("body", {
@@ -171,6 +171,32 @@ const CACHE_HOST = "https://as-cache.internal";
 // fresh cache key and orphans the old entry. Clients always get no-cache (above).
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
 
+// Resolving a route can cost several HEADs or a whole Markdown listing, even
+// when the body is already cached. Cache successful resolutions with the same
+// generation as the body. Keep them on a separate host so published filenames
+// cannot collide with this internal data. Access metadata is never cached here.
+async function resolveTargetCached(
+  env: Env,
+  ctx: ExecutionContext,
+  username: string,
+  siteId: string,
+  rest: string,
+  gen: number,
+): Promise<Target | null> {
+  const cache = caches.default;
+  const key = new Request(`https://as-routes.internal/${username}/${siteId}/g${gen}/r${RENDER_VERSION}/${rest}`);
+  const hit = await cache.match(key);
+  if (hit) return classify(username, siteId, await hit.text());
+
+  const target = await resolveTarget(env, username, siteId, rest);
+  if (target) {
+    ctx.waitUntil(cache.put(key, new Response(target.relPath, {
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": IMMUTABLE_CACHE },
+    })));
+  }
+  return target;
+}
+
 // Static bytes are the file the site published, so the generation alone pins them.
 // A rendered markdown page is *our* HTML, so it also depends on the renderer that
 // produced it — RENDER_VERSION puts that in the key, which is what lets a Worker
@@ -214,10 +240,10 @@ export async function handleSite(
   const share = shareUrl(host, gate.key);
   const live = versionTag(gen);
 
-  const target = await resolveTarget(env, username, siteId, rest);
+  const target = await resolveTargetCached(env, ctx, username, siteId, rest, gen);
   if (!target) {
     const custom = await env.SITES.get(siteFileKey(username, siteId, "404.html"));
-    if (custom) return decorate(await custom.text(), { shareUrl: share, live }, 404);
+    if (custom) return decorate(custom.body, { shareUrl: share, live }, 404);
     return htmlResponse(notFoundHtml(), 404);
   }
 
@@ -227,20 +253,19 @@ export async function handleSite(
   // Cache the undecorated body (gen-keyed, no access key); inject the Share
   // widget per request so a rotated key or public toggle takes effect without a
   // redeploy.
-  const serveHtmlCached = async (produce: () => Promise<string | null>): Promise<Response> => {
-    const hit = await cache.match(cacheReq);
-    let body: string;
-    if (hit) {
-      body = await hit.text();
-    } else {
+  const serveHtmlCached = async (produce: () => Promise<BodyInit | null>): Promise<Response> => {
+    let response = await cache.match(cacheReq);
+    if (!response) {
       const produced = await produce();
       if (produced === null) return htmlResponse(notFoundHtml(), 404);
-      body = produced;
-      ctx.waitUntil(
-        cache.put(cacheReq, new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": IMMUTABLE_CACHE } })),
-      );
+      response = new Response(produced, {
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": IMMUTABLE_CACHE },
+      });
+      ctx.waitUntil(cache.put(cacheReq, response.clone()));
     }
-    return decorate(body, { shareUrl: share, live }, 200);
+    // HTMLRewriter accepts a stream: readers can receive the first bytes before
+    // R2/cache finishes producing the page, without allocating a full HTML string.
+    return decorate(response.body, { shareUrl: share, live }, 200);
   };
 
   if (target.kind === "md" && !raw) {
@@ -253,22 +278,33 @@ export async function handleSite(
   if (target.kind === "html") {
     return serveHtmlCached(async () => {
       const obj = await env.SITES.get(target.key);
-      return obj ? obj.text() : null;
+      return obj ? obj.body : null;
     });
   }
 
   // ── static assets (incl. ?raw markdown): stream bytes, native 304/206 ──
   const conditional = req.headers.has("range") || req.headers.has("if-none-match") || req.headers.has("if-modified-since");
 
-  if (!conditional) {
-    const hit = await cache.match(cacheReq);
-    if (hit) {
-      const h = new Headers(hit.headers);
-      h.set("x-robots-tag", "noindex, nofollow");
-      h.set("cache-control", "no-cache");
-      return new Response(hit.body, { status: hit.status, headers: h });
-    }
+  // Cloudflare's Cache API evaluates validators and byte ranges itself. Pass
+  // only these headers; per-reader cookies and keys never enter the cache.
+  const cacheHeaders = new Headers();
+  for (const name of ["range", "if-none-match", "if-modified-since"]) {
+    const value = req.headers.get(name);
+    if (value !== null) cacheHeaders.set(name, value);
   }
+  const hit = await cache.match(new Request(cacheReq, { headers: cacheHeaders }));
+  // Older generations may still have entries written before these headers were
+  // stored. Let R2 evaluate a condition the legacy cache entry cannot answer.
+  const supportsConditions = hit &&
+    (!req.headers.has("if-modified-since") || hit.status === 304 || hit.headers.has("last-modified")) &&
+    (!req.headers.has("range") || hit.status !== 200 || hit.headers.has("content-length"));
+  if (hit && supportsConditions) {
+    const h = new Headers(hit.headers);
+    h.set("x-robots-tag", "noindex, nofollow");
+    h.set("cache-control", "no-cache");
+    return new Response(hit.body, { status: hit.status, headers: h });
+  }
+  if (hit?.body) ctx.waitUntil(hit.body.cancel());
 
   const obj = await env.SITES.get(target.key, conditional ? { onlyIf: req.headers, range: req.headers } : undefined);
   if (!obj) return htmlResponse(notFoundHtml(), 404);
@@ -278,12 +314,14 @@ export async function handleSite(
   if (raw) h.set("content-type", "text/plain; charset=utf-8");
   else if (!h.has("content-type")) h.set("content-type", contentTypeFor(target.relPath));
   h.set("etag", obj.httpEtag);
+  h.set("last-modified", obj.uploaded.toUTCString());
 
   // Precondition matched (If-None-Match / If-Modified-Since) → no body present.
   if (!("body" in obj)) return new Response(null, { status: 304, headers: h });
 
   const bodyObj = obj as R2ObjectBody;
   let status = 200;
+  h.set("content-length", String(bodyObj.size));
   if (bodyObj.range && "offset" in bodyObj.range) {
     const offset = bodyObj.range.offset ?? 0;
     const length = bodyObj.range.length ?? bodyObj.size - offset;

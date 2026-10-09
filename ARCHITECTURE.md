@@ -274,9 +274,16 @@ Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` ena
      domain).
 2. The path is the file path within the site (`{rest}`); `siteId` came from the Host, not
    the path.
-3. Read `sites/{username}/{siteId}/_gen` → `gen` (strongly consistent; itself short-TTL
-   edge-cacheable if needed).
-4. Map path: `/` and `/dir/` → `index.html`. R2 key is `sites/{username}/{siteId}/{rest}`.
+3. Read `_meta` and `_gen` from R2 concurrently. Check takedowns and access before
+   consulting the content or route caches. These reads stay fresh so key rotation,
+   public/private changes, and completed publishes apply on the next request.
+4. Map path: `/` and `/dir/` → `index.html`; `/dir` tries the exact file before
+   `/dir/index.html`. A Markdown-only homepage uses the first valid SUMMARY entry,
+   README, or the first document. Successful resolutions are edge-cached under
+   `https://as-routes.internal/{username}/{siteId}/g{gen}/r{RENDER_VERSION}/{rest}`.
+   This avoids repeating R2 HEADs, listings, and SUMMARY reads on warm requests.
+   Misses are not cached. Only the resolved filename is stored; no access keys or
+   access decisions. The separate cache host prevents collisions with site files.
 5. **Cache check:** `cache.match` on a synthetic, generation-pinned key
    `cache://{username}/{siteId}/g{gen}/{rest}` (the `gen` is in the *cache* key, never the
    public URL). Hit → return. Because the key embeds `gen`, a deploy bumping `gen` orphans
@@ -285,11 +292,30 @@ Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` ena
    site, but that HTML belongs to *our* renderer, and `gen` only moves when the site
    republishes. Without it, shipping a renderer change would reach only sites that happen
    to publish again (`config.ts` — bump it when the markdown output changes).
-6. **Miss:** `R2.get(key, { onlyIf, range })` so R2 natively emits `304`/`206`. Miss →
-   try `{rest}/index.html`, else the site's `404.html`, else a generic 404. Set
-   content-type + `ETag` from `writeHttpMetadata`; respond with `Cache-Control: no-cache`
-   so browsers revalidate (cheap `304`s against the gen-keyed edge cache). No `<base>` is
-   injected for plain HTML (each site is its own subdomain root). `cache.put`, return.
+6. For static files (including raw Markdown), pass range and revalidation headers
+   to `cache.match`: Cloudflare can return `304`/`206` directly from the edge. Store
+   `ETag`, `Last-Modified`, and `Content-Length` with full responses to support this.
+   **Miss:** `R2.get(key, { onlyIf, range })` handles the same conditions. Legacy cache
+   entries without the required headers also fall back to R2. Partial/conditional
+   responses never overwrite the cached full object. Unresolved routes use the site's
+   `404.html`, else a generic 404. Client responses use `Cache-Control: no-cache`.
+   Published HTML and cached rendered Markdown stream through `HTMLRewriter`; only
+   uncached Markdown needs full text for parsing. Cache the undecorated body and inject
+   the Share widget/live-reload script per request. No `<base>` is injected.
+
+Warm requests still pay for the two fresh control-object reads, but no file-resolution
+R2 operations. The serving regression tests enforce these storage-operation budgets:
+
+| Warm request | Before | After |
+| --- | ---: | ---: |
+| Static asset | 3 | 2 |
+| Directory HTML at `/dir` | 4 | 2 |
+| Markdown homepage with SUMMARY | 5 | 2 |
+| Static asset revalidation / range | 4 | 2 |
+
+These are operation counts, not production latency measurements. Run
+`pnpm -C worker exec vitest run src/serve-performance.test.ts` to check the budgets,
+generation invalidation, access changes, streaming, and conditional-cache delegation.
 
 **`noindex` on all hosted sites.** Every response served from a user subdomain or custom
 domain carries `X-Robots-Tag: noindex, nofollow`. Hosted sites are never indexed — this
