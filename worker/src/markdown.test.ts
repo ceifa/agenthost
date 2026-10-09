@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { docHref, parseSummary, renderDoc } from "./markdown";
+import { describe, expect, it, vi } from "vitest";
+import { docHref, parseSummary, renderDoc, readMarkdownSource } from "./markdown";
+import { RENDER_LIMITS } from "./config";
 
 const index = (files: string[], nav: ReturnType<typeof parseSummary> | null = null) => ({ files, nav });
 
@@ -24,6 +25,9 @@ describe("doc links", () => {
 });
 
 describe("SUMMARY.md", () => {
+  it("uses filename navigation when a SUMMARY exceeds the rendering budget", () => {
+    expect(parseSummary("- [Home](README.md)\n" + "x".repeat(RENDER_LIMITS.documentChars))).toEqual([]);
+  });
   it("keeps list indentation as nav depth", () => {
     const nav = parseSummary(`# Summary
 
@@ -54,6 +58,37 @@ describe("SUMMARY.md", () => {
 });
 
 describe("rendered document", () => {
+  it("bounds highlighting per block and across the document, retaining escaped code", () => {
+    const code = "const x = '<tag>';\n".repeat(90);
+    const fence = "```js\n" + code + "```\n";
+    const html = renderDoc("docs", "a.md", fence.repeat(4), index(["a.md"]));
+    expect(html.match(/<code class="hljs">/g)).toHaveLength(2);
+    expect(html).toContain(`<code class="language-js">const x = '&lt;tag&gt;'`);
+    const large = renderDoc("docs", "a.md", "```js\n" + "const x = 1;\n".repeat(200) + "```", index(["a.md"]));
+    expect(large).not.toContain('<code class="hljs">');
+    expect(large).toContain("const x = 1;");
+  });
+
+  it("shows oversized documents as escaped text instead of parsing Markdown", () => {
+    const source = "# Large\n<script>evil()</script>\n" + "x".repeat(RENDER_LIMITS.documentChars) + "tail-marker";
+    const html = renderDoc("docs", "a.md", source, index(["a.md"]));
+    expect(html).not.toContain('<h1 id="large">');
+    expect(html).not.toContain("<script>evil()</script>");
+    expect(html).toContain("&lt;script&gt;evil()&lt;/script&gt;");
+    expect(html).toContain("# Large");
+    expect(html).not.toContain("tail-marker");
+    expect(html).toContain('href="/a.md?raw">Open the complete source</a>');
+  });
+
+  it("stops reading oversized R2 bodies and preserves UTF-8 across chunks", async () => {
+    const cancel = vi.fn();
+    const large = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode("x".repeat(RENDER_LIMITS.documentChars + 1))); }, cancel });
+    expect((await readMarkdownSource({ body: large } as R2ObjectBody)).length).toBe(RENDER_LIMITS.documentChars + 1);
+    expect(cancel).toHaveBeenCalledOnce();
+    const bytes = new TextEncoder().encode("# Olá 👋");
+    const utf8 = new ReadableStream<Uint8Array>({ start(c) { for (const byte of bytes) c.enqueue(new Uint8Array([byte])); c.close(); } });
+    expect(await readMarkdownSource({ body: utf8 } as R2ObjectBody)).toBe("# Olá 👋");
+  });
   const doc = `# Report
 
 ## Situação atual

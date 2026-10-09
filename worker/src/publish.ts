@@ -1,5 +1,5 @@
-// POST /publish — streaming untar → bounded R2 puts → delete orphans → _meta →
-// bump _gen.
+// POST /publish — streaming files → bounded R2 puts → delete orphans → commit
+// generation and access metadata together.
 
 import type { Env } from "./env";
 import { LIMITS, PUT_CONCURRENCY, DEFAULT_SITE_ID } from "./config";
@@ -23,16 +23,19 @@ import {
   putUser,
   getMeta,
   putMeta,
-  bumpGen,
+  getGen,
   assetUsage,
-  userUsage,
+  siteRecords,
   listAll,
   siteFileKey,
   sitePrefix,
   userKey,
+  legacyMetaKey,
+  genKey,
   deleteKeys,
   RESERVED_FILE,
   type SiteMeta,
+  type UserRecord,
 } from "./storage";
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -80,8 +83,15 @@ function streamEntry(
   // R2 needs the length up front; FixedLengthStream carries it and rejects a mismatch.
   const { readable, writable } = new FixedLengthStream(entry.size);
   const stored = bucket.put(key, readable, opts);
-  // A failed put stops reading, so race it: otherwise the pipe waits forever.
-  const read = Promise.race([entry.body.pipeTo(writable), stored.then(() => {})]);
+  const abort = new AbortController();
+  const read = entry.body.pipeTo(writable, { signal: abort.signal });
+  // A failed PUT stops consumption. Abort the producer as well, so neither
+  // branch waits forever on backpressure. Both failures are observed.
+  void stored.catch(error => {
+    abort.abort(error);
+    void readable.cancel(error).catch(() => {});
+  });
+  void read.catch(() => {});
   return { read, stored };
 }
 
@@ -202,6 +212,9 @@ async function readBounded(body: ReadableStream<Uint8Array>, max: number): Promi
       if (total > max) throw new TarLimitError(`file is ${total}+ bytes; max is ${max}`);
       chunks.push(value);
     }
+  } catch (error) {
+    await reader.cancel(error);
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -220,6 +233,17 @@ interface PublishError {
 }
 const fail = (status: number, message: string): PublishError => ({ status, message });
 
+async function inventory(bucket: R2Bucket, username: string, siteId: string, account: UserRecord) {
+  let bytes = 0;
+  const migrating = account.legacySiteIds === undefined || account.legacySiteIds.includes(siteId);
+  const legacySiteIds: string[] = [];
+  for await (const site of siteRecords(bucket, username, account, siteId)) {
+    bytes += site.meta.bytes ?? 0;
+    if (migrating && site.meta.generation === undefined) legacySiteIds.push(site.siteId);
+  }
+  return { bytes, migrating, legacySiteIds };
+}
+
 export async function handlePublish(req: Request, env: Env): Promise<Response> {
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
   if (!req.body) return json({ error: "empty body — pipe a tar or a single file" }, 400);
@@ -237,12 +261,14 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   let plan: "free" | "paid" = "free";
   let isNewUser = false;
   let ownerToken: string | undefined;
+  let account: UserRecord | undefined;
 
   if (req.headers.has("authorization")) {
     const owner = await verifyOwner(req, env);
     if (!owner.ok) return json({ error: owner.error }, owner.status);
     username = owner.ctx.username;
     plan = owner.ctx.user.plan;
+    account = owner.ctx.user;
   } else {
     // Anonymous → always a brand-new account (owned sites require the token).
     do {
@@ -256,14 +282,14 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
 
   // Fail fast on over-quota: budget = min(per-site cap, account quota minus other sites).
   const limits = LIMITS[plan];
-  const [otherUsage, existingMeta] = isNewUser
-    ? ([0, null] as const)
+  const [otherSites, assetBytes, existingMeta] = isNewUser
+    ? ([{ bytes: 0, migrating: false, legacySiteIds: [] }, 0, null] as const)
     : await Promise.all([
-        Promise.all([userUsage(env.SITES, username, siteId), assetUsage(env.SITES, username)]).then(
-          ([siteBytes, assetBytes]) => siteBytes + assetBytes,
-        ),
+        inventory(env.SITES, username, siteId, account!),
+        assetUsage(env.SITES, username),
         getMeta(env.SITES, username, siteId),
       ]);
+  const otherUsage = otherSites.bytes + assetBytes;
   const totalBudget = Math.min(limits.perSite, Math.max(0, limits.perUser - otherUsage));
 
   const gate = new PutGate(PUT_CONCURRENCY);
@@ -274,9 +300,15 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
 
   // Peek before branching: the payload's own bytes decide archive-vs-document,
   // with the Content-Type header as a fallback rather than the source of truth.
-  const { head, stream: body } = await peek(req.body!);
+  let payload: Awaited<ReturnType<typeof peek>>;
+  try { payload = await peek(req.body); }
+  catch { return json({ error: "failed to read request body" }, 400); }
+  const { head, stream: body, cancel: cancelBody } = payload;
   const mode = detectMode(req, url, head);
-  if (mode.kind === "invalid") return json({ error: mode.message }, 400);
+  if (mode.kind === "invalid") {
+    void cancelBody().catch(() => {});
+    return json({ error: mode.message }, 400);
+  }
 
   try {
     if (mode.kind === "file") {
@@ -285,16 +317,41 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
       const name = mode.name;
       if (RESERVED_FILE(name)) perr = fail(400, `reserved filename: ${name}`);
       else {
-        const bytes = await readBounded(body, limits.perFile);
-        if (bytes.byteLength === 0) perr = fail(400, "empty file");
-        else if (bytes.byteLength > totalBudget)
-          perr = fail(413, `site exceeds size budget of ${totalBudget} bytes (plan ${plan})`);
-        else {
-          totalBytes = bytes.byteLength;
+        const cap = Math.min(limits.perFile, totalBudget);
+        const lengthHeader = req.headers.get("content-length");
+        const declared = lengthHeader !== null && /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : null;
+        if (declared !== null && (!Number.isSafeInteger(declared) || declared > cap)) {
+          throw new TarLimitError(`file is ${declared} bytes; max is ${cap}`);
+        }
+        if (declared === 0) {
+          void cancelBody().catch(() => {});
+          return json({ error: "empty file" }, 400);
+        }
+        const key = siteFileKey(username, siteId, name);
+        if (declared !== null && declared > 0) {
+          const { readable, writable } = new FixedLengthStream(declared);
+          const stored = env.SITES.put(key, readable, { httpMetadata: { contentType: contentTypeFor(name) } });
+          const abort = new AbortController();
+          void stored.catch(error => {
+            abort.abort(error);
+            void readable.cancel(error).catch(() => {});
+            void cancelBody(error).catch(() => {});
+          });
+          await Promise.all([body.pipeTo(writable, { signal: abort.signal }), stored]);
+          totalBytes = declared;
           fileCount = 1;
-          const key = siteFileKey(username, siteId, name);
           writtenKeys.add(key);
-          await env.SITES.put(key, bytes, { httpMetadata: { contentType: contentTypeFor(name) } });
+        } else {
+          const bytes = await readBounded(body, cap);
+          if (bytes.byteLength === 0) perr = fail(400, "empty file");
+          else if (bytes.byteLength > totalBudget)
+            perr = fail(413, `site exceeds size budget of ${totalBudget} bytes (plan ${plan})`);
+          else {
+            totalBytes = bytes.byteLength;
+            fileCount = 1;
+            writtenKeys.add(key);
+            await env.SITES.put(key, bytes, { httpMetadata: { contentType: contentTypeFor(name) } });
+          }
         }
       }
     } else {
@@ -344,13 +401,17 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
       await gate.drain();
     }
   } catch (e) {
+    void cancelBody(e).catch(() => {});
     if (perr) return json({ error: perr.message }, perr.status);
     if (e instanceof TarLimitError) return json({ error: e.message }, 413);
     const message = e instanceof Error ? e.message : "failed to read archive";
     return json({ error: `bad archive: ${message}` }, 400);
   }
 
-  if (perr) return json({ error: perr.message }, perr.status);
+  if (perr) {
+    void cancelBody().catch(() => {});
+    return json({ error: perr.message }, perr.status);
+  }
   if (fileCount === 0) return json({ error: "archive contained no files" }, 400);
 
   // Delete files removed since the last deploy (keep the _gen/_meta control
@@ -367,6 +428,7 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   if (isNewUser) {
     await putUser(env.SITES, username, {
       tokenHash: await sha256Hex(ownerToken!),
+      legacySiteIds: [],
       plan: "free",
       createdAt: Date.now(),
     });
@@ -383,17 +445,33 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   }
 
   const meta: SiteMeta = {
+    generation: (existingMeta?.generation ?? (existingMeta ? await getGen(env.SITES, username, siteId) : 0)) + 1,
     createdAt: existingMeta?.createdAt ?? Date.now(),
     lastDeployAt: Date.now(),
     bytes: totalBytes,
     fileCount,
     keyHash,
     public: isPublic,
+    ...(existingMeta?.tombstone ? { tombstone: true } : {}),
   };
   await putMeta(env.SITES, username, siteId, meta);
 
-  // Bump generation last: cache invalidation flips only after every byte is in place.
-  const generation = await bumpGen(env.SITES, username, siteId);
+  // Remove old controls before updating the inventory. If that final account
+  // write fails, legacy enumeration still discovers the new record through the
+  // site's unchanged file prefix, and the next publish can finish migration.
+  if (existingMeta && existingMeta.generation === undefined) {
+    await env.SITES.delete([legacyMetaKey(username, siteId), genKey(username, siteId)]);
+  }
+
+  // The merged record commits generation and access state in one PUT. While
+  // migrating, the catalog write replaces the old separate generation PUT.
+  if (account && otherSites.migrating) {
+    await putUser(env.SITES, username, {
+      ...account,
+      legacySiteIds: otherSites.legacySiteIds,
+    });
+  }
+  const generation = meta.generation!;
 
   const host = siteHost(username, siteId, apex);
   return json({

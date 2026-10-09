@@ -5,6 +5,7 @@ import { markdownShell, esc } from "./templates";
 import { highlightCode, languageName } from "./highlight";
 import { listAll, sitePrefix } from "./storage";
 import type { Env } from "./env";
+import { RENDER_LIMITS, RENDER_VERSION } from "./config";
 
 const usesMermaid = (md: string) => /```\s*mermaid/i.test(md);
 
@@ -55,6 +56,7 @@ interface Heading {
 // (slug dedupe, the collected outline), so a shared instance would leak it.
 function createParser(headings: Heading[]) {
   const seen = new Map<string, number>();
+  let highlightRemaining = RENDER_LIMITS.highlightTotalChars;
   const parser = new Marked({ gfm: true, breaks: false });
   parser.use({
     renderer: {
@@ -68,7 +70,9 @@ function createParser(headings: Heading[]) {
       code({ text, lang }) {
         const language = (lang ?? "").trim().split(/\s+/)[0]!;
         if (language === "mermaid") return `<pre class="mermaid">${esc(text)}</pre>`;
-        const highlighted = highlightCode(text, language);
+        const canHighlight = text.length <= RENDER_LIMITS.highlightBlockChars && text.length <= highlightRemaining;
+        const highlighted = canHighlight ? highlightCode(text, language) : null;
+        if (highlighted !== null) highlightRemaining -= text.length;
         const body =
           highlighted === null
             ? `<code${language ? ` class="language-${esc(language)}"` : ""}>${esc(text)}\n</code>`
@@ -110,6 +114,7 @@ const isSummary = (p: string) => /(^|\/)SUMMARY\.md$/i.test(p);
 // SUMMARY.md (GitBook convention) defines nav order, titles and — through list
 // indentation — the nav hierarchy.
 export function parseSummary(summary: string): NavEntry[] {
+  if (summary.length > RENDER_LIMITS.documentChars) return [];
   const out: NavEntry[] = [];
   const levels: number[] = []; // indent columns seen so far, ascending
   for (const line of summary.split(/\r?\n/)) {
@@ -130,8 +135,9 @@ function navEntries(files: string[], nav: NavEntry[] | null): NavEntry[] {
   const pages = files.filter((f) => !isSummary(f)); // SUMMARY defines the nav, it isn't a page
   if (!nav?.length) return pages.map((p) => ({ href: p, title: titleFromPath(p), depth: 0 }));
   const listed = new Set(nav.map((n) => n.href));
+  const pageSet = new Set(pages);
   return [
-    ...nav.filter((n) => pages.includes(n.href)),
+    ...nav.filter((n) => pageSet.has(n.href)),
     ...pages.filter((p) => !listed.has(p)).map((p) => ({ href: p, title: titleFromPath(p), depth: 0 })),
   ];
 }
@@ -170,7 +176,11 @@ async function loadSummaryNav(env: Env, username: string, siteId: string, files:
   const summaryFile = files.find(isSummary);
   if (!summaryFile) return null;
   const obj = await env.SITES.get(sitePrefix(username, siteId) + summaryFile);
-  return obj ? parseSummary(await obj.text()) : null;
+  if (obj && obj.size > RENDER_LIMITS.documentChars * 4) {
+    await obj.body.cancel();
+    return null;
+  }
+  return obj ? parseSummary(await readMarkdownSource(obj)) : null;
 }
 
 // The site's .md listing + SUMMARY nav — loaded once per render and shareable
@@ -186,10 +196,47 @@ export async function loadDocIndex(env: Env, username: string, siteId: string): 
   return { files, nav };
 }
 
+// Share the small navigation index across every page of this generation. The
+// original Markdown stays in R2; this only uses the existing edge Cache API.
+export async function loadDocIndexCached(env: Env, ctx: ExecutionContext, username: string, siteId: string, gen: number): Promise<DocIndex> {
+  const key = new Request(`https://as-doc-index.internal/${username}/${siteId}/g${gen}/r${RENDER_VERSION}`);
+  const hit = await caches.default.match(key);
+  if (hit) return hit.json<DocIndex>();
+  const index = await loadDocIndex(env, username, siteId);
+  ctx.waitUntil(caches.default.put(key, new Response(JSON.stringify(index), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=31536000, immutable" },
+  })));
+  return index;
+}
+
+// Read only enough to decide whether this is a render or a source preview.
+// Large uploaded documents remain available through the unchanged ?raw stream.
+export async function readMarkdownSource(obj: R2ObjectBody): Promise<string> {
+  const reader = obj.body.getReader();
+  const decoder = new TextDecoder();
+  let source = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return source + decoder.decode();
+      source += decoder.decode(value, { stream: true });
+      if (source.length > RENDER_LIMITS.documentChars) {
+        await reader.cancel();
+        // One extra character marks an oversized source for renderDoc.
+        return source.slice(0, RENDER_LIMITS.documentChars + 1);
+      }
+    }
+  } finally { reader.releaseLock(); }
+}
+
 // Pure part of the render, so it can be exercised without R2.
 export function renderDoc(siteId: string, mdPath: string, source: string, index: DocIndex): string {
   const headings: Heading[] = [];
-  const contentHtml = createParser(headings).parse(source, { async: false });
+  const oversized = source.length > RENDER_LIMITS.documentChars;
+  if (oversized) source = source.slice(0, RENDER_LIMITS.documentChars);
+  const contentHtml = oversized
+    ? `<p>Preview of a large document. <a href="${esc(docHref(mdPath))}?raw">Open the complete source</a>.</p><pre>${esc(source)}</pre>`
+    : createParser(headings).parse(source, { async: false });
   const entries = navEntries(index.files, index.nav);
 
   const h1 = source.match(/^#\s+(.+)$/m);
@@ -203,7 +250,7 @@ export function renderDoc(siteId: string, mdPath: string, source: string, index:
     sidebarHtml: renderSidebar(entries, mdPath),
     tocHtml: renderToc(headings),
     pagerHtml: renderPager(entries, mdPath),
-    mermaid: usesMermaid(source),
+    mermaid: !oversized && usesMermaid(source),
   });
 }
 
@@ -223,11 +270,13 @@ export async function defaultMarkdownDoc(
   env: Env,
   username: string,
   siteId: string,
+  prefetched?: DocIndex,
 ): Promise<{ path: string; index: DocIndex } | null> {
-  const index = await loadDocIndex(env, username, siteId);
+  const index = prefetched ?? await loadDocIndex(env, username, siteId);
   const { files, nav } = index;
   if (!files.length) return null;
-  const first = nav?.find((n) => files.includes(n.href));
+  const fileSet = new Set(files);
+  const first = nav?.find((n) => fileSet.has(n.href));
   const path = first?.href ?? files.find((f) => /^readme\.md$/i.test(f)) ?? files.find((f) => !isSummary(f)) ?? files[0]!;
   return { path, index };
 }
