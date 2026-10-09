@@ -48,17 +48,24 @@ export const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // ~1 year, seconds
 // publishes — a Worker deploy doesn't. Without this, shipping a change to the
 // renderer or the shell would only reach sites that happen to republish. Bump it
 // whenever the markdown output changes.
-export const RENDER_VERSION = 3;
+export const RENDER_VERSION = 4;
 
-// Live reload. Every open page polls /_gen and reloads when the site's version
+// Bound untrusted Markdown work per cache miss, independent of upload limits.
+export const RENDER_LIMITS = {
+  documentChars: 256 * 1024,
+  highlightBlockChars: 2048,
+  highlightTotalChars: 4096,
+};
+
+// Live reload. One visible tab per origin polls /_gen and shares the site's version
 // changes. Each poll is a Worker invocation, so the client polls rarely and only
 // while visible; the Worker answers from a short edge micro-cache so R2 sees one
 // read per site, per colo, per TTL no matter how many readers there are. The
 // TTL adds to the poll interval as worst-case detection delay.
 export const LIVE = {
   genCacheTtlSeconds: 15,
-  // Client cadence (ms). Fast right after load or after a detected change (an
-  // agent iterating on a page), base otherwise, slow once the reader is idle.
+  // Client cadence (ms). Fast for recently published content (an agent iterating
+  // on a page), base otherwise, slow once the reader is idle.
   fastMs: 15_000,
   fastForMs: 5 * 60_000,
   baseMs: 60_000,

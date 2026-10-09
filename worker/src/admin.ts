@@ -8,8 +8,9 @@ import type { Env } from "./env";
 import { verifyAdmin } from "./auth";
 import {
   listAll,
-  listUsers,
-  listSiteMetas,
+  listUsersPage,
+  listSitesPage,
+  listAssetsPage,
   deleteKeys,
   getUser,
   putUser,
@@ -22,6 +23,7 @@ import {
   getAssetMeta,
   listAssetMetas,
   putAssetMeta,
+  mapBounded,
 } from "./storage";
 import { isValidUsername } from "./ids";
 import { customDomainSetup } from "./domains";
@@ -34,20 +36,29 @@ api.use("*", async (c, next) => {
 });
 
 api.get("/users", async (c) => {
-  const users = (await listUsers(c.env.SITES)).map(({ username, user }) => ({
+  const page = await listUsersPage(c.env.SITES, c.req.query("cursor"));
+  const users = page.items.map(({ username, user }) => ({
     username,
     plan: user.plan,
     email: user.email,
     customDomain: user.customDomain,
     createdAt: user.createdAt,
   }));
-  return c.json({ users });
+  return c.json({ users, cursor: page.cursor ?? null });
 });
 
 api.get("/sites", async (c) => {
   const username = c.req.query("username");
   if (!username) return c.json({ error: "username required" }, 400);
-  const sites = (await listSiteMetas(c.env.SITES, username)).map(({ siteId, meta: m }) => ({
+  const user = await getUser(c.env.SITES, username);
+  if (!user) return c.json({ error: "user not found" }, 404);
+  let page;
+  try { page = await listSitesPage(c.env.SITES, username, user, c.req.query("cursor")); }
+  catch (error) {
+    if (error instanceof Error && (error.message === "invalid cursor" || error instanceof SyntaxError || error.name === "InvalidCharacterError")) return c.json({ error: "invalid cursor" }, 400);
+    throw error;
+  }
+  const sites = page.items.map(({ siteId, meta: m }) => ({
     siteId,
     bytes: m.bytes,
     fileCount: m.fileCount,
@@ -56,13 +67,14 @@ api.get("/sites", async (c) => {
     public: m.public,
     tombstone: m.tombstone ?? false,
   }));
-  return c.json({ username, sites });
+  return c.json({ username, sites, cursor: page.cursor ?? null });
 });
 
 api.get("/assets", async (c) => {
   const username = c.req.query("username");
   if (!username) return c.json({ error: "username required" }, 400);
-  const assets = (await listAssetMetas(c.env.SITES, username)).map((m) => ({
+  const page = await listAssetsPage(c.env.SITES, username, c.req.query("cursor"));
+  const assets = page.items.map((m) => ({
     id: m.id,
     name: m.name,
     bytes: m.bytes,
@@ -70,7 +82,7 @@ api.get("/assets", async (c) => {
     status: m.status,
     createdAt: m.createdAt,
   }));
-  return c.json({ username, assets });
+  return c.json({ username, assets, cursor: page.cursor ?? null });
 });
 
 api.delete("/asset", async (c) => {
@@ -101,28 +113,23 @@ api.post("/rename", async (c) => {
 
   await putUser(c.env.SITES, to, user);
   const objs = await listAll(c.env.SITES, userSitesPrefix(from));
+  const flat = await listAll(c.env.SITES, `_sites/${from}/`);
   // Copy in bounded batches — sequential round trips would crawl on big accounts.
-  for (let i = 0; i < objs.length; i += 8) {
-    await Promise.all(
-      objs.slice(i, i + 8).map(async (o) => {
-        const body = await c.env.SITES.get(o.key);
-        if (!body) return;
-        const newKey = o.key.replace(userSitesPrefix(from), userSitesPrefix(to));
-        await c.env.SITES.put(newKey, body.body, { httpMetadata: body.httpMetadata });
-      }),
-    );
-  }
-  await deleteKeys(c.env.SITES, objs.map((o) => o.key));
+  await mapBounded([...objs, ...flat], async (o) => {
+    const body = await c.env.SITES.get(o.key);
+    if (!body) return;
+    const newKey = o.key.startsWith("_sites/") ? o.key.replace(`_sites/${from}/`, `_sites/${to}/`) : o.key.replace(userSitesPrefix(from), userSitesPrefix(to));
+    await c.env.SITES.put(newKey, body.body, { httpMetadata: body.httpMetadata, customMetadata: body.customMetadata });
+  });
+  await deleteKeys(c.env.SITES, [...objs, ...flat].map((o) => o.key));
 
   // Asset payloads stay at their immutable R2 keys; only their tiny metadata
   // moves to the renamed account, avoiding a multi-gigabyte copy through Worker.
   const assets = await listAssetMetas(c.env.SITES, from);
-  await Promise.all(
-    assets.map(async (asset) => {
-      await putAssetMeta(c.env.SITES, to, asset.id, { ...asset, username: to });
-      await c.env.SITES.delete(assetMetaKey(from, asset.id));
-    }),
-  );
+  await mapBounded(assets, async (asset) => {
+    await putAssetMeta(c.env.SITES, to, asset.id, { ...asset, username: to });
+    await c.env.SITES.delete(assetMetaKey(from, asset.id));
+  });
   await c.env.SITES.delete(userKey(from));
   return c.json({ ok: true, from, to });
 });

@@ -14,7 +14,7 @@
 // focused. Pages opt out with <meta name="agenthost-live" content="off">.
 
 interface LiveConfig {
-  fastMs: number; // cadence right after load or after a detected change
+  fastMs: number; // cadence for a recently published site
   fastForMs: number; // how long the fast cadence lasts
   baseMs: number; // steady-state cadence
   idleMs: number; // cadence once the reader has been idle for idleAfterMs
@@ -37,6 +37,7 @@ function main() {
   const cfg: LiveConfig = JSON.parse(rawCfg);
 
   const loadedAt = Date.now();
+  const recentUntil = Number(script?.dataset.deployedAt ?? 0) + cfg.fastForMs;
   let lastActivity = loadedAt;
   let lastCheck = 0;
   let failures = 0;
@@ -44,6 +45,56 @@ function main() {
   let inFlight = false;
   let timer = 0;
   let etag: string | null = null;
+  let observedVersion = version;
+  // The browser releases Web Locks if the tab closes or crashes. Hidden tabs
+  // release voluntarily so a visible reader can take over. Older browsers use
+  // the existing independent polling behavior.
+  let coordinated = typeof BroadcastChannel !== "undefined" && !!navigator.locks;
+  let channel: BroadcastChannel | null = null;
+  let leader = !coordinated;
+  let claiming = false;
+  let releaseLeader: (() => void) | null = null;
+  if (coordinated) {
+    try { channel = new BroadcastChannel("agenthost-live-v2"); }
+    catch { coordinated = false; leader = true; }
+  }
+
+  function observe(next: string) {
+    if (!/^g\d+-r\d+$/.test(next)) return;
+    observedVersion = next;
+    // A just-published page can hear an older generation until the probe's
+    // micro-cache expires; that is not a reason to reload back to old content.
+    const currentGen = Number(version!.split("-")[0]!.slice(1));
+    const nextGen = Number(next.split("-")[0]!.slice(1));
+    if (next !== version && nextGen >= currentGen) reload();
+  }
+  if (channel) channel.onmessage = (event: MessageEvent) => {
+    if (typeof event.data?.version !== "string" || event.data.version.length > 80) return;
+    lastCheck = Date.now();
+    if (document.visibilityState === "visible") observe(event.data.version);
+  };
+
+  function claimLeadership() {
+    if (claiming || leader || document.visibilityState === "hidden") return;
+    claiming = true;
+    void Promise.resolve().then(() => navigator.locks.request("agenthost-live-v2", { ifAvailable: true }, async (lock) => {
+      if (!lock || document.visibilityState === "hidden") return;
+      leader = true;
+      const released = new Promise<void>(resolve => { releaseLeader = resolve; });
+      if (Date.now() - lastCheck >= cfg.busyRetryMs) tick();
+      else schedule(nextDelay());
+      await released;
+      leader = false;
+      releaseLeader = null;
+    })).catch(() => {
+      // Disabled locking should not disable updates.
+      coordinated = false;
+      leader = true;
+    }).finally(() => {
+      claiming = false;
+      if (document.visibilityState === "visible" && !reloadPending) schedule(leader ? nextDelay() : cfg.busyRetryMs);
+    });
+  }
 
   const markActive = () => {
     lastActivity = Date.now();
@@ -57,7 +108,7 @@ function main() {
   function nextDelay(): number {
     const now = Date.now();
     let ms: number;
-    if (now - loadedAt < cfg.fastForMs) ms = cfg.fastMs;
+    if (now < recentUntil) ms = cfg.fastMs;
     else if (now - lastActivity > cfg.idleAfterMs) ms = cfg.idleMs;
     else ms = cfg.baseMs;
     if (failures) ms = Math.min(cfg.maxBackoffMs, ms * 2 ** failures);
@@ -92,6 +143,11 @@ function main() {
       return;
     }
     if (reloadPending) return reload();
+    if (coordinated && !leader) {
+      claimLeadership();
+      if (!leader) schedule(cfg.busyRetryMs);
+      return;
+    }
     if (inFlight) return;
 
     inFlight = true;
@@ -103,13 +159,16 @@ function main() {
       .then((res) => {
         if (res.status === 304) {
           failures = 0;
+          channel?.postMessage({ version: observedVersion });
           return;
         }
         if (!res.ok) throw new Error(String(res.status));
         failures = 0;
         etag = res.headers.get("etag");
         return res.text().then((body) => {
-          if (body.trim() !== version) reload();
+          const next = body.trim();
+          channel?.postMessage({ version: next });
+          observe(next);
         });
       })
       .catch(() => {
@@ -135,9 +194,14 @@ function main() {
     } else {
       clearTimeout(timer);
       timer = 0;
+      releaseLeader?.();
     }
   });
   addEventListener("focus", wake);
+  addEventListener("pagehide", () => { releaseLeader?.(); channel?.close(); });
+  addEventListener("pageshow", (event: PageTransitionEvent) => {
+    if (event.persisted) location.reload();
+  });
 
   schedule(nextDelay());
 }

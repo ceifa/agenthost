@@ -6,6 +6,10 @@
   let sites = $state([]);
   let assets = $state([]);
   let loading = $state(true);
+  let userCursor = $state(null);
+  let siteCursor = $state(null);
+  let assetCursor = $state(null);
+  let paging = $state(false);
   let error = $state("");
   let toast = $state("");
 
@@ -21,12 +25,13 @@
     setTimeout(() => (toast = ""), 2500);
   }
 
-  async function loadUsers() {
+  async function loadUsers(more = false) {
     loading = true;
     error = "";
     try {
-      const d = await api("/users");
-      users = d.users.sort((a, b) => b.createdAt - a.createdAt);
+      const d = await api("/users" + (more && userCursor ? "?cursor=" + encodeURIComponent(userCursor) : ""));
+      users = [...(more ? users : []), ...d.users].sort((a, b) => b.createdAt - a.createdAt);
+      userCursor = d.cursor;
     } catch (e) {
       error = e.message;
     } finally {
@@ -38,17 +43,37 @@
     selected = u;
     sites = [];
     assets = [];
+    siteCursor = null;
+    assetCursor = null;
     try {
       const username = encodeURIComponent(u.username);
       const [siteData, assetData] = await Promise.all([
         api(`/sites?username=${username}`),
         api(`/assets?username=${username}`),
       ]);
+      if (selected?.username !== u.username) return;
       sites = siteData.sites;
       assets = assetData.assets;
+      siteCursor = siteData.cursor;
+      assetCursor = assetData.cursor;
     } catch (e) {
       error = e.message;
     }
+  }
+
+  async function loadMore(kind) {
+    if (!selected || paging) return;
+    const username = selected.username;
+    const cursor = kind === "sites" ? siteCursor : assetCursor;
+    if (!cursor) return;
+    paging = true;
+    try {
+      const d = await api(`/${kind}?username=${encodeURIComponent(username)}&cursor=${encodeURIComponent(cursor)}`);
+      if (selected?.username !== username) return;
+      if (kind === "sites") { sites = [...sites, ...d.sites]; siteCursor = d.cursor; }
+      else { assets = [...assets, ...d.assets]; assetCursor = d.cursor; }
+    } catch (e) { error = e.message; }
+    finally { paging = false; }
   }
 
   async function setPlan(u, plan) {
@@ -120,7 +145,7 @@
 
 <header>
   <h1>⚙️ agenthost admin</h1>
-  <button class="ghost" onclick={loadUsers}>↻ Refresh</button>
+  <button class="ghost" onclick={() => loadUsers()}>↻ Refresh</button>
 </header>
 
 {#if error}<div class="error">⚠ {error}</div>{/if}
@@ -145,6 +170,7 @@
         {/each}
       </ul>
     {/if}
+    {#if userCursor}<button class="ghost" disabled={loading} onclick={() => loadUsers(true)}>Load more users</button>{/if}
   </section>
 
   <section class="panel">
@@ -193,6 +219,8 @@
         </table>
       {/if}
 
+      {#if siteCursor}<button class="ghost" disabled={paging} onclick={() => loadMore("sites")}>Load more sites</button>{/if}
+
       <h3>Assets <span class="count">{assets.length}</span></h3>
       {#if assets.length === 0}
         <p class="muted">No assets.</p>
@@ -212,6 +240,7 @@
           </tbody>
         </table>
       {/if}
+      {#if assetCursor}<button class="ghost" disabled={paging} onclick={() => loadMore("assets")}>Load more assets</button>{/if}
     {/if}
   </section>
 </div>

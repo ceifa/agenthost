@@ -43,7 +43,7 @@ uniqueness-race that would otherwise need a Durable Object).
 - **Workers Static Assets** — serves the landing page and the admin UI from the same
   Worker on the apex host (`run_worker_first` so the Worker routes by Host first).
 - **Cache API + CDN** — edge-caches served bytes keyed by the generation-pinned cache key
-  (`cache://…/g{gen}/{path}`), so bumping `_gen` on deploy instantly orphans old entries —
+  (`cache://…/g{gen}/{path}`), so committing a new generation on publish instantly orphans old entries —
   no purge API, no mixed assets.
 - **Cloudflare Access** — founder-only auth in front of the admin (`*.workers.dev` host).
   Zero auth code.
@@ -116,30 +116,31 @@ author meant.
 
 ```
 sites/{username}/{siteId}/{path}        # current static files, OVERWRITTEN IN PLACE (no history)
-sites/{username}/{siteId}/_gen          # tiny pointer object; body = integer "deploy generation"
-sites/{username}/{siteId}/_meta         # JSON: { createdAt, lastDeployAt, bytes, fileCount, keyHash, public }
+_sites/{username}/{siteId}             # { generation, createdAt, lastDeployAt, bytes, fileCount, keyHash, public, tombstone? }
+sites/{username}/{siteId}/_gen          # legacy generation; retained until the next publish
+sites/{username}/{siteId}/_meta         # legacy metadata; retained until the next publish
 assets/{username}/{assetId}/blob        # payload, uploaded/downloaded directly through R2 S3
 _assets/{username}/{assetId}/_meta      # metadata + access-key hash + upload state
 _users/{username}                       # JSON, see below
 _domains/{host}                         # JSON: { username, siteId }  (paid custom domains)
 ```
 
-`_meta` is the per-site bookkeeping the **retention sweep** and **per-user quota** read
-(§9). User usage is *derived* by summing each site's `_meta.bytes` — there is no mutable
+The site metadata record is the per-site bookkeeping the **retention sweep** and **per-user quota** read
+(§9). User usage is *derived* by summing each site's metadata `bytes` — there is no mutable
 usage counter (we have no Durable Object for atomic increments, so summing the source of
 truth avoids a race; a small over-shoot from concurrent deploys is acceptable and
 self-corrects next publish).
 
 **Overwrite-in-place, with a deploy generation for cache invalidation.** Files are written
 to a stable key and overwritten on redeploy (only the current copy is stored — no version
-history). A per-site `_gen` integer bumps on every deploy and is embedded in the **Cache
+history). A per-site `generation` integer bumps on every publish and is embedded in the **Cache
 API key** (never in the public URL), so a new deploy instantly orphans all old cached
 entries — globally, with no purge API. See §6.
 
 > **Trade-off (accepted):** no instant rollback (no history kept — to revert you
 > re-publish), and a short non-atomic window during overwrite (a cache miss mid-deploy may
 > serve partly-new files). Mitigated by deploy order: overwrite all files → delete orphans
-> → only then bump `_gen`.
+> → only then commit generation and access metadata together.
 
 `_users/{username}` JSON:
 
@@ -149,9 +150,24 @@ entries — globally, with no purge API. See §6.
   "email": "you@x.com",                // optional, unverified contact (set on claim)
   "plan": "free" | "paid",             // only the admin changes this
   "customDomain": "status.acme.com",   // optional, admin-registered
-  "createdAt": 1718800000
+  "createdAt": 1718800000,
+  "legacySiteIds": []                  // absent for old accounts; remaining legacy IDs during migration
 }
 ```
+
+**Compact, directly listable metadata.** Small control records (sites, users, assets and
+custom domains) store their JSON once in R2 `customMetadata.json` with an empty body.
+`R2.list({ include: ["customMetadata"] })` returns these records without per-object GETs.
+Records over 6,000 UTF-8 bytes and older body-JSON records fall back to a GET. The same
+PUT maintains the object and its index; there is no second index object or paid database.
+
+New accounts use flat site records immediately. Existing accounts migrate on successful
+publishes, with no bulk rewrite: their profile records remaining legacy site IDs, so
+mixed inventories enumerate flat metadata plus only the remaining legacy controls.
+An absent catalog still discovers migrated sites through their unchanged file prefixes
+if a catalog write was interrupted. Admin edits preserve an unmigrated record's layout.
+The old Worker cannot read flat records: rollback must retain these compatible readers.
+The accepted overwrite-in-place/concurrent-publish quota limitations still apply.
 
 Per-file R2 `httpMetadata`:
 
@@ -163,7 +179,7 @@ contentType   = guessed from extension at upload (serving does zero lookups)
 object — see §6 — because the public key is overwritten in place.)
 
 **Why no DO/KV/D1:** the only hot-path query is `key → bytes`, which R2 serves with strong
-consistency. The `_gen` pointer is a per-owner R2 object (last-writer-wins is fine — you
+consistency. The merged metadata/generation record is a per-site R2 object (last-writer-wins is fine — you
 own your own site, there's no shared contended namespace). Username uniqueness is moot
 because usernames are auto-generated with entropy.
 
@@ -195,7 +211,8 @@ tar cf - -C ./dist . | curl -s --data-binary @- \
    `_users/{username}.tokenHash`. Redeploys hit the same URL.
 2. **Resolve `siteId`** from the request (agent-chosen; default if omitted).
 3. **Compute the effective size budget.** Read the user's `plan` and sum the other sites'
-   `_meta.bytes` (`R2.list` the user prefix). Effective cap for this deploy =
+   metadata `bytes` plus asset reservations. List `_sites/{username}/` with custom metadata
+   rather than enumerating file prefixes and GETting every record. Effective cap =
    `min(perSiteCap, userQuota − usageOfOtherSites)` (see §9 for the numbers). This makes the
    per-user quota fail *fast* during the stream rather than after.
 4. **Stream-untar to R2.** Pipe the body through native `node:zlib` gunzip (not
@@ -211,13 +228,14 @@ tar cf - -C ./dist . | curl -s --data-binary @- \
    over the effective budget from step 3.
 5. **Delete orphans.** `R2.list` the site prefix and delete keys present in the previous
    deploy but absent from this one (so removed files actually disappear).
-6. **Write `_meta`** `{ createdAt (preserve), lastDeployAt: now, bytes, fileCount, keyHash,
-   public }`. On **first** publish, generate the access key and store `sha256(key)` as
+6. **Commit `_sites/{username}/{siteId}`** `{ generation: previous + 1, createdAt (preserve),
+   lastDeployAt: now, bytes, fileCount, keyHash, public, tombstone? }`. On **first** publish, generate the access key and store `sha256(key)` as
    `keyHash` (default `public: false`); on redeploy, preserve `keyHash`/`public` so existing
    share links keep working. `lastDeployAt` is what the retention sweep reads.
-7. **Bump generation.** Read `sites/{username}/{siteId}/_gen`, write `gen + 1`. Done last,
-   so cache invalidation flips only after all bytes are in place. R2 read-after-write is
-   strong → the new generation is visible immediately (preserves the publish→verify loop).
+7. **Finish legacy migration if needed.** Delete the old `_meta`/`_gen` and record remaining
+   legacy IDs in the account. This account PUT replaces the old generation PUT; ordinary
+   republishes need only one control PUT. Files stay at their existing keys. R2
+   read-after-write makes the merged generation visible immediately.
 8. **Respond 200 JSON:**
 
    ```json
@@ -274,14 +292,18 @@ Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` ena
      domain).
 2. The path is the file path within the site (`{rest}`); `siteId` came from the Host, not
    the path.
-3. Read `_meta` and `_gen` from R2 concurrently. Check takedowns and access before
-   consulting the content or route caches. These reads stay fresh so key rotation,
-   public/private changes, and completed publishes apply on the next request.
+3. Read the authoritative merged site record fresh. Warm migrated requests use **one R2
+   GET** for generation, takedown and access state. Bounded isolate hints choose only the
+   storage layout; they never cache authorization. Cold migrated requests may first probe
+   the legacy key, still using no more control reads than the previous two-read flow.
+   Legacy sites retain their old metadata/generation reads until republished. Check access
+   and takedowns before consulting route/content caches or returning a conditional 304.
 4. Map path: `/` and `/dir/` → `index.html`; `/dir` tries the exact file before
    `/dir/index.html`. A Markdown-only homepage uses the first valid SUMMARY entry,
    README, or the first document. Successful resolutions are edge-cached under
    `https://as-routes.internal/{username}/{siteId}/g{gen}/r{RENDER_VERSION}/{rest}`.
-   This avoids repeating R2 HEADs, listings, and SUMMARY reads on warm requests.
+   Cold GET requests retain the fetched object for serving, removing HEAD-then-GET.
+   HEAD requests probe metadata only. Warm route caching avoids repeated file probes.
    Misses are not cached. Only the resolved filename is stored; no access keys or
    access decisions. The separate cache host prevents collisions with site files.
 5. **Cache check:** `cache.match` on a synthetic, generation-pinned key
@@ -379,13 +401,18 @@ restores scroll natively on reload and the page's own JS starts clean, so the sa
 mechanism works on our markdown shell and on user-published HTML. Cost is the whole design:
 
 - **Client polls rarely.** Only while the tab is visible, with an immediate check when it
-  becomes visible again. Fast cadence for the first minutes after load or after a change
-  (an agent iterating), a slow one once the reader is idle, exponential backoff on any
+  becomes visible again. Web Locks elect one visible tab per origin; BroadcastChannel
+  distributes versions and a hidden/closed leader releases its lock. Older browsers keep
+  independent polling. Fast cadence applies only during the five minutes after the last
+  publish (the page carries `lastDeployAt`), then 60 seconds, then five minutes while idle.
+  Exponential backoff applies on any
   error — an error never reloads. A pending reload waits for a text selection or a focused
   input to clear. Constants live in `LIVE` (`worker/src/config.ts`).
 - **Server answers from a per-site edge micro-cache.** `/_gen` is public (a version tag
   reveals nothing the 401/404 pages don't) and handled before the access gate, so it never
-  reads `_meta` and never touches `ACCESS_LIMITER`. The version sits in the Cache API for
+  performs authorization or touches `ACCESS_LIMITER`. Migrated sites read the merged
+  record for its generation; legacy probes may need one extra layout-discovery GET.
+  The version sits in the Cache API for
   a few seconds, so R2 sees one read per site, per colo, per TTL regardless of readers.
   ETag/304 keeps the steady-state poll to a header exchange. Every poll is still one Worker
   invocation — that is the floor, and why the interval is long.
@@ -394,6 +421,22 @@ mechanism works on our markdown shell and on user-published HTML. Cost is the wh
 - Pages opt out with `<meta name="agenthost-live" content="off">`.
 
 ---
+
+**Rendering and browser revalidation budgets.** HTML validators hash the site generation,
+renderer version, path, host and current access policy. Fresh authorization runs first;
+a matching `If-None-Match` skips both rendering and the body-cache read. Decorated HTML
+uses `Cache-Control: private, no-cache` because a share widget can contain the reader's
+key. Static files retain native ETags, conditional responses and byte ranges.
+
+The Markdown navigation index is cached once per generation and renderer version across
+all pages; evicting a rendered body does not repeat the file listing or SUMMARY read.
+Navigation membership uses sets rather than repeated linear searches. Highlighting is
+limited to 2,048 characters per block and 4,096 across a document. Larger blocks remain
+escaped, copyable code. Documents over 262,144 characters display escaped source in the
+shell with a bounded preview and a link to the complete raw source. R2 bodies stop being
+read once the preview limit is reached; oversized SUMMARY files fall back to filename
+navigation. These are deliberate
+CPU/latency tradeoffs and leave uploaded files and `?raw` downloads intact.
 
 ## 6.6 Control-plane isolation (decision needed)
 
@@ -536,12 +579,15 @@ Per-file / per-site / file-count caps are enforced **during the untar stream** (
 ### Retention sweep (cron)
 
 A **Cron Trigger** on the same Worker runs nightly and deletes free-tier sites whose
-`_meta.lastDeployAt` is older than 15 days — keeping R2 from bloating with abandoned sites.
+`lastDeployAt` is older than 15 days — keeping R2 from bloating with abandoned sites.
 Redeploying resets the clock (`lastDeployAt` bumps every publish). **Paid users
 (`plan === "paid"`) are skipped — infinite retention.** Deleting a site = `R2.list` its
-prefix + delete all keys (files, `_gen`, `_meta`); the empty `_users/{username}` record is
-left in place (tiny). The sweep is `O(sites)` via `R2.list` — fine at low scale; a D1 index
-makes it `O(expired)` later if needed.
+prefix + delete all keys and its flat metadata record; the `_users/{username}` record
+is left in place. Users, sites and assets are processed one cursor page at a time; the
+ordered user/asset inventories are merged without a global plan map or extra profile
+GETs. Deletions are idempotent and logged with a bounded sample plus full counts. A failed
+cron retries from the beginning on the next run; there is no durable checkpoint PUT.
+Paid ready assets are retained, but abandoned pending uploads expire after one day.
 
 ### Abuse
 
@@ -571,8 +617,8 @@ agenthost/
 ├─ turbo.json                   # build/deploy task graph across packages
 ├─ worker/                      # (2) THE BACKEND — the entire server (Hono on Workers)
 │  ├─ src/index.ts              # Hono app: apex→landing/publish/admin ; *→serve ; custom-domain→serve
-│  ├─ src/publish.ts            # streaming untar → bounded R2 puts → delete orphans → bump _gen
-│  ├─ src/serve.ts              # host→username, read _gen, gen-keyed Cache API, R2 get, /_gen probe, widget + live-reload inject
+│  ├─ src/publish.ts            # streaming files → bounded R2 puts → delete orphans → merged metadata commit
+│  ├─ src/serve.ts              # host→username, fresh metadata, gen-keyed Cache API, R2 get, /_gen probe, widget + live-reload inject
 │  ├─ src/client/*.ts           # browser scripts (live reload, copy link, docs shell), readable TS with DOM types
 │  ├─ src/client/gen/           # ↑ minified into `export default "<js>"` modules by scripts/build-client.mjs (gitignored)
 │  ├─ src/assets.ts             # asset metadata/access pages + direct upload completion

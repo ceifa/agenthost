@@ -60,8 +60,8 @@ export function shareWidget(shareUrl: string): string {
 // Live reload, injected next to the Share widget on every served HTML page. The
 // behaviour is documented in client/live.ts; the version tag and the LIVE tuning
 // constants ride along as data- attributes so config.ts stays the single source.
-export function liveScript(version: string): string {
-  return `<script data-version="${esc(version)}" data-cfg="${esc(JSON.stringify(LIVE))}">${LIVE_JS}</script>`;
+export function liveScript(version: string, lastDeployAt = 0): string {
+  return `<script data-version="${esc(version)}" data-deployed-at="${lastDeployAt}" data-cfg="${esc(JSON.stringify(LIVE))}">${LIVE_JS}</script>`;
 }
 
 // Docs shell: prose in a sans measure of ~82ch, chrome and code in mono, one

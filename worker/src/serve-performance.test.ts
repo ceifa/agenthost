@@ -4,10 +4,10 @@ import { sha256Hex } from "./ids";
 import type { Env } from "./env";
 
 const prefix = "sites/u/docs/";
-const controlKeys = [prefix + "_meta", prefix + "_gen"];
+const controlKeys = ["_sites/u/docs"];
 
-function fixture(files: Record<string, string>) {
-  const meta = { public: true, keyHash: null as string | null, tombstone: false };
+function fixture(files: Record<string, string>, legacy = false) {
+  const meta = { generation: legacy ? undefined : 1, lastDeployAt: 1, public: true, keyHash: null as string | null, tombstone: false };
   const objects = new Map(Object.entries(files).map(([path, body]) => [prefix + path, body]));
   objects.set(prefix + "_gen", "1");
   const cacheEntries = new Map<string, Response>();
@@ -26,7 +26,7 @@ function fixture(files: Record<string, string>) {
   };
   const bucket = {
     get: vi.fn(async (key: string, _opts?: unknown) => {
-      const content = key === prefix + "_meta" ? JSON.stringify(meta) : objects.get(key);
+      const content = key === (legacy ? prefix + "_meta" : "_sites/u/docs") ? JSON.stringify(meta) : objects.get(key);
       if (content === undefined) return null;
       const response = new Response(content);
       return {
@@ -39,7 +39,10 @@ function fixture(files: Record<string, string>) {
         writeHttpMetadata: (headers: Headers) => headers.set("content-type", "text/plain"),
       };
     }),
-    head: vi.fn(async (key: string) => objects.has(key) ? { key } : null),
+    head: vi.fn(async (key: string) => {
+      const content = objects.get(key);
+      return content === undefined ? null : { key, size: content.length, httpEtag: '"fixture-etag"', uploaded: new Date("2026-01-01T00:00:00Z"), writeHttpMetadata: (headers: Headers) => headers.set("content-type", "text/plain") };
+    }),
     list: vi.fn(async () => ({ objects: [...objects.keys()].map((key) => ({ key })), truncated: false })),
   };
   vi.stubGlobal("caches", { default: cache });
@@ -51,8 +54,8 @@ function fixture(files: Record<string, string>) {
   });
   const env = { SITES: bucket, APEX_HOST: "example.com" } as unknown as Env;
   const ctx = { waitUntil: (p: Promise<unknown>) => pending.push(p) } as unknown as ExecutionContext;
-  const request = (path = "/", headers?: HeadersInit) =>
-    handleSite(new Request("https://u-docs.example.com" + path, { headers }), env, ctx, "u", "docs", "u-docs.example.com");
+  const request = (path = "/", headers?: HeadersInit, method = "GET") =>
+    handleSite(new Request("https://u-docs.example.com" + path, { headers, method }), env, ctx, "u", "docs", "u-docs.example.com");
   const settle = async () => { await Promise.all(pending.splice(0)); };
   const warm = async (path = "/") => {
     await (await request(path)).text();
@@ -65,11 +68,76 @@ function fixture(files: Record<string, string>) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("serving I/O budgets", () => {
+  it("keeps legacy sites readable with their existing two-read warm budget", async () => {
+    const f = fixture({ "index.html": "<body>Legacy</body>" }, true);
+    await f.warm();
+    expect(await (await f.request()).text()).toContain("Legacy");
+    expect(f.bucket.get.mock.calls.map(([key]) => key).sort()).toEqual([prefix + "_meta", prefix + "_gen"].sort());
+  });
+
+  it("uses a single content GET on a cold HTML route", async () => {
+    const f = fixture({ "index.html": "<body>Home</body>" });
+    expect(await (await f.request()).text()).toContain("Home");
+    expect(f.bucket.get.mock.calls.filter(([key]) => key === prefix + "index.html")).toHaveLength(1);
+    expect(f.bucket.head).not.toHaveBeenCalled();
+    await f.settle();
+  });
+
+  it("authorizes before HTML 304s and invalidates validators on policy changes", async () => {
+    const f = fixture({ "index.html": "<body>Home</body>" });
+    const first = await f.request();
+    const etag = first.headers.get("etag")!;
+    await first.text();
+    await f.settle();
+    vi.clearAllMocks();
+    const unchanged = await f.request("/", { "if-none-match": etag });
+    expect(unchanged.status).toBe(304);
+    expect(await unchanged.text()).toBe("");
+    expect(f.bucket.get.mock.calls.map(([key]) => key)).toEqual(controlKeys);
+    expect(f.cache.match).toHaveBeenCalledOnce(); // route only; no body lookup
+    f.meta.public = false;
+    f.meta.keyHash = await sha256Hex("secret");
+    expect((await f.request("/", { "if-none-match": etag })).status).toBe(401);
+    const authorized = await f.request("/", { "if-none-match": etag, cookie: "as_auth_docs=secret" });
+    expect(authorized.status).toBe(200);
+    expect(authorized.headers.get("etag")).not.toBe(etag);
+    await authorized.text();
+    f.meta.tombstone = true;
+    expect((await f.request("/", { "if-none-match": etag, cookie: "as_auth_docs=secret" })).status).toBe(410);
+    await f.settle();
+  });
+
+  it("serves cold HEADs without loading a content body and honors static validators", async () => {
+    const f = fixture({ "index.html": "<body>Home</body>", "app.css": "body{}" });
+    const html = await f.request("/", undefined, "HEAD");
+    expect(html.status).toBe(200);
+    expect(await html.text()).toBe("");
+    expect(html.headers.get("etag")).toBeTruthy();
+    const css = await f.request("/app.css", undefined, "HEAD");
+    expect(css.headers.get("content-length")).toBe("6");
+    expect(await css.text()).toBe("");
+    expect((await f.request("/app.css", { "if-none-match": 'W/"fixture-etag"' }, "HEAD")).status).toBe(304);
+    expect(f.bucket.get.mock.calls.every(([key]) => key === "_sites/u/docs" || key === prefix + "_meta")).toBe(true);
+    await f.settle();
+  });
+
+  it("rebuilds the document index after publishing a different navigation tree", async () => {
+    const f = fixture({ "README.md": "# Home", "old.md": "# Old" });
+    await f.warm();
+    f.objects.delete(prefix + "old.md");
+    f.objects.set(prefix + "new.md", "# New");
+    f.meta.generation = 2;
+    const html = await (await f.request()).text();
+    expect(html).toContain('href="/new.md"');
+    expect(html).not.toContain('href="/old.md"');
+    expect(f.bucket.list).toHaveBeenCalledOnce();
+    await f.settle();
+  });
   it.each<{ name: string; files: Record<string, string>; path: string }>([
     { name: "static asset", files: { "app.css": "body{}" }, path: "/app.css" },
     { name: "directory HTML", files: { "guide/index.html": "<body>Guide</body>" }, path: "/guide" },
     { name: "Markdown homepage", files: { "README.md": "# Home", "SUMMARY.md": "- [Home](README.md)" }, path: "/" },
-  ])("only reads fresh access metadata and generation for a warm $name", async ({ files, path }) => {
+  ])("reads one fresh merged record for a warm $name", async ({ files, path }) => {
     const f = fixture(files);
     await f.warm(path);
     const res = await f.request(path);
@@ -85,9 +153,9 @@ describe("serving I/O budgets", () => {
     const f = fixture({ "README.md": "# Old home" });
     await f.warm();
     f.objects.set(prefix + "index.html", "<body>New home</body>");
-    f.objects.set(prefix + "_gen", "2");
+    f.meta.generation = 2;
     expect(await (await f.request()).text()).toContain("New home");
-    expect(f.bucket.head).toHaveBeenCalledWith(prefix + "index.html");
+    expect(f.bucket.get).toHaveBeenCalledWith(prefix + "index.html", undefined);
     await f.settle();
   });
 
@@ -99,7 +167,7 @@ describe("serving I/O budgets", () => {
     expect(html).toContain("Home");
     expect(html).toContain('href="/next.md"');
     expect(f.bucket.head).not.toHaveBeenCalled();
-    expect(f.bucket.list).toHaveBeenCalledOnce();
+    expect(f.bucket.list).not.toHaveBeenCalled();
     await f.settle();
   });
 
@@ -188,7 +256,7 @@ describe("streamed HTML", () => {
       await serving;
     }
     expect(await response!.text()).toBe("<body>FirstLast</body>");
-    expect(response!.headers.get("cache-control")).toBe("no-cache");
+    expect(response!.headers.get("cache-control")).toBe("private, no-cache");
     expect(response!.headers.get("x-robots-tag")).toContain("noindex");
     await f.settle();
   });

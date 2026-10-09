@@ -16,6 +16,8 @@ export interface Peeked {
   head: Uint8Array;
   /** The body, intact — the peeked bytes are replayed ahead of the remainder. */
   stream: ReadableStream<Uint8Array>;
+  /** Stop the underlying request even while the replay stream has a pending pull. */
+  cancel: (reason?: unknown) => Promise<void>;
 }
 
 // Reads up to `n` bytes *without* consuming them: the returned stream replays the
@@ -74,7 +76,7 @@ export async function peek(input: ReadableStream<Uint8Array>, n = SNIFF_BYTES): 
     },
   });
 
-  return { head, stream };
+  return { head, stream, cancel: reason => reader.cancel(reason) };
 }
 
 /** gzip member header (RFC 1952): 1f 8b. */
