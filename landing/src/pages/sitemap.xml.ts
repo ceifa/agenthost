@@ -1,7 +1,7 @@
 import type { APIRoute } from "astro";
 
 // Only public marketing pages belong here; hosted sites remain private/noindex.
-const paths = ["/", "/guides/publish-with-claude-code"];
+const paths = ["/"];
 
 export const GET: APIRoute = ({ site }) => {
   const urls = paths.map((path) => `<url><loc>${new URL(path, site).href}</loc></url>`).join("\n");

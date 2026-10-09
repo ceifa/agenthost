@@ -15,7 +15,7 @@ beforeEach(() => vi.clearAllMocks());
 describe("apex canonical URLs", () => {
   it.each([
     ["http://agenthost.page/", "https://agenthost.page/"],
-    ["https://www.agenthost.page/guides/publish-with-claude-code?ref=docs", "https://agenthost.page/guides/publish-with-claude-code?ref=docs"],
+    ["https://www.agenthost.page/llms.txt?ref=docs", "https://agenthost.page/llms.txt?ref=docs"],
     ["http://www.agenthost.page/", "https://agenthost.page/"],
   ])("permanently redirects %s to %s", async (from, to) => {
     const response = await worker.fetch(new Request(from), env, ctx);
