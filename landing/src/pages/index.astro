@@ -1,4 +1,6 @@
 ---
+import SeoHead from "../components/SeoHead.astro";
+
 // The page is for the human. The only "code" on it is the sentence they say to
 // their agent; the agent finds everything else in /llms.txt and the skill.
 const ask = "Publish this with agenthost.page and send me the private link.";
@@ -30,10 +32,9 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>agenthost: ask your agent, get a private link</title>
-    <meta
-      name="description"
-      content="Ask your AI agent to publish a page, a docs folder or a large file with agenthost, and it hands you a private link. Free, no signup, nothing to install."
+    <SeoHead
+      title="agenthost: ask your agent, get a private link"
+      description="Ask your AI agent to publish a page, a docs folder or a large file with agenthost, and it hands you a private link. Free, no signup, nothing to install."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />

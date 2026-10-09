@@ -48,7 +48,16 @@ export default {
     // Control-plane endpoints; unmatched paths fall through to the landing page
     // via the app's notFound handler. (resolveHost maps bare localhost → apex in
     // dev, so no separate dev-host case is needed here.)
-    if (host === apex || host === `www.${apex}`) return apexApp.fetch(req, env, ctx);
+    if (host === apex || host === `www.${apex}`) {
+      // Consolidate public page URLs without redirecting API writes or local dev.
+      if (env.DEV_MODE !== "1" && (req.method === "GET" || req.method === "HEAD") &&
+          (host !== apex || url.protocol !== "https:")) {
+        url.protocol = "https:";
+        url.host = apex;
+        return Response.redirect(url.toString(), 308);
+      }
+      return apexApp.fetch(req, env, ctx);
+    }
 
     if (host.endsWith(`.${apex}`)) {
       // {username}-{siteId}.{apex} → split on the first hyphen (usernames are
