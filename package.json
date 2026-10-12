@@ -8,11 +8,12 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "deploy": "turbo run build && pnpm run assets && pnpm -C worker run deploy",
+    "deploy": "turbo run build && pnpm run assets && pnpm -C worker run build:client && pnpm wrangler deploy",
     "dev": "turbo run build && pnpm run assets && pnpm -C worker run dev",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "assets": "node scripts/copy-assets.mjs"
+    "assets": "node scripts/copy-assets.mjs",
+    "wrangler": "node scripts/wrangler.mjs"
   },
   "devDependencies": {
     "turbo": "^2.5.5",

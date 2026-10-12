@@ -13,30 +13,35 @@ email, Access team, API tokens) is supplied by you through config and secrets.
 - **Node 20+** and **pnpm** (`corepack enable` then `pnpm --version`).
 - **Wrangler** is installed as a dev dependency — you'll run it via `pnpm`.
 
-Log in once: `pnpm -C worker exec wrangler login`.
+Log in once: `pnpm wrangler login`.
 
 ## 1. Configure your domain
 
-Edit `worker/wrangler.jsonc`:
+Copy the example and fill in your values:
 
-- `account_id` → your Cloudflare account ID (`wrangler whoami`).
-- `vars.APEX_HOST` → your apex, e.g. `"example.com"`.
-- `routes` → point both patterns at your zone:
-  ```jsonc
-  "routes": [
-    { "pattern": "example.com/*",   "zone_name": "example.com" },
-    { "pattern": "*.example.com/*", "zone_name": "example.com" }
-  ]
-  ```
-- `r2_buckets[0].bucket_name` → the bucket you'll create in step 3 (default
-  `agenthost-sites` is fine).
+```bash
+cp deploy.env.example deploy.env
+```
+
+- `CLOUDFLARE_ACCOUNT_ID` → your Cloudflare account ID (`wrangler whoami`).
+- `APEX_HOST` → your apex, e.g. `example.com`. The Worker routes
+  `example.com/*` and `*.example.com/*` are derived from it.
+- `ZONE_NAME` → only if `APEX_HOST` is not the zone apex itself.
+- `R2_BUCKET_NAME` → only if you want a bucket other than `agenthost-sites`.
+
+`deploy.env` is git-ignored, so your values never land in the repo and
+`worker/wrangler.jsonc` stays as shipped. `pnpm run deploy` and `pnpm wrangler …`
+generate `worker/wrangler.deploy.json` from both files and run Wrangler against
+it. The landing page and admin builds read `APEX_HOST` the same way.
+Environment variables override `deploy.env`.
+
+Run Wrangler commands through `pnpm wrangler` (for example
+`pnpm wrangler secret put ACCESS_AUD`) so they target the account in
+`deploy.env`. A plain `wrangler` in `worker/` uses `wrangler.jsonc` as shipped.
 
 The admin-auth values (`ALLOWED_ADMIN_EMAIL`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`)
 are **not** set here — they ship as secrets, configured in step 4. While unset, the
 admin fails closed (403); the public publish/serve flow works without them.
-
-The landing page and admin builds read `APEX_HOST` from this file, so
-the domain is set only here. An `APEX_HOST` environment variable overrides it.
 
 ## 2. DNS + TLS (the wildcard is load-bearing)
 
@@ -54,21 +59,21 @@ In the Cloudflare dashboard for your zone:
 ## 3. Create the R2 bucket
 
 ```bash
-pnpm -C worker exec wrangler r2 bucket create agenthost-sites
+pnpm wrangler r2 bucket create agenthost-sites
 ```
 
-Use the same name you put in `wrangler.jsonc`.
+Use the same name as `R2_BUCKET_NAME` (default `agenthost-sites`).
 
 ### Direct-asset S3 credentials
 
 Direct uploads/downloads need object-scoped presigned URLs. In **R2 → Manage R2 API Tokens**, create a token with **Object Read & Write** restricted to this bucket. Put its S3 credentials into Worker secrets:
 
 ```bash
-pnpm -C worker exec wrangler secret put R2_ACCESS_KEY_ID
-pnpm -C worker exec wrangler secret put R2_SECRET_ACCESS_KEY
+pnpm wrangler secret put R2_ACCESS_KEY_ID
+pnpm wrangler secret put R2_SECRET_ACCESS_KEY
 ```
 
-Set `vars.R2_ACCOUNT_ID` and `vars.R2_BUCKET_NAME` in `wrangler.jsonc`. Account ID and bucket name are public identifiers; only the access key and secret are sensitive. The Worker uses them to sign URLs but never proxies asset bodies. No public-bucket setting is required.
+`R2_ACCOUNT_ID` and `R2_BUCKET_NAME` follow `CLOUDFLARE_ACCOUNT_ID` and the bucket from step 1. Account ID and bucket name are public identifiers; only the access key and secret are sensitive. The Worker uses them to sign URLs but never proxies asset bodies. No public-bucket setting is required.
 
 ## 4. Admin auth (Cloudflare Access)
 
@@ -84,9 +89,9 @@ even if a request reaches it without passing through Access.
 3. Set these three as **secrets** — they carry your identity, so they stay out of
    the repo. `wrangler secret put` prompts for each value:
    ```bash
-   pnpm -C worker exec wrangler secret put ACCESS_TEAM_DOMAIN   # your Zero Trust team name (the <team> in https://<team>.cloudflareaccess.com)
-   pnpm -C worker exec wrangler secret put ACCESS_AUD           # the Application Audience (AUD) tag from the Access app
-   pnpm -C worker exec wrangler secret put ALLOWED_ADMIN_EMAIL  # the email your Access policy allows
+   pnpm wrangler secret put ACCESS_TEAM_DOMAIN   # your Zero Trust team name (the <team> in https://<team>.cloudflareaccess.com)
+   pnpm wrangler secret put ACCESS_AUD           # the Application Audience (AUD) tag from the Access app
+   pnpm wrangler secret put ALLOWED_ADMIN_EMAIL  # the email your Access policy allows
    ```
    (Or set them in the dashboard: Worker → *Settings → Variables and Secrets*, as
    type **Secret**.) The Worker reads them via `env.*` exactly as it would a var —
@@ -167,9 +172,11 @@ publish → serve loop runs offline against a fixture directory.
 
 | Name | Where | Required | Purpose |
 |------|-------|----------|---------|
-| `APEX_HOST` | `wrangler.jsonc` var | yes | Your apex/control-plane domain. |
-| `R2_ACCOUNT_ID` | `wrangler.jsonc` var | assets | Public account identifier used in the R2 S3 endpoint. |
-| `R2_BUCKET_NAME` | `wrangler.jsonc` var | assets | Bucket receiving direct asset uploads. |
+| `CLOUDFLARE_ACCOUNT_ID` | `deploy.env` | yes | Account the Worker deploys to. |
+| `APEX_HOST` | `deploy.env` | yes | Your apex/control-plane domain; routes are derived from it. |
+| `ZONE_NAME` | `deploy.env` | no | Zone holding `APEX_HOST`, when it is not the apex itself. |
+| `R2_ACCOUNT_ID` | from `CLOUDFLARE_ACCOUNT_ID` | assets | Public account identifier used in the R2 S3 endpoint. |
+| `R2_BUCKET_NAME` | `deploy.env` | assets | Bucket for sites and direct asset uploads (default `agenthost-sites`). |
 | `R2_ACCESS_KEY_ID` | secret | assets | Bucket-scoped S3 access key used only to sign URLs. |
 | `R2_SECRET_ACCESS_KEY` | secret | assets | Bucket-scoped S3 secret used only to sign URLs. |
 | `ALLOWED_ADMIN_EMAIL` | secret (`wrangler secret put`) | admin only | Email allowed into the admin. |

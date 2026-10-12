@@ -34,7 +34,8 @@
     "crons": ["0 4 * * *"]
   },
   "vars": {
-    // Apex/control-plane host — set this to YOUR domain. Everything else that is
+    // Apex/control-plane host. To deploy your own domain, set APEX_HOST in
+    // deploy.env rather than here (see DEPLOYING.md §1). Everything else that is
     // a *.{APEX_HOST} subdomain is treated as a hosted-site request; the admin
     // lives on admin.{APEX_HOST} (an Access-protected hostname in this zone).
     "APEX_HOST": "agenthost.page",
