@@ -3,11 +3,9 @@
 // deployment, and limits are rendered from config so a quota bump can't silently
 // make this lie.
 
-import { ASSET_LIMITS, LIMITS, MB } from "./config";
+import { ASSET_LIMITS, LIMITS, formatBytes } from "./config";
 
 const free = LIMITS.free;
-const freeAssets = ASSET_LIMITS.free;
-const mb = (bytes: number) => `${Math.round(bytes / MB)} MB`;
 
 export const llmsTxt = (apexHost: string): string => `# agenthost — publish a static site or docs, get a private share link. No signup.
 
@@ -44,7 +42,7 @@ Three calls, all with -H 'Authorization: Bearer <ownerToken>' except the PUT:
 3. POST <completeUrl> → {"ok":true}
 The file goes straight from the client to R2. Opening the shareUrl shows a Download
 button whose bytes also come directly from R2.
-Free max: ${mb(freeAssets.perAsset)} per asset. Paid max: 5 GB per asset.
+Free max: ${formatBytes(ASSET_LIMITS.free.perAsset)} per asset. Paid max: ${formatBytes(ASSET_LIMITS.paid.perAsset)} per asset.
 
 ## Site asset paths
 Each site is the root of its own subdomain ({username}-{id}.${apexHost}), so
@@ -59,15 +57,15 @@ both absolute and relative asset paths work:
   single file of any other type, add ?file=<name>.
 - Sites are PRIVATE by default. Share the shareUrl; visitors stay logged in via a cookie.
   Every page has a "Share" button that copies a key-embedded link.
-- Limits (free): ${free.filesPerSite} files, ${mb(free.perFile)}/file, ${mb(free.perSite)}/site, ${mb(free.perUser)}/account. Hosted sites are noindex.
+- Limits (free): ${free.filesPerSite} files, ${formatBytes(free.perFile)}/file, ${formatBytes(free.perSite)}/site, ${formatBytes(free.perUser)}/account. Hosted sites are noindex.
 - Free sites are deleted ${free.retentionDays} days after the last publish — redeploy to keep alive.
 
 ## Install as a skill (optional — persist this contract)
-This publish contract ships as an Agent Skill (SKILL.md + references), so you don't
-have to re-read this file on every run. Install it once and it's always in reach.
-- Any agent: fetch the skill from https://${apexHost} and load its SKILL.md.
-- From source: https://github.com/ceifa/agenthost/tree/main/skills/agenthost
-- OpenClaw: openclaw skills install @ceifa/agenthost
-- skills.sh: npx skills add ceifa/agenthost --skill agenthost
-- Hermes: hermes skills tap add ceifa/agenthost
+This publish contract ships as an Agent Skill rendered for ${apexHost}, so you don't
+have to re-read this file on every run. Install it once; rerun to update.
+# Claude Code
+mkdir -p ~/.claude/skills/agenthost && curl -fsSL https://${apexHost}/skill/SKILL.md -o ~/.claude/skills/agenthost/SKILL.md
+# Codex and other agents
+mkdir -p ~/.agents/skills/agenthost && curl -fsSL https://${apexHost}/skill/SKILL.md -o ~/.agents/skills/agenthost/SKILL.md
+The full HTTP reference is at https://${apexHost}/skill/references/http-api.md.
 `;

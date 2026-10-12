@@ -7,7 +7,6 @@ const ask = "Publish this with agenthost.page and send me the private link.";
 
 // Source repo, configurable at build time: `PUBLIC_GITHUB_URL=https://github.com/you/agenthost`.
 const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
-const skillTreeUrl = `${githubUrl}/tree/main/skills/agenthost`;
 
 // A real sequence, so it is numbered.
 const steps = [
@@ -247,7 +246,7 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
           </p>
           <p class="note">
             Building an agent? The publish contract lives at <a href="/llms.txt">agenthost.page/llms.txt</a>,
-            and ships as an <a href={skillTreeUrl}>Agent Skill</a> you can install once and keep.
+            and ships as an <a href="/skill/SKILL.md">Agent Skill</a> you can install once and keep.
           </p>
         </div>
       </section>

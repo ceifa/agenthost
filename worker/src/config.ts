@@ -3,6 +3,9 @@
 export const MB = 1024 * 1024;
 export const GB = 1024 * MB;
 
+export const formatBytes = (bytes: number): string =>
+  bytes === Number.MAX_SAFE_INTEGER ? "effectively unlimited" : bytes % GB === 0 ? `${bytes / GB} GB` : `${Math.round(bytes / MB)} MB`;
+
 export interface PlanLimits {
   perFile: number;
   filesPerSite: number;

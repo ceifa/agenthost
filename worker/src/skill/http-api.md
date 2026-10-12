@@ -1,6 +1,6 @@
 # agenthost HTTP API
 
-The publish contract. Base URL: `https://agenthost.page`. Plain `curl` throughout.
+The publish contract. Base URL: `https://{{apexHost}}`. Plain `curl` throughout.
 
 ## Authentication
 
@@ -17,7 +17,7 @@ Body is either a **tar** of a directory or a **single raw file**. No `Content-Ty
 
 | Param | Where | Notes |
 |---|---|---|
-| `id` | `?id=` or `x-agenthost-site` header | Subdomain label (`{username}-{id}.agenthost.page`). Generated if omitted. |
+| `id` | `?id=` or `x-agenthost-site` header | Subdomain label (`{username}-{id}.{{apexHost}}`). Generated if omitted. |
 | `username` | `?username=` or `x-agenthost-user` header | Required **only** with `Authorization` (redeploys). |
 | `file` | `?file=` | Single-file mode: names the stored file (sanitized). Optional. |
 | `Authorization: Bearer <ownerToken>` | header | Omit for a first/anonymous publish (mints an account); include to redeploy. |
@@ -28,14 +28,14 @@ Body is either a **tar** of a directory or a **single raw file**. No `Content-Ty
 - Anything else → one document: Markdown as `README.md`, HTML as `index.html`. Both serve at `/`.
 - Any other file type → send `?file=<name>`; the extension sets the served `Content-Type`.
 
-Single-file publish replaces the whole site with that one file. `id` defaults to `site` when omitted. A zip body is rejected with 400; send a tar. Curl examples are in [SKILL.md](../SKILL.md).
+Single-file publish replaces the whole site with that one file. `id` defaults to `site` when omitted. A zip body is rejected with 400; send a tar. Curl examples are in [SKILL.md](https://{{apexHost}}/skill/SKILL.md).
 
 ### Response (200)
 
 ```jsonc
 {
-  "url":        "https://cleverotter4f2-myblog.agenthost.page/", // bare URL (prompts for the key)
-  "shareUrl":   "https://cleverotter4f2-myblog.agenthost.page/?k=<accessKey>", // give THIS to a human
+  "url":        "https://cleverotter4f2-myblog.{{apexHost}}/", // bare URL (prompts for the key)
+  "shareUrl":   "https://cleverotter4f2-myblog.{{apexHost}}/?k=<accessKey>", // give THIS to a human
   "username":   "cleverotter4f2",      // account name (auto-generated, no hyphens)
   "siteId":     "myblog",
   "generation": 2,                     // deploy counter (cache versioning)
@@ -43,7 +43,7 @@ Single-file publish replaces the whole site with that one file. `id` defaults to
   "bytes":      48213,
   "accessKey":  "<shown once — first publish only>",
   "ownerToken": "<shown once — SAVE to redeploy>",
-  "claimUrl":   "https://agenthost.page/claim?username=cleverotter4f2" // new accounts only
+  "claimUrl":   "https://{{apexHost}}/claim?username=cleverotter4f2" // new accounts only
 }
 ```
 
@@ -63,9 +63,9 @@ The upload URL expires after 15 minutes and is restricted by its signature to on
 
 | Asset limit | Free | Paid |
 |---|---:|---:|
-| Single asset | 100 MB | 5 GB |
-| Total account storage | 500 MB, shared with sites | effectively unlimited |
-| Retention | 15 days | infinite |
+| Single asset | {{freePerAsset}} | {{paidPerAsset}} |
+| Total account storage | {{freePerUser}}, shared with sites | {{paidPerUser}} |
+| Retention | {{freeRetention}} | {{paidRetention}} |
 
 Pending uploads are deleted after one day. `DELETE /a/:username/:assetId?username=<username>` with owner auth removes a completed or pending asset.
 
@@ -77,7 +77,7 @@ All require `Authorization: Bearer <ownerToken>` + `username`, and (except `/cla
 
 ```bash
 curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
-  'https://agenthost.page/key/public?username=<username>&id=myblog&public=true'
+  'https://{{apexHost}}/key/public?username=<username>&id=myblog&public=true'
 # → { "ok": true, "public": true }
 ```
 
@@ -85,7 +85,7 @@ curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
 
 ```bash
 curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
-  'https://agenthost.page/key/rotate?username=<username>&id=myblog'
+  'https://{{apexHost}}/key/rotate?username=<username>&id=myblog'
 # → { "ok": true, "accessKey": "<new key>", "public": false, "shareUrl": "…/?k=<new key>" }
 ```
 
@@ -93,7 +93,7 @@ curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
 
 ```bash
 curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
-  'https://agenthost.page/claim?username=<username>&email=you@example.com'
+  'https://{{apexHost}}/claim?username=<username>&email=you@example.com'
 # → { "ok": true, "username": "<username>", "email": "you@example.com" }
 ```
 
@@ -112,7 +112,7 @@ JSON `{ "error": "<message>" }` with the status:
 
 ## URL & path rules
 
-- Served at `https://{username}-{id}.agenthost.page/…`; each site is its subdomain root.
+- Served at `https://{username}-{id}.{{apexHost}}/…`; each site is its subdomain root.
 - `username` is `[a-z0-9]`, 2–30 chars (**no hyphens** — it separates `{username}-{id}`).
 - `siteId` is lowercased, sanitized to `[a-z0-9._-]`, ≤32 chars (so the label fits 63 chars).
 - macOS cruft (`.DS_Store`, `._*`) and directory entries are skipped silently.
@@ -124,10 +124,10 @@ JSON `{ "error": "<message>" }` with the status:
 
 | Limit | Free | Paid |
 |---|---|---|
-| Per file | 5 MB | 25 MB |
-| Files per site | 50 | 1000 |
-| Size per site | 250 MB | 1 GB |
-| Total per account | 500 MB | effectively unlimited |
-| Retention | 15 days since last publish | infinite |
+| Per file | {{freePerFile}} | {{paidPerFile}} |
+| Files per site | {{freeFilesPerSite}} | {{paidFilesPerSite}} |
+| Size per site | {{freePerSite}} | {{paidPerSite}} |
+| Total per account | {{freePerUser}} | {{paidPerUser}} |
+| Retention | {{freeRetention}} since last publish | {{paidRetention}} |
 
 Caps are enforced *during* the upload stream, so an over-limit publish fails fast. The paid tier (custom username / domain) is operator-enabled, not self-serve.
