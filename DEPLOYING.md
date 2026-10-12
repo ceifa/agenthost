@@ -35,8 +35,8 @@ The admin-auth values (`ALLOWED_ADMIN_EMAIL`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`
 are **not** set here — they ship as secrets, configured in step 4. While unset, the
 admin fails closed (403); the public publish/serve flow works without them.
 
-If you serve the landing page on your own domain, also set `site` in
-`landing/astro.config.mjs` to `https://example.com`.
+The landing page and admin builds read `APEX_HOST` from this file, so
+the domain is set only here. An `APEX_HOST` environment variable overrides it.
 
 ## 2. DNS + TLS (the wildcard is load-bearing)
 

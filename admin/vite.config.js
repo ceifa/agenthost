@@ -1,9 +1,10 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { apexHost } from "../scripts/deploy-config.mjs";
 
-// Must match APEX_HOST in worker/wrangler.jsonc (override via APEX_HOST when you
-// self-host on another domain). The admin surface lives on admin.{APEX_HOST}.
-const APEX_HOST = process.env.APEX_HOST || "agenthost.page";
+// Read from worker/wrangler.jsonc (override via APEX_HOST). The admin surface
+// lives on admin.{APEX_HOST}.
+const APEX_HOST = apexHost();
 
 // Built to admin/dist → copied to public/admin/. Assets are referenced
 // root-absolute (/assets/...); the Worker's admin host maps those under /admin/.

@@ -3,6 +3,8 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/worker/wrangler.jsonc", "$TURBO_ROOT$/scripts/deploy-config.mjs"],
+      "env": ["APEX_HOST"],
       "outputs": ["dist/**"]
     },
     "typecheck": {
