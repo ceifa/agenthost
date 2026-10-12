@@ -6,7 +6,7 @@ import { verifyOwner, type OwnerCtx } from "./auth";
 import { getMeta, putMeta, putUser, type SiteMeta } from "./storage";
 import { generateAccessKey, sha256Hex, sanitizeSiteId, siteHost, shareUrl } from "./ids";
 import { llmsTxt } from "./llms";
-import { renderTemplate, skillRoutes, skillVars } from "./skill";
+import { renderTemplate, skillName, skillRoutes, skillVars } from "./skill";
 import { completeAsset, createAsset, deleteAsset, serveAsset } from "./assets";
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -90,9 +90,12 @@ app.get("/llms.txt", (c) =>
 );
 
 for (const [path, { template, contentType }] of Object.entries(skillRoutes)) {
-  app.get(path, (c) =>
-    c.body(renderTemplate(template, skillVars(c.env.APEX_HOST)), 200, { "content-type": contentType, "cache-control": DOC_CACHE }),
-  );
+  app.get(path, (c) => {
+    const name = skillName(c.env);
+    if (!name.ok) return c.json({ error: name.error }, 500);
+    const body = renderTemplate(template, skillVars(c.env.APEX_HOST, name.name));
+    return c.body(body, 200, { "content-type": contentType, "cache-control": DOC_CACHE });
+  });
 }
 
 // Unmatched paths → Static Assets (the landing page). Registered as the Hono

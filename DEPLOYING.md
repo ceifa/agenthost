@@ -172,6 +172,7 @@ publish → serve loop runs offline against a fixture directory.
 | `R2_BUCKET_NAME` | `wrangler.jsonc` var | assets | Bucket receiving direct asset uploads. |
 | `R2_ACCESS_KEY_ID` | secret | assets | Bucket-scoped S3 access key used only to sign URLs. |
 | `R2_SECRET_ACCESS_KEY` | secret | assets | Bucket-scoped S3 secret used only to sign URLs. |
+| `SKILL_NAME` | `wrangler.jsonc` var | no | Name of the Agent Skill served under `/skill/`. Defaults to `APEX_HOST` with dots as dashes (`example-com`). An invalid name makes `/skill/*` return 500. |
 | `ALLOWED_ADMIN_EMAIL` | secret (`wrangler secret put`) | admin only | Email allowed into the admin. |
 | `ACCESS_TEAM_DOMAIN` | secret (`wrangler secret put`) | admin only | Zero Trust team name. |
 | `ACCESS_AUD` | secret (`wrangler secret put`) | admin only | Access Application AUD tag. |

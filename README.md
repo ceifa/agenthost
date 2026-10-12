@@ -37,19 +37,28 @@ support direct single-file uploads up to 5 GB. The exact recipe is in the
 ## Install the skill
 
 agenthost ships as an [Agent Skill](https://agentskills.io) served by the
-deployment itself, rendered with that deployment's host and limits. Ask your agent:
+deployment itself, rendered with that deployment's host and limits. Install or
+update it with:
+
+```bash
+curl -fsSL https://agenthost.page/skill/install.sh | sh
+```
+
+Or ask your agent:
 
 > Install the agent skill at https://agenthost.page/skill/SKILL.md so you can publish with agenthost.page.
 
-Or save it yourself (rerun to update):
+Or save it yourself:
 
 ```bash
-mkdir -p ~/.claude/skills/agenthost && \
-  curl -fsSL https://agenthost.page/skill/SKILL.md -o ~/.claude/skills/agenthost/SKILL.md
+mkdir -p ~/.claude/skills/agenthost-page && \
+  curl -fsSL https://agenthost.page/skill/SKILL.md -o ~/.claude/skills/agenthost-page/SKILL.md
 ```
 
-Use `~/.agents/skills/` instead of `~/.claude/skills/` for Codex and other agents.
-A self-hosted instance serves its own copy at `https://<your-domain>/skill/SKILL.md`.
+The skill is named after the host (`agenthost-page`); set `SKILL_NAME` in
+`worker/wrangler.jsonc` to change it. Use `~/.agents/skills/` instead of
+`~/.claude/skills/` for Codex and other agents. A self-hosted instance serves its
+own copy at `https://<your-domain>/skill/`.
 
 ## How it works
 

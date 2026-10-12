@@ -348,9 +348,11 @@ MVP.
 **`/llms.txt`** is served at the apex (`agenthost.page/llms.txt`) — a machine-readable
 description of how to publish, so any agent that lands on the domain can self-serve. (This
 is the apex/landing surface, distinct from a site's own files.) The same contract ships as
-an Agent Skill under **`/skill/`** (`SKILL.md`, `references/http-api.md`), rendered per
+an Agent Skill under **`/skill/`** (`SKILL.md`, `references/http-api.md`, and an
+`install.sh` that saves it into `~/.claude/skills` and `~/.agents/skills`), rendered per
 request from the templates in `worker/src/skill/` with `APEX_HOST` and the limits in
 `config.ts`, so a self-hosted instance hands its agents a skill that names its own domain.
+The skill is named after the apex (`agenthost-page`) unless `SKILL_NAME` overrides it.
 
 **Rollback:** not instant — no history is kept (overwrite-in-place). To revert, re-publish
 the previous build.
@@ -624,7 +626,7 @@ agenthost/
 │  ├─ src/serve.ts              # host→username, fresh metadata, gen-keyed Cache API, R2 get, /_gen probe, widget + live-reload inject
 │  ├─ src/client/*.ts           # browser scripts (live reload, copy link, docs shell), readable TS with DOM types
 │  ├─ src/client/gen/           # ↑ minified into `export default "<js>"` modules by scripts/build-client.mjs (gitignored)
-│  ├─ src/skill/                # Agent Skill templates (SKILL.md, http-api.md), served under /skill/ rendered for APEX_HOST
+│  ├─ src/skill/                # Agent Skill templates (SKILL.md, http-api.md, install.sh), served under /skill/ rendered for APEX_HOST
 │  ├─ src/skill/gen/            # ↑ the templates as `export default "<text>"` modules, same script (gitignored)
 │  ├─ src/assets.ts             # asset metadata/access pages + direct upload completion
 │  ├─ src/r2-signed.ts          # short-lived exact-size R2 PUT and direct GET signing

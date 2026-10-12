@@ -17,7 +17,10 @@ describe("served skill", () => {
     expect(res.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
     expect(res.headers.get("cache-control")).toBe("public, max-age=3600");
     const body = await res.text();
+    expect(body).toContain("\nname: example-com\n");
+    expect(body).toContain("\nversion: 0.4.0\n");
     expect(body).toContain("homepage: https://example.com\n");
+    expect(body).toContain("curl -fsSL https://example.com/skill/install.sh | sh");
     expect(body).toContain("https://example.com/publish?id=report");
     expect(body).toContain("- Free: 50 files, 5 MB per file, 250 MB per site, 500 MB per account");
     expect(body).toContain("[references/http-api.md](https://example.com/skill/references/http-api.md)");
@@ -39,10 +42,41 @@ describe("served skill", () => {
     expect(body).not.toContain("agenthost.page");
   });
 
+  it("names the skill after SKILL_NAME when set", async () => {
+    const body = await (await get("/skill/SKILL.md", { SKILL_NAME: "my-host" })).text();
+    expect(body).toContain("\nname: my-host\n");
+    expect(body).toContain("`my-host/SKILL.md`");
+  });
+
+  it.each(["/skill/SKILL.md", "/skill/references/http-api.md", "/skill/install.sh"])(
+    "fails %s loudly on a SKILL_NAME agents would not load",
+    async (path) => {
+      const res = await get(path, { SKILL_NAME: "Bad Name" });
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({
+        error: 'skill name "Bad Name" is not a valid Agent Skill name (lowercase letters, digits and single hyphens, at most 64 characters); set SKILL_NAME',
+      });
+    },
+  );
+
   it("leaves other /skill/ paths to static assets", async () => {
     const res = await get("/skill/nope.md");
     expect(res.status).toBe(404);
     expect(await res.text()).toBe("asset /skill/nope.md");
+  });
+});
+
+describe("installer", () => {
+  it("serves a POSIX sh script for the apex", async () => {
+    const res = await get("/skill/install.sh");
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    const body = await res.text();
+    expect(body).toContain('name="example-com"');
+    expect(body).toContain('url="https://example.com/skill/SKILL.md"');
+    expect(body).toContain(`  if [ "$name" != agenthost ] && [ -e "$root/agenthost" ]; then
+    echo "Found an older install at $root/agenthost; remove it to avoid two copies of the skill."
+  fi
+`);
   });
 });
 

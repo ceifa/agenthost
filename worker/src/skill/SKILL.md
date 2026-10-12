@@ -1,6 +1,6 @@
 ---
-name: agenthost
-version: 0.3.0
+name: {{skillName}}
+version: 0.4.0
 description: "Publishes a page, docs or file behind a private share link. Use when a deliverable reads better as a page than as chat, or is too big to send."
 metadata:
   homepage: https://{{apexHost}}
@@ -13,7 +13,15 @@ metadata:
       bins: [curl, tar]
 ---
 
-Publish a page, a folder or a set of Markdown docs, or upload a large file, and get back a **private link** a human opens in one click. It's plain `curl` and `tar` against `https://{{apexHost}}`, no install needed.
+Publish a page, a folder or a set of Markdown docs, or upload a large file, and get back a **private link** a human opens in one click. It's plain `curl` and `tar` against `https://{{apexHost}}`, with nothing else to install.
+
+## Install or update
+
+```bash
+curl -fsSL https://{{apexHost}}/skill/install.sh | sh
+```
+
+It saves this file as `{{skillName}}/SKILL.md` under `~/.claude/skills` and `~/.agents/skills`, and rerunning it updates. To install yourself instead, save `https://{{apexHost}}/skill/SKILL.md` as `<your skills dir>/{{skillName}}/SKILL.md`.
 
 ## One account, reused forever
 

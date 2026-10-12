@@ -62,10 +62,8 @@ both absolute and relative asset paths work:
 
 ## Install as a skill (optional — persist this contract)
 This publish contract ships as an Agent Skill rendered for ${apexHost}, so you don't
-have to re-read this file on every run. Install it once; rerun to update.
-# Claude Code
-mkdir -p ~/.claude/skills/agenthost && curl -fsSL https://${apexHost}/skill/SKILL.md -o ~/.claude/skills/agenthost/SKILL.md
-# Codex and other agents
-mkdir -p ~/.agents/skills/agenthost && curl -fsSL https://${apexHost}/skill/SKILL.md -o ~/.agents/skills/agenthost/SKILL.md
-The full HTTP reference is at https://${apexHost}/skill/references/http-api.md.
+have to re-read this file on every run. Install it once; rerun to update:
+curl -fsSL https://${apexHost}/skill/install.sh | sh
+An agent can instead save https://${apexHost}/skill/SKILL.md into its own skills
+directory, in a folder named after the skill's \`name\`.
 `;
