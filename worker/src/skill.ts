@@ -32,6 +32,20 @@ export function skillName(env: Pick<Env, "APEX_HOST" | "SKILL_NAME">): { ok: tru
   };
 }
 
+export const credentialsFile = (apexHost: string) => `~/.config/agenthost/${apexHost}.curlrc`;
+
+const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
+
+// The token is read at a prompt with echo off, never typed on the command line,
+// so it stays out of shell history.
+export const credentialsCommand = (apexHost: string, username?: string) => {
+  const user = username === undefined ? `printf '${apexHost} username: ' >&2; read -r u; ` : `u=${shellQuote(username)}; `;
+  return `(f="$HOME/.config/agenthost/${apexHost}.curlrc"; mkdir -p "\${f%/*}" && umask 077 || exit; ${user}trap 'stty echo 2>/dev/null; exit 130' INT HUP TERM; stty -echo 2>/dev/null; printf '${apexHost} token (hidden): ' >&2; read -r t; stty echo 2>/dev/null; echo >&2; [ -n "$u" ] && [ -n "$t" ] || exit 1; printf 'header = "Authorization: Bearer %s"\\nheader = "x-agenthost-user: %s"\\n' "$t" "$u" > "$f" && chmod 600 "$f" && echo "Saved $f" >&2)`;
+};
+
+export const writeCredentialsCommand = (apexHost: string) =>
+  `mkdir -p ~/.config/agenthost && (umask 077 && printf 'header = "Authorization: Bearer %s"\\nheader = "x-agenthost-user: %s"\\n' 'OWNER_TOKEN' 'USERNAME' > ${credentialsFile(apexHost)}) && chmod 600 ${credentialsFile(apexHost)}`;
+
 const retention = (days: number | null) => (days === null ? "infinite" : `${days} days`);
 
 const limitVars = {
@@ -52,5 +66,8 @@ const limitVars = {
 export const skillVars = (apexHost: string, skillName: string): Record<string, string> => ({
   apexHost,
   skillName,
+  credentialsFile: credentialsFile(apexHost),
+  credentialsCommand: credentialsCommand(apexHost),
+  writeCredentialsCommand: writeCredentialsCommand(apexHost),
   ...limitVars,
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import worker from "./index";
-import { renderTemplate } from "./skill";
+import { credentialsCommand, renderTemplate, writeCredentialsCommand } from "./skill";
 import type { Env } from "./env";
 
 const baseEnv = {
@@ -21,7 +21,12 @@ describe("served skill", () => {
     expect(body).toContain("\nversion: 0.4.0\n");
     expect(body).toContain("homepage: https://example.com\n");
     expect(body).toContain("curl -fsSL https://example.com/skill/install.sh | sh");
-    expect(body).toContain("https://example.com/publish?id=report");
+    expect(body).toContain("curl -s -K ~/.config/agenthost/example.com.curlrc --data-binary @report.md 'https://example.com/publish?id=report'");
+    expect(body).toContain("`test -f ~/.config/agenthost/example.com.curlrc`");
+    expect(body).toContain(`    (f="$HOME/.config/agenthost/example.com.curlrc"; mkdir -p "\${f%/*}" && umask 077 || exit; printf 'example.com username: ' >&2; read -r u; trap 'stty echo 2>/dev/null; exit 130' INT HUP TERM; stty -echo 2>/dev/null; printf 'example.com token (hidden): ' >&2; read -r t; stty echo 2>/dev/null; echo >&2; [ -n "$u" ] && [ -n "$t" ] || exit 1; printf 'header = "Authorization: Bearer %s"\\nheader = "x-agenthost-user: %s"\\n' "$t" "$u" > "$f" && chmod 600 "$f" && echo "Saved $f" >&2)\n`);
+    expect(body).toContain(`    mkdir -p ~/.config/agenthost && (umask 077 && printf 'header = "Authorization: Bearer %s"\\nheader = "x-agenthost-user: %s"\\n' 'OWNER_TOKEN' 'USERNAME' > ~/.config/agenthost/example.com.curlrc) && chmod 600 ~/.config/agenthost/example.com.curlrc\n`);
+    expect(body).not.toContain("Bearer TOKEN");
+    expect(body).not.toContain("username=");
     expect(body).toContain("- Free: 50 files, 5 MB per file, 250 MB per site, 500 MB per account");
     expect(body).toContain("[references/http-api.md](https://example.com/skill/references/http-api.md)");
     expect(body).not.toContain("{{");
@@ -38,6 +43,7 @@ describe("served skill", () => {
     expect(body).toContain("| Files per site | 50 | 1000 |");
     expect(body).toContain("| Size per site | 250 MB | 1 GB |");
     expect(body).toContain("| Single asset | 100 MB | 5 GB |");
+    expect(body).toContain("curl -s -K ~/.config/agenthost/example.com.curlrc -X POST 'https://example.com/key/rotate?id=myblog'");
     expect(body).not.toContain("{{");
     expect(body).not.toContain("agenthost.page");
   });
@@ -77,6 +83,32 @@ describe("installer", () => {
     echo "Found an older install at $root/agenthost; remove it to avoid two copies of the skill."
   fi
 `);
+  });
+});
+
+describe("credentialsCommand", () => {
+  it("prompts for the username and the hidden token, so the command holds no secret", () => {
+    expect(credentialsCommand("example.com")).toBe(
+      `(f="$HOME/.config/agenthost/example.com.curlrc"; mkdir -p "\${f%/*}" && umask 077 || exit; printf 'example.com username: ' >&2; read -r u; trap 'stty echo 2>/dev/null; exit 130' INT HUP TERM; stty -echo 2>/dev/null; printf 'example.com token (hidden): ' >&2; read -r t; stty echo 2>/dev/null; echo >&2; [ -n "$u" ] && [ -n "$t" ] || exit 1; printf 'header = "Authorization: Bearer %s"\\nheader = "x-agenthost-user: %s"\\n' "$t" "$u" > "$f" && chmod 600 "$f" && echo "Saved $f" >&2)`,
+    );
+  });
+
+  it("bakes in a given username and prompts only for the token", () => {
+    expect(credentialsCommand("example.com", "ana")).toBe(
+      `(f="$HOME/.config/agenthost/example.com.curlrc"; mkdir -p "\${f%/*}" && umask 077 || exit; u='ana'; trap 'stty echo 2>/dev/null; exit 130' INT HUP TERM; stty -echo 2>/dev/null; printf 'example.com token (hidden): ' >&2; read -r t; stty echo 2>/dev/null; echo >&2; [ -n "$u" ] && [ -n "$t" ] || exit 1; printf 'header = "Authorization: Bearer %s"\\nheader = "x-agenthost-user: %s"\\n' "$t" "$u" > "$f" && chmod 600 "$f" && echo "Saved $f" >&2)`,
+    );
+  });
+
+  it("shell-quotes a username with a single quote", () => {
+    expect(credentialsCommand("example.com", "o'b")).toContain(`; u='o'\\''b'; `);
+  });
+});
+
+describe("writeCredentialsCommand", () => {
+  it("writes the two headers non-interactively with owner-only permissions", () => {
+    expect(writeCredentialsCommand("example.com")).toBe(
+      `mkdir -p ~/.config/agenthost && (umask 077 && printf 'header = "Authorization: Bearer %s"\\nheader = "x-agenthost-user: %s"\\n' 'OWNER_TOKEN' 'USERNAME' > ~/.config/agenthost/example.com.curlrc) && chmod 600 ~/.config/agenthost/example.com.curlrc`,
+    );
   });
 });
 

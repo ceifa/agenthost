@@ -9,7 +9,7 @@ Two secrets, returned **once** by a site's first publish:
 - **`ownerToken`** — account credential. Sent as `Authorization: Bearer <token>` on redeploys and owner endpoints. Only its SHA-256 is stored; lose it and you can only publish a new URL.
 - **`accessKey`** — per-site password gating the private site. Embedded in `shareUrl` as `?k=<accessKey>`. Persists across redeploys.
 
-Authenticated requests also need the account `username`, as `?username=<name>` or the `x-agenthost-user` header.
+Authenticated requests also need the account `username`, as `?username=<name>` or the `x-agenthost-user` header. The skill keeps both headers in the curl config `{{credentialsFile}}` and passes it with `-K`, as every example below does. See [SKILL.md](https://{{apexHost}}/skill/SKILL.md) for how that file gets written.
 
 ## POST /publish
 
@@ -53,8 +53,8 @@ Single-file publish replaces the whole site with that one file. `id` defaults to
 
 Large binary assets use a three-request control flow; the payload itself goes directly to R2.
 
-1. **Initiate** — `POST /asset?username=<username>` with owner auth and JSON `{ "name": "video.mp4", "bytes": 757603783, "contentType": "video/mp4" }`.
-2. **Upload** — `PUT` the file to the returned `uploadUrl`, sending every returned `uploadHeaders` value exactly. The hostname is `*.r2.cloudflarestorage.com`; the Worker never receives the body.
+1. **Initiate** — `POST /asset` with owner auth and JSON `{ "name": "video.mp4", "bytes": 757603783, "contentType": "video/mp4" }`.
+2. **Upload** — `PUT` the file to the returned `uploadUrl`, sending every returned `uploadHeaders` value exactly. Send no owner auth (no `-K`), since a bearer token would leak to R2 and break the signature. The hostname is `*.r2.cloudflarestorage.com`; the Worker never receives the body.
 3. **Complete** — `POST` the returned `completeUrl` with owner auth. Agenthost checks the R2 object size and marks the share page ready.
 
 The initiate response carries `assetId`, `uploadUrl`, `uploadHeaders` (`content-length`, `content-type`, `content-disposition`), `uploadExpiresIn`, `completeUrl`, `url`, `shareUrl` and `accessKey`. The asset's `shareUrl` and `accessKey` exist **only** in that response; complete returns `{ ok, url, name, bytes }`. Opening the `shareUrl` shows the file name, type, size, and a **Download** button. The button targets a short-lived presigned R2 GET, so downloads also bypass the Worker. The object stores `Content-Disposition: attachment`, making browsers download instead of trying to render it.
@@ -67,33 +67,35 @@ The upload URL expires after 15 minutes and is restricted by its signature to on
 | Total account storage | {{freePerUser}}, shared with sites | {{paidPerUser}} |
 | Retention | {{freeRetention}} | {{paidRetention}} |
 
-Pending uploads are deleted after one day. `DELETE /a/:username/:assetId?username=<username>` with owner auth removes a completed or pending asset.
+Pending uploads are deleted after one day. `DELETE /a/:username/:assetId` with owner auth removes a completed or pending asset:
+
+```bash
+curl -s -K {{credentialsFile}} -X DELETE 'https://{{apexHost}}/a/<username>/<assetId>'
+# → { "ok": true }
+```
 
 ## Owner endpoints
 
-All require `Authorization: Bearer <ownerToken>` + `username`, and (except `/claim`) the site `id`.
+All require `Authorization: Bearer <ownerToken>` + `username` (both in `{{credentialsFile}}`), and (except `/claim`) the site `id`.
 
 **`POST /key/public`** — drop or restore the access gate.
 
 ```bash
-curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
-  'https://{{apexHost}}/key/public?username=<username>&id=myblog&public=true'
+curl -s -K {{credentialsFile}} -X POST 'https://{{apexHost}}/key/public?id=myblog&public=true'
 # → { "ok": true, "public": true }
 ```
 
 **`POST /key/rotate`** — new `accessKey`, **invalidates all existing share links**, flips back to private.
 
 ```bash
-curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
-  'https://{{apexHost}}/key/rotate?username=<username>&id=myblog'
+curl -s -K {{credentialsFile}} -X POST 'https://{{apexHost}}/key/rotate?id=myblog'
 # → { "ok": true, "accessKey": "<new key>", "public": false, "shareUrl": "…/?k=<new key>" }
 ```
 
 **`POST /claim`** — attach an unverified recovery/abuse-contact email.
 
 ```bash
-curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
-  'https://{{apexHost}}/claim?username=<username>&email=you@example.com'
+curl -s -K {{credentialsFile}} -X POST 'https://{{apexHost}}/claim?email=you@example.com'
 # → { "ok": true, "username": "<username>", "email": "you@example.com" }
 ```
 
