@@ -21,7 +21,7 @@ Publish a page, a folder or a set of Markdown docs, or upload a large file, and 
 curl -fsSL https://{{apexHost}}/skill/install.sh | sh
 ```
 
-It saves this file as `{{skillName}}/SKILL.md` under `~/.claude/skills` and `~/.agents/skills`, and rerunning it updates. To install yourself instead, save `https://{{apexHost}}/skill/SKILL.md` as `<your skills dir>/{{skillName}}/SKILL.md`.
+It saves the skill's files, `SKILL.md` and `references/http-api.md`, into `{{skillName}}/` under `~/.claude/skills` and `~/.agents/skills`, and rerunning it updates them. To install yourself instead, save each file from `https://{{apexHost}}/skill/<file>` as `<your skills dir>/{{skillName}}/<file>`, keeping the `references/` folder.
 
 ## One account, saved in your home directory
 
@@ -98,4 +98,4 @@ Hand over the `shareUrl` from **step 1**; completing doesn't repeat it.
 - Free: {{freeFilesPerSite}} files, {{freePerFile}} per file, {{freePerSite}} per site, {{freePerUser}} per account (sites and assets combined). Free sites are deleted {{freeRetention}} after their last publish, so republish to keep one alive.
 - `_gen` and `_meta` are reserved filenames.
 
-Public sites, key rotation, recovery email, deleting assets, every response field and error code: [references/http-api.md](https://{{apexHost}}/skill/references/http-api.md).
+Public sites, key rotation, recovery email, deleting assets, every response field and error code: [references/http-api.md](references/http-api.md), also served at `https://{{apexHost}}/skill/references/http-api.md`.

@@ -13,9 +13,15 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
 
 const MARKDOWN = "text/markdown; charset=utf-8";
 
+// The skill's files, by path inside the skill directory. Each is served under
+// /skill/ and install.sh fetches every one, so a file added here gets installed.
+export const skillFiles: Record<string, string> = {
+  "SKILL.md": skillMd,
+  "references/http-api.md": httpApiMd,
+};
+
 export const skillRoutes: Record<string, { template: string; contentType: string }> = {
-  "/skill/SKILL.md": { template: skillMd, contentType: MARKDOWN },
-  "/skill/references/http-api.md": { template: httpApiMd, contentType: MARKDOWN },
+  ...Object.fromEntries(Object.entries(skillFiles).map(([file, template]) => [`/skill/${file}`, { template, contentType: MARKDOWN }])),
   "/skill/install.sh": { template: installSh, contentType: "text/plain; charset=utf-8" },
 };
 
@@ -66,6 +72,7 @@ const limitVars = {
 export const skillVars = (apexHost: string, skillName: string): Record<string, string> => ({
   apexHost,
   skillName,
+  skillFiles: Object.keys(skillFiles).join(" "),
   credentialsFile: credentialsFile(apexHost),
   credentialsCommand: credentialsCommand(apexHost),
   writeCredentialsCommand: writeCredentialsCommand(apexHost),

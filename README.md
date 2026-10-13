@@ -46,13 +46,14 @@ curl -fsSL https://agenthost.page/skill/install.sh | sh
 
 Or ask your agent:
 
-> Install the agent skill at https://agenthost.page/skill/SKILL.md so you can publish with agenthost.page.
+> Install the agent skill at https://agenthost.page/skill/SKILL.md, following its install section, so you can publish with agenthost.page.
 
-Or save it yourself:
+Or save its files yourself:
 
 ```bash
-mkdir -p ~/.claude/skills/agenthost-page && \
-  curl -fsSL https://agenthost.page/skill/SKILL.md -o ~/.claude/skills/agenthost-page/SKILL.md
+curl -fsSL --create-dirs \
+  -o ~/.claude/skills/agenthost-page/SKILL.md https://agenthost.page/skill/SKILL.md \
+  -o ~/.claude/skills/agenthost-page/references/http-api.md https://agenthost.page/skill/references/http-api.md
 ```
 
 The skill is named after the host (`agenthost-page`); set `SKILL_NAME` in

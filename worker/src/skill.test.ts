@@ -1,6 +1,10 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import worker from "./index";
-import { credentialsCommand, renderTemplate, writeCredentialsCommand } from "./skill";
+import { credentialsCommand, renderTemplate, skillFiles, writeCredentialsCommand } from "./skill";
 import type { Env } from "./env";
 
 const baseEnv = {
@@ -28,18 +32,20 @@ describe("served skill", () => {
     expect(body).not.toContain("Bearer TOKEN");
     expect(body).not.toContain("username=");
     expect(body).toContain("- Free: 50 files, 5 MB per file, 250 MB per site, 500 MB per account");
-    expect(body).toContain("[references/http-api.md](https://example.com/skill/references/http-api.md)");
+    expect(body).toContain("[references/http-api.md](references/http-api.md), also served at `https://example.com/skill/references/http-api.md`");
+    for (const file of Object.keys(skillFiles)) expect(body).toContain(`\`${file}\``);
     expect(body).not.toContain("{{");
     expect(body).not.toContain("agenthost.page");
   });
 
-  it("renders the HTTP reference with an absolute link back to SKILL.md", async () => {
+  it("renders the HTTP reference with a relative link back to SKILL.md", async () => {
     const res = await get("/skill/references/http-api.md");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
     const body = await res.text();
     expect(body).toContain("Base URL: `https://example.com`.");
-    expect(body).toContain("[SKILL.md](https://example.com/skill/SKILL.md)");
+    expect(body).toContain("[SKILL.md](../SKILL.md)");
+    expect(body).not.toContain("https://example.com/skill/SKILL.md");
     expect(body).toContain("| Files per site | 50 | 1000 |");
     expect(body).toContain("| Size per site | 250 MB | 1 GB |");
     expect(body).toContain("| Single asset | 100 MB | 5 GB |");
@@ -51,7 +57,7 @@ describe("served skill", () => {
   it("names the skill after SKILL_NAME when set", async () => {
     const body = await (await get("/skill/SKILL.md", { SKILL_NAME: "my-host" })).text();
     expect(body).toContain("\nname: my-host\n");
-    expect(body).toContain("`my-host/SKILL.md`");
+    expect(body).toContain("into `my-host/` under");
   });
 
   it.each(["/skill/SKILL.md", "/skill/references/http-api.md", "/skill/install.sh"])(
@@ -78,11 +84,47 @@ describe("installer", () => {
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
     const body = await res.text();
     expect(body).toContain('name="example-com"');
-    expect(body).toContain('url="https://example.com/skill/SKILL.md"');
+    expect(body).toContain('base="https://example.com/skill"');
+    expect(body).toContain('files="SKILL.md references/http-api.md"');
     expect(body).toContain(`  if [ "$name" != agenthost ] && [ -e "$root/agenthost" ]; then
     echo "Found an older install at $root/agenthost; remove it to avoid two copies of the skill."
   fi
 `);
+  });
+});
+
+describe("install.sh", () => {
+  // Runs the rendered script with a curl stub that copies from a tree of the
+  // worker's own responses, so every file the skill serves must be installed.
+  it("installs every skill file, keeping its path", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "skill-install-"));
+    const served = join(tmp, "served");
+    for (const file of Object.keys(skillFiles)) {
+      mkdirSync(dirname(join(served, file)), { recursive: true });
+      writeFileSync(join(served, file), await (await get(`/skill/${file}`)).text());
+    }
+    const bin = join(tmp, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "curl"),
+      `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    https://example.com/skill/*) file="\${1#https://example.com/skill/}" ;;
+  esac
+  shift
+done
+cp "${served}/$file" "$out"
+`,
+      { mode: 0o755 },
+    );
+    const home = join(tmp, "home");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    execFileSync("/bin/sh", ["-c", `PATH="${bin}:$PATH" HOME="${home}" sh -s`], { input: await (await get("/skill/install.sh")).text() });
+    for (const file of Object.keys(skillFiles)) {
+      expect(readFileSync(join(home, ".claude/skills/example-com", file), "utf8")).toBe(readFileSync(join(served, file), "utf8"));
+    }
   });
 });
 

@@ -4,7 +4,7 @@
 // make this lie.
 
 import { ASSET_LIMITS, LIMITS, formatBytes } from "./config";
-import { credentialsCommand, credentialsFile, writeCredentialsCommand } from "./skill";
+import { credentialsCommand, credentialsFile, skillFiles, writeCredentialsCommand } from "./skill";
 
 const free = LIMITS.free;
 
@@ -74,6 +74,7 @@ both absolute and relative asset paths work:
 This publish contract ships as an Agent Skill rendered for ${apexHost}, so you don't
 have to re-read this file on every run. Install it once; rerun to update:
 curl -fsSL https://${apexHost}/skill/install.sh | sh
-An agent can instead save https://${apexHost}/skill/SKILL.md into its own skills
-directory, in a folder named after the skill's \`name\`.
+An agent can instead save each of the skill's files into its own skills directory,
+in a folder named after the skill's \`name\`, keeping their paths:
+${Object.keys(skillFiles).map((file) => `- https://${apexHost}/skill/${file} → <name>/${file}`).join("\n")}
 `;

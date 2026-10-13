@@ -349,7 +349,7 @@ MVP.
 description of how to publish, so any agent that lands on the domain can self-serve. (This
 is the apex/landing surface, distinct from a site's own files.) The same contract ships as
 an Agent Skill under **`/skill/`** (`SKILL.md`, `references/http-api.md`, and an
-`install.sh` that saves it into `~/.claude/skills` and `~/.agents/skills`), rendered per
+`install.sh` that saves every file in `skillFiles` into `~/.claude/skills` and `~/.agents/skills`), rendered per
 request from the templates in `worker/src/skill/` with `APEX_HOST` and the limits in
 `config.ts`, so a self-hosted instance hands its agents a skill that names its own domain.
 The skill is named after the apex (`agenthost-page`) unless `SKILL_NAME` overrides it.
