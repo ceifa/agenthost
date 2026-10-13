@@ -1,9 +1,11 @@
 ---
 import SeoHead from "../components/SeoHead.astro";
 
-// The page is for the human. The only "code" on it is the sentence they say to
-// their agent; the agent finds everything else in /llms.txt and the skill.
 const ask = "Publish this with agenthost.page and send me the private link.";
+
+const host = Astro.site!.host;
+const installCmd = `curl -fsSL https://${host}/skill/install.sh | sh`;
+const installAsk = `Install the agent skill at https://${host}/skill/SKILL.md so you can publish with ${host}.`;
 
 // Source repo, configurable at build time: `PUBLIC_GITHUB_URL=https://github.com/you/agenthost`.
 const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
@@ -43,8 +45,6 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
       rel="stylesheet"
     />
     <style is:global>
-      /* Same ink and amber as before. Prose is now a sans; the mono voice is kept
-         for exactly one thing: the sentence you say to your agent. */
       :root {
         --bg: #0c0d0f;
         --panel: #131110;
@@ -150,6 +150,21 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
       .note a, .facts a, .sub a { border-bottom: 1px solid var(--line); }
       .note a:hover, .facts a:hover, .sub a:hover { color: var(--fg); border-bottom-color: var(--dim); }
 
+      /* ---- skill install ---- */
+      .install { margin-top: 22px; display: grid; gap: 10px; max-width: 44em; }
+      .install .hint { color: var(--dim); font-size: 15px; }
+      .install .line {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--accent);
+        padding: 10px 10px 10px 16px;
+      }
+      .install code { flex: 1; font: 400 14px/1.5 var(--mono); overflow-wrap: anywhere; }
+      .install .hint + .line { margin-bottom: 8px; }
+
       /* ---- closing ask ---- */
       .again .wrap { padding-top: 96px; }
       .again .ask { margin-top: 28px; }
@@ -248,6 +263,18 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
             Building an agent? The publish contract lives at <a href="/llms.txt">agenthost.page/llms.txt</a>,
             and ships as an <a href="/skill/SKILL.md">Agent Skill</a> you can install once and keep.
           </p>
+          <div class="install">
+            <p class="hint">Install or update it from a terminal:</p>
+            <div class="line">
+              <code>{installCmd}</code>
+              <button class="copy" type="button" data-copy={installCmd}>Copy</button>
+            </div>
+            <p class="hint">Or say this to your agent:</p>
+            <div class="line">
+              <code>{installAsk}</code>
+              <button class="copy" type="button" data-copy={installAsk}>Copy</button>
+            </div>
+          </div>
         </div>
       </section>
 
