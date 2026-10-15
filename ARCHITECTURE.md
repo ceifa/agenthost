@@ -283,8 +283,8 @@ account/bucket identifiers are vars. R2 caps a single PUT at 5 GB, which is the 
 Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` enabled:
 
 1. Parse `Host`:
-   - apex `agenthost.page` / `www` → landing page + `/publish` + `/llms.txt` (Static Assets
-     + endpoints).
+   - apex `agenthost.page` / `www` → landing page + `/publish` + `/llms.txt` + `/skill/`
+     (Static Assets + endpoints).
    - `*.workers.dev` → admin surface, behind Cloudflare Access (§8).
    - `{username}-{siteId}.agenthost.page` → split on the **first** hyphen (usernames are
      hyphen-free) → `{username, siteId}`; it's a site request.
@@ -347,7 +347,12 @@ MVP.
 
 **`/llms.txt`** is served at the apex (`agenthost.page/llms.txt`) — a machine-readable
 description of how to publish, so any agent that lands on the domain can self-serve. (This
-is the apex/landing surface, distinct from a site's own files.)
+is the apex/landing surface, distinct from a site's own files.) The same contract ships as
+an Agent Skill under **`/skill/`** (`SKILL.md`, `references/http-api.md`, and an
+`install.sh` that saves every file in `skillFiles` into `~/.claude/skills` and `~/.agents/skills`), rendered per
+request from the templates in `worker/src/skill/` with `APEX_HOST` and the limits in
+`config.ts`, so a self-hosted instance hands its agents a skill that names its own domain.
+The skill is named after the apex (`agenthost-page`) unless `SKILL_NAME` overrides it.
 
 **Rollback:** not instant — no history is kept (overwrite-in-place). To revert, re-publish
 the previous build.
@@ -621,6 +626,8 @@ agenthost/
 │  ├─ src/serve.ts              # host→username, fresh metadata, gen-keyed Cache API, R2 get, /_gen probe, widget + live-reload inject
 │  ├─ src/client/*.ts           # browser scripts (live reload, copy link, docs shell), readable TS with DOM types
 │  ├─ src/client/gen/           # ↑ minified into `export default "<js>"` modules by scripts/build-client.mjs (gitignored)
+│  ├─ src/skill/                # Agent Skill templates (SKILL.md, http-api.md, install.sh), served under /skill/ rendered for APEX_HOST
+│  ├─ src/skill/gen/            # ↑ the templates as `export default "<text>"` modules, same script (gitignored)
 │  ├─ src/assets.ts             # asset metadata/access pages + direct upload completion
 │  ├─ src/r2-signed.ts          # short-lived exact-size R2 PUT and direct GET signing
 │  ├─ src/admin.ts              # admin JSON routes (Hono sub-router, behind Cloudflare Access)
@@ -630,10 +637,7 @@ agenthost/
 │  └─ wrangler.jsonc            # r2=SITES; assets binding + run_worker_first; routes; cron
 ├─ landing/                     # (1) LANDING PAGE for agents — Astro, static build → landing/dist
 │  └─ src/pages/index.astro     #   the one-liner + curl contract
-├─ skills/agenthost/           # (3) THE SHAREABLE SKILL (Agent Skill layout)
-│  ├─ SKILL.md                  #   agent-readable; name + description frontmatter
-│  └─ references/http-api.md    #   full HTTP publish contract
-├─ admin/                       # (4) ADMIN UI — Svelte (Vite SPA), static build → admin/dist
+├─ admin/                       # (3) ADMIN UI — Svelte (Vite SPA), static build → admin/dist
 │  └─ src/App.svelte            #   founder dashboard; talks to worker /admin JSON routes
 ├─ public/                      # build output: landing/dist → / , admin/dist → /admin (ASSETS)
 └─ README.md

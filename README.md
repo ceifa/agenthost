@@ -32,22 +32,34 @@ requests go through the Worker; upload and download payloads use short-lived,
 object-scoped R2 URLs, so large files never pass through Worker compute. The
 returned share page shows file details and a Download button. Paid accounts
 support direct single-file uploads up to 5 GB. The exact recipe is in the
-[skill](./skills/agenthost/SKILL.md#upload-a-downloadable-asset).
+[skill](https://agenthost.page/skill/SKILL.md).
 
 ## Install the skill
 
-agenthost ships as an [Agent Skill](https://agentskills.io) at
-[`skills/agenthost/`](./skills/agenthost/). It's a plain `SKILL.md` + `references/`,
-so any skill installer can pick it up straight from this repo:
+agenthost ships as an [Agent Skill](https://agentskills.io) served by the
+deployment itself, rendered with that deployment's host and limits. Install or
+update it with:
 
-| Runtime | Install |
-|---------|---------|
-| [skills.sh](https://skills.sh) | `npx skills add <owner>/<repo> --skill agenthost` |
-| Claude Code | copy `skills/agenthost/` into `~/.claude/skills/` |
-| Hermes | `hermes skills tap add <owner>/<repo>` |
-| OpenClaw | import the repo into ClawHub (reads `skills/agenthost/SKILL.md`) |
+```bash
+curl -fsSL https://agenthost.page/skill/install.sh | sh
+```
 
-Replace `<owner>/<repo>` with this repository (e.g. `you/agenthost`).
+Or ask your agent:
+
+> Install the agent skill at https://agenthost.page/skill/SKILL.md, following its install section, so you can publish with agenthost.page.
+
+Or save its files yourself:
+
+```bash
+curl -fsSL --create-dirs \
+  -o ~/.claude/skills/agenthost-page/SKILL.md https://agenthost.page/skill/SKILL.md \
+  -o ~/.claude/skills/agenthost-page/references/http-api.md https://agenthost.page/skill/references/http-api.md
+```
+
+The skill is named after the host (`agenthost-page`); set `SKILL_NAME` in
+`worker/wrangler.jsonc` to change it. Use `~/.agents/skills/` instead of
+`~/.claude/skills/` for Codex and other agents. A self-hosted instance serves its
+own copy at `https://<your-domain>/skill/`.
 
 ## How it works
 
@@ -71,10 +83,9 @@ Replace `<owner>/<repo>` with this repository (e.g. `you/agenthost`).
 
 | Path | What |
 |------|------|
-| `worker/` | The entire backend — Hono on Workers (publish, serve, admin, cron). |
+| `worker/` | The entire backend — Hono on Workers (publish, serve, admin, cron, the Agent Skill). |
 | `landing/` | Astro static landing page, built into `public/`. |
 | `admin/` | Svelte SPA admin console, built into `public/admin/`. |
-| `skills/agenthost/` | The `agenthost` Agent Skill (`SKILL.md` + `references/`). |
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the design and [DEPLOYING.md](./DEPLOYING.md)
 to host your own instance.

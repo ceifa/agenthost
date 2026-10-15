@@ -11,5 +11,6 @@ worker/worker-configuration.d.ts
 deploy.env
 worker/wrangler.deploy.json
 
-# built browser scripts (see worker/scripts/build-client.mjs)
+# generated string modules (see worker/scripts/build-client.mjs)
 worker/src/client/gen/
+worker/src/skill/gen/

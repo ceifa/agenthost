@@ -39,6 +39,10 @@
     // a *.{APEX_HOST} subdomain is treated as a hosted-site request; the admin
     // lives on admin.{APEX_HOST} (an Access-protected hostname in this zone).
     "APEX_HOST": "agenthost.page",
+    // Name of the Agent Skill served under /skill/. Defaults to APEX_HOST with
+    // dots as dashes ("agenthost-page"). It must be a valid Agent Skill name:
+    // lowercase letters, digits and single hyphens, at most 64 characters.
+    // "SKILL_NAME": "agenthost",
     // Public identifiers used to construct presigned R2 URLs. The matching S3
     // access key and secret are Wrangler secrets (see DEPLOYING.md).
     "R2_ACCOUNT_ID": "bbf56797ad865faf9657cf6163324b0f",
