@@ -14,6 +14,22 @@ function titleFromPath(path: string): string {
   return base.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// YAML front matter (Jekyll/Hugo/Obsidian convention). Marked has no notion of
+// it: the opening `---` becomes an <hr> and the closing one turns the last YAML
+// line into a setext <h2>. It's metadata, not content — strip it and keep only
+// `title`. The block must open on line 1 and start with a `key:` so a document
+// that merely begins with a thematic break isn't swallowed.
+const FRONT_MATTER = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/;
+
+export function splitFrontMatter(source: string): { title: string | null; body: string } {
+  const m = FRONT_MATTER.exec(source);
+  const yaml = m?.[1] ?? "";
+  if (!m || !/^\s*[\w-]+[ \t]*:/.test(yaml)) return { title: null, body: source };
+  const raw = /^title[ \t]*:[ \t]*(.+?)[ \t]*$/m.exec(yaml)?.[1];
+  const title = raw?.replace(/^(["'])(.*)\1$/, "$2").trim() || null;
+  return { title, body: source.slice(m[0].length) };
+}
+
 // Docs live at site-root-relative paths ("guide/intro.md"); links to them must be
 // root-absolute so they work from any depth *without* a <base> tag — which would
 // otherwise break relative links written inside a nested document.
@@ -234,13 +250,17 @@ export function renderDoc(siteId: string, mdPath: string, source: string, index:
   const headings: Heading[] = [];
   const oversized = source.length > RENDER_LIMITS.documentChars;
   if (oversized) source = source.slice(0, RENDER_LIMITS.documentChars);
+  const front = splitFrontMatter(source);
+  const h1 = front.body.match(/^#\s+(.+)$/m);
+  // A front-matter title with no H1 of its own becomes the page heading, the way
+  // static site generators show it.
+  const body = front.title && !h1 ? `# ${front.title}\n\n${front.body}` : front.body;
   const contentHtml = oversized
     ? `<p>Preview of a large document. <a href="${esc(docHref(mdPath))}?raw">Open the complete source</a>.</p><pre>${esc(source)}</pre>`
-    : createParser(headings).parse(source, { async: false });
+    : createParser(headings).parse(body, { async: false });
   const entries = navEntries(index.files, index.nav);
 
-  const h1 = source.match(/^#\s+(.+)$/m);
-  const title = h1 ? h1[1]!.trim() : titleFromPath(mdPath);
+  const title = front.title ?? (h1 ? h1[1]!.trim() : titleFromPath(mdPath));
 
   return markdownShell({
     siteId,

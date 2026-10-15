@@ -187,6 +187,32 @@ Same heading twice.
     );
   });
 
+  it("hides YAML front matter instead of rendering it as an <hr> and a heading", () => {
+    const source = "---\ntitle: \"Q3 Report\"\ndate: 2026-10-15\ntags:\n  - a\n---\n\nBody text.\n";
+    const html = renderDoc("docs", "a.md", source, index(["a.md"]));
+    const article = html.slice(html.indexOf("<article>"), html.indexOf("</article>"));
+    expect(article).not.toContain("<hr>");
+    expect(article).not.toContain("<h2");
+    expect(article).not.toContain("date: 2026");
+    expect(article).toContain('<h1 id="q3-report">Q3 Report</h1>');
+    expect(article).toContain("<p>Body text.</p>");
+    expect(html).toContain("<title>Q3 Report · docs</title>");
+    // the Markdown toggle still shows the source as published
+    expect(html).toContain('<pre class="raw" id="raw-src">---\ntitle: &quot;Q3 Report&quot;');
+  });
+
+  it("keeps the document's own H1 when front matter also has a title", () => {
+    const html = renderDoc("docs", "a.md", "---\ntitle: Meta\n---\n# Visible\n", index(["a.md"]));
+    expect(html).toContain('<h1 id="visible">Visible</h1>');
+    expect(html).not.toContain('<h1 id="meta">');
+  });
+
+  it("leaves a leading thematic break alone when it isn't front matter", () => {
+    const html = renderDoc("docs", "a.md", "---\n\nIntro\n\n---\n\nMore\n", index(["a.md"]));
+    expect(html.match(/<hr>/g)).toHaveLength(2);
+    expect(html).toContain("<p>Intro</p>");
+  });
+
   it("escapes the site id and the title it puts in <title>", () => {
     const html = renderDoc('ev"il', "a.md", "# <script>alert(1)</script>", index(["a.md"]));
     expect(html).toContain("<title>&lt;script&gt;alert(1)&lt;/script&gt; · ev&quot;il</title>");

@@ -4,15 +4,16 @@
   "version": "0.0.0",
   "packageManager": "pnpm@10.28.2",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12"
   },
   "scripts": {
     "build": "turbo run build",
     "deploy": "turbo run build && pnpm run assets && pnpm -C worker run deploy",
     "dev": "turbo run build && pnpm run assets && pnpm -C worker run dev",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "assets": "node scripts/copy-assets.mjs"
+    "test": "turbo run test && node --test scripts/deploy-config.test.mjs",
+    "assets": "node scripts/copy-assets.mjs",
+    "wrangler": "node scripts/wrangler.mjs"
   },
   "devDependencies": {
     "turbo": "^2.5.5",

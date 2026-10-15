@@ -8,6 +8,8 @@ worker/worker-configuration.d.ts
 *.log
 .DS_Store
 .dev.vars
+deploy.env
+worker/wrangler.deploy.json
 
 # generated string modules (see worker/scripts/build-client.mjs)
 worker/src/client/gen/
