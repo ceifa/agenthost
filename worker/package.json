@@ -6,9 +6,9 @@
   "main": "src/index.ts",
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
-    "dev": "pnpm run build:client && wrangler dev",
-    "deploy": "pnpm run build:client && wrangler deploy",
-    "types": "wrangler types",
+    "dev": "pnpm run build:client && node ../scripts/wrangler.mjs dev",
+    "deploy": "pnpm run build:client && node ../scripts/wrangler.mjs deploy",
+    "types": "node ../scripts/wrangler.mjs types",
     "typecheck": "pnpm run build:client && tsc --noEmit && tsc --noEmit -p src/client",
     "test": "pnpm run build:client && vitest run"
   },

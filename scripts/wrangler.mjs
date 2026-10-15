@@ -10,9 +10,12 @@ import { writeWranglerConfig } from "./deploy-config.mjs";
 const config = writeWranglerConfig();
 const args = process.argv.slice(2);
 const worker = fileURLToPath(new URL("../worker", import.meta.url));
+// Run Wrangler's entry point with this Node directly: no shell and no pnpm
+// shim, so it behaves the same on Windows.
+const bin = fileURLToPath(new URL("../worker/node_modules/wrangler/bin/wrangler.js", import.meta.url));
 const { status } = spawnSync(
-  "pnpm",
-  ["exec", "wrangler", ...args, ...(config ? ["--config", config] : [])],
+  process.execPath,
+  [bin, ...args, ...(config ? ["--config", config] : [])],
   { cwd: worker, stdio: "inherit" },
 );
 process.exit(status ?? 1);

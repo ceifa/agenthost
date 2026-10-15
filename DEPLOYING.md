@@ -30,8 +30,8 @@ cp deploy.env.example deploy.env
 - `R2_BUCKET_NAME` → only if you want a bucket other than `agenthost-sites`.
 
 `deploy.env` is git-ignored, so your values never land in the repo and
-`worker/wrangler.jsonc` stays as shipped. `pnpm run deploy` and `pnpm wrangler …`
-generate `worker/wrangler.deploy.json` from both files and run Wrangler against
+`worker/wrangler.jsonc` stays as shipped. `pnpm run deploy`, `pnpm dev` and
+`pnpm wrangler …` generate `worker/wrangler.deploy.json` from both files and run Wrangler against
 it. The landing page and admin builds read `APEX_HOST` the same way.
 Environment variables override `deploy.env`.
 

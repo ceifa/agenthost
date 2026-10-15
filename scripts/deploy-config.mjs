@@ -21,21 +21,45 @@ function loadDeployEnv() {
   if (existsSync(deployEnv)) process.loadEnvFile(fileURLToPath(deployEnv));
 }
 
-// wrangler.jsonc allows // and /* */ comments; strip them outside strings.
-function parseJsonc(text) {
-  let out = "";
+// Index just past the string literal that opens at text[start].
+function stringEnd(text, start) {
+  for (let i = start + 1; i < text.length; i++) {
+    if (text[i] === "\\") i++;
+    else if (text[i] === '"') return i + 1;
+  }
+  throw new SyntaxError(`Unterminated string at position ${start}`);
+}
+
+// wrangler.jsonc allows // and /* */ comments and trailing commas, like
+// Wrangler itself; strip them outside strings before handing off to JSON.parse.
+export function parseJsonc(text) {
+  let stripped = "";
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === '"') {
-      const start = i;
-      for (i++; text[i] !== '"'; i++) if (text[i] === "\\") i++;
-      out += text.slice(start, i + 1);
+      const end = stringEnd(text, i);
+      stripped += text.slice(i, end);
+      i = end - 1;
     } else if (c === "/" && text[i + 1] === "/") {
       while (i < text.length && text[i] !== "\n") i++;
-      out += "\n";
+      stripped += "\n";
     } else if (c === "/" && text[i + 1] === "*") {
-      i = text.indexOf("*/", i + 2) + 1;
+      const end = text.indexOf("*/", i + 2);
+      if (end === -1) throw new SyntaxError(`Unterminated comment at position ${i}`);
+      i = end + 1;
     } else {
+      stripped += c;
+    }
+  }
+
+  let out = "";
+  for (let i = 0; i < stripped.length; i++) {
+    const c = stripped[i];
+    if (c === '"') {
+      const end = stringEnd(stripped, i);
+      out += stripped.slice(i, end);
+      i = end - 1;
+    } else if (c !== "," || !/^\s*[}\]]/.test(stripped.slice(i + 1))) {
       out += c;
     }
   }
@@ -49,24 +73,19 @@ export function apexHost() {
   return process.env.APEX_HOST || readWranglerConfig().vars.APEX_HOST;
 }
 
-// Writes worker/wrangler.deploy.json from wrangler.jsonc plus the overrides and
-// returns its path, or removes it and returns null when nothing is overridden.
-export function writeWranglerConfig() {
-  loadDeployEnv();
-  const env = process.env;
-  if (!OVERRIDES.some((name) => env[name])) {
-    rmSync(generatedConfig, { force: true });
-    return null;
-  }
+// Applies the overrides in env to a parsed wrangler.jsonc. Returns null when
+// nothing is overridden, so Wrangler can keep using the shipped file.
+export function applyOverrides(config, env) {
+  if (!OVERRIDES.some((name) => env[name])) return null;
 
-  const config = readWranglerConfig();
+  config = structuredClone(config);
   delete config.$schema;
   if (env.CLOUDFLARE_ACCOUNT_ID) {
     config.account_id = env.CLOUDFLARE_ACCOUNT_ID;
     config.vars.R2_ACCOUNT_ID = env.CLOUDFLARE_ACCOUNT_ID;
   }
   if (env.APEX_HOST || env.ZONE_NAME) {
-    const apex = apexHost();
+    const apex = env.APEX_HOST || config.vars.APEX_HOST;
     const zone = env.ZONE_NAME || apex;
     config.vars.APEX_HOST = apex;
     config.routes = [
@@ -80,7 +99,18 @@ export function writeWranglerConfig() {
     }
     config.vars.R2_BUCKET_NAME = env.R2_BUCKET_NAME;
   }
+  return config;
+}
 
+// Writes worker/wrangler.deploy.json from wrangler.jsonc plus the overrides and
+// returns its path, or removes it and returns null when nothing is overridden.
+export function writeWranglerConfig() {
+  loadDeployEnv();
+  const config = applyOverrides(readWranglerConfig(), process.env);
+  if (!config) {
+    rmSync(generatedConfig, { force: true });
+    return null;
+  }
   writeFileSync(generatedConfig, `${JSON.stringify(config, null, 2)}\n`);
   return fileURLToPath(generatedConfig);
 }
