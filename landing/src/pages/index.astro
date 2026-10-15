@@ -3,7 +3,9 @@ import SeoHead from "../components/SeoHead.astro";
 
 // The page is for the human. The only "code" on it is the sentence they say to
 // their agent; the agent finds everything else in /llms.txt and the skill.
-const ask = "Publish this with agenthost.page and send me the private link.";
+// The host comes from `site` in astro.config.mjs, which follows APEX_HOST.
+const host = Astro.site!.host;
+const ask = `Publish this with ${host} and send me the private link.`;
 
 // Source repo, configurable at build time: `PUBLIC_GITHUB_URL=https://github.com/you/agenthost`.
 const githubUrl = import.meta.env.PUBLIC_GITHUB_URL ?? "https://github.com/ceifa/agenthost";
@@ -12,7 +14,7 @@ const skillTreeUrl = `${githubUrl}/tree/main/skills/agenthost`;
 // A real sequence, so it is numbered.
 const steps = [
   ["You ask.", "One sentence, in the agent you already use. Nothing to install, no account to create."],
-  ["It publishes.", "The agent reads the instructions at agenthost.page on its own and uploads what it built."],
+  ["It publishes.", `The agent reads the instructions at ${host} on its own and uploads what it built.`],
   ["You get a link.", "Private, ready to open, safe to forward. Publish again and the address stays the same."],
 ];
 
@@ -246,7 +248,7 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
             so you can read exactly what runs, or <a href={githubUrl}>host your own</a>.
           </p>
           <p class="note">
-            Building an agent? The publish contract lives at <a href="/llms.txt">agenthost.page/llms.txt</a>,
+            Building an agent? The publish contract lives at <a href="/llms.txt">{host}/llms.txt</a>,
             and ships as an <a href={skillTreeUrl}>Agent Skill</a> you can install once and keep.
           </p>
         </div>
