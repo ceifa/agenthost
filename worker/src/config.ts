@@ -11,36 +11,37 @@ export interface PlanLimits {
   retentionDays: number | null; // days since last deploy before the sweep deletes; null = infinite
 }
 
+// One table whichever way a file arrives. Paid perFile is R2's single-PUT
+// maximum; a body over ~100 MB can't cross the Worker anyway, so those go
+// through a presigned upload.
 export const LIMITS: Record<"free" | "paid", PlanLimits> = {
   free: {
-    perFile: 5 * MB,
+    perFile: 100 * MB,
     filesPerSite: 50,
     perSite: 250 * MB,
     perUser: 500 * MB,
     retentionDays: 15,
   },
   paid: {
-    perFile: 25 * MB,
+    perFile: 5 * GB,
     filesPerSite: 1000,
-    perSite: 1024 * MB,
+    perSite: Number.MAX_SAFE_INTEGER,
     perUser: Number.MAX_SAFE_INTEGER,
     retentionDays: null,
   },
 };
 
-// Direct assets have a separate budget from static sites. Free accounts get a
-// useful but abuse-resistant allowance; paid accounts can use R2's maximum
-// single-PUT size. The signed Content-Length prevents uploading past perAsset.
-export const ASSET_LIMITS: Record<"free" | "paid", { perAsset: number; perUser: number }> = {
-  free: { perAsset: 100 * MB, perUser: 500 * MB },
-  paid: { perAsset: 5 * GB, perUser: Number.MAX_SAFE_INTEGER },
-};
+// Past UPLOAD_EXPIRY_MS the sweep deletes a reservation and whatever landed at its path.
+export const UPLOAD_URL_TTL_SECONDS = 15 * 60;
+export const UPLOAD_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+// The Cache API refuses objects past this size; larger files stream from R2.
+export const CACHE_MAX_BYTES = 512 * MB;
 
 // In-flight R2 puts during untar. Entries stream into R2 one at a time, so this
 // only overlaps a put's commit with reading the next entry; no put holds a
 // buffered file, and perFile no longer bounds memory.
 export const PUT_CONCURRENCY = 3;
-export const DEFAULT_SITE_ID = "site";
 export const AUTH_COOKIE_PREFIX = "as_auth_";
 export const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // ~1 year, seconds
 

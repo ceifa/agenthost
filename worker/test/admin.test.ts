@@ -36,14 +36,14 @@ describe("admin request bodies", () => {
 });
 
 describe("account list", () => {
-  it("flags which accounts on the page share a site or a file", async () => {
+  it("flags which accounts on the page have shares", async () => {
     const f = testBucket(3);
     for (const name of ["alice", "bob", "carol", "dan"]) f.json(`_users/${name}`, user);
     // Owners outside the page and a second LIST page around it.
     for (const name of ["aaron", "alice", "amy", "anna", "dave"]) f.records.set(`sites/${name}/docs/index.html`, { body: "x" });
     f.json("_sites/alice/docs", { generation: 1 });
     f.records.set("sites/carol/old/index.html", { body: "x" });
-    f.json("_assets/dan/a1/_meta", { id: "a1" });
+    f.records.set("sites/dan/video/demo.mp4", { body: "x" });
     const flags = async (cursor = "") => {
       const res = await handleAdmin(new Request(`https://admin.example.com/admin/api/users${cursor && `?cursor=${cursor}`}`), f.env);
       return res.json<{ users: { username: string; hasShares: boolean }[]; cursor: string | null }>();
@@ -57,7 +57,7 @@ describe("account list", () => {
 describe("custom domains", () => {
   it("stores the domain the way the Host router looks it up", async () => {
     const f = fixture();
-    f.json("_sites/alice/docs", { generation: 1, public: true, keyHash: null, lastDeployAt: 0 });
+    f.json("_sites/alice/docs", { generation: 1, public: true, lastDeployAt: 0 });
     f.records.set("sites/alice/docs/index.html", { body: "<p>home</p>", httpMetadata: { contentType: "text/html" } });
     const res = await f.post("domain", JSON.stringify({ host: " Status.Acme.COM. ", username: "alice", siteId: "docs" }));
     expect(res.status).toBe(200);

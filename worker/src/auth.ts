@@ -1,11 +1,11 @@
 // Auth helpers: ownerToken verification (data-plane), the access-key gate on
-// private sites and assets, and Access email verification (admin).
+// private shares, and Access email verification (admin).
 
 import type { Context } from "hono";
 import type { Env } from "./env";
 import { AUTH_COOKIE_MAX_AGE } from "./config";
-import { getUser, type UserRecord } from "./storage";
-import { sha256Hex, timingSafeEqual, clientIp } from "./ids";
+import { getMeta, getUser, type SiteMeta, type UserRecord } from "./storage";
+import { sha256Hex, timingSafeEqual, clientIp, sanitizeSiteId } from "./ids";
 import { interstitialHtml } from "./templates";
 
 export type AppContext = Context<{ Bindings: Env }>;
@@ -19,25 +19,23 @@ export type OwnerResult =
   | { ok: true; ctx: OwnerCtx }
   | { ok: false; status: 401 | 403; error: string };
 
-// Single owner-credential contract: Bearer token + username claimed via
-// ?username= or the x-agenthost-user header.
+// The owner token is `{username}.{secret}`; usernames never contain a dot.
 export async function verifyOwner(req: Request, env: Env): Promise<OwnerResult> {
-  const auth = req.headers.get("authorization");
-  const token = auth?.replace(/^Bearer\s+/i, "").trim();
-  const username =
-    new URL(req.url).searchParams.get("username") ?? req.headers.get("x-agenthost-user");
-  if (!token || !username) {
-    return { ok: false, status: 401, error: "Bearer token requires ?username=<your-username>" };
+  const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+  const dot = token.indexOf(".");
+  if (dot <= 0) {
+    return { ok: false, status: 401, error: "Authorization: Bearer <ownerToken> required" };
   }
+  const username = token.slice(0, dot);
   const user = await getUser(env.SITES, username);
   // One indistinguishable failure for both unknown-username and wrong-token, and
   // always run the compare (against a dummy of equal length when the user is
   // missing) so neither the message nor the timing reveals whether the username
   // exists.
   const expected = user?.tokenHash ?? "0".repeat(64); // sha256 hex is 64 chars
-  const match = timingSafeEqual(await sha256Hex(token), expected);
+  const match = timingSafeEqual(await sha256Hex(token.slice(dot + 1)), expected);
   if (!user || !match) {
-    return { ok: false, status: 403, error: "invalid username or owner token" };
+    return { ok: false, status: 403, error: "invalid owner token" };
   }
   return { ok: true, ctx: { username, user } };
 }
@@ -45,6 +43,27 @@ export async function verifyOwner(req: Request, env: Env): Promise<OwnerResult> 
 export async function requireOwner(c: AppContext): Promise<OwnerCtx | Response> {
   const owner = await verifyOwner(c.req.raw, c.env);
   return owner.ok ? owner.ctx : c.json({ error: owner.error }, owner.status);
+}
+
+// The owner and the share named by the route's :id, or the response to send instead.
+export async function ownedShare(c: AppContext): Promise<{ owner: OwnerCtx; id: string; meta: SiteMeta } | Response> {
+  const owner = await requireOwner(c);
+  if (owner instanceof Response) return owner;
+  const id = sanitizeSiteId(c.req.param("id"));
+  const meta = id ? await getMeta(c.env.SITES, owner.username, id) : null;
+  if (!id || !meta) return c.json({ error: "share not found" }, 404);
+  return { owner, id, meta };
+}
+
+// The request's JSON body if it is an object, else null.
+export async function readJson(c: AppContext): Promise<Record<string, unknown> | null> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return null;
+  }
+  return body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
 }
 
 function getCookie(req: Request, name: string): string | null {
@@ -63,9 +82,11 @@ function getCookie(req: Request, name: string): string | null {
 export async function checkAccessKey(
   req: Request,
   env: Env,
-  gate: { keyHash: string; label: string; cookieName: string; cookiePath: string; limiterKey: string },
+  gate: { accessKey?: string; keyHash?: string; label: string; cookieName: string; limiterKey: string },
 ): Promise<string | Response> {
-  const matches = async (key: string) => timingSafeEqual(await sha256Hex(key), gate.keyHash);
+  const matches = async (key: string) => gate.accessKey !== undefined
+    ? timingSafeEqual(key, gate.accessKey)
+    : timingSafeEqual(await sha256Hex(key), gate.keyHash ?? "");
   const cookie = getCookie(req, gate.cookieName);
   if (cookie && await matches(cookie)) return cookie;
 
@@ -75,7 +96,7 @@ export async function checkAccessKey(
   if (k && await matches(k)) {
     url.searchParams.delete("k");
     const res = new Response(null, { status: 302, headers: { ...noindex, location: url.pathname + url.search } });
-    res.headers.append("set-cookie", `${gate.cookieName}=${k}; Path=${gate.cookiePath}; Secure; HttpOnly; SameSite=Lax; Max-Age=${AUTH_COOKIE_MAX_AGE}`);
+    res.headers.append("set-cookie", `${gate.cookieName}=${k}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${AUTH_COOKIE_MAX_AGE}`);
     return res;
   }
   // Wrong key: throttle guessing before re-prompting. (The keyspace already
