@@ -74,12 +74,13 @@ export async function createAsset(c: AppContext): Promise<Response> {
   const owner = await requireOwner(c);
   if (owner instanceof Response) return owner;
 
-  let body: Record<string, unknown>;
+  let body: Record<string, unknown> | null;
   try {
-    body = await c.req.json<Record<string, unknown>>();
+    body = await c.req.json<Record<string, unknown> | null>();
   } catch {
-    return c.json({ error: "JSON body required" }, 400);
+    body = null;
   }
+  if (!body || typeof body !== "object") return c.json({ error: "JSON body required" }, 400);
   const name = safeAssetName(body.name);
   const bytes = body.bytes;
   if (!name) return c.json({ error: "valid file name required (max 180 characters)" }, 400);

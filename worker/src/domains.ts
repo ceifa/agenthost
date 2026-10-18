@@ -29,3 +29,12 @@ export function customDomainSetup(host: string): ProvisionResult {
     ],
   };
 }
+
+const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
+
+// Routing looks domains up by the lowercased Host header; apex hosts never reach that lookup.
+export function customDomainHost(raw: string, apexHost: string): string | null {
+  const host = raw.trim().toLowerCase().replace(/\.$/, "");
+  const apex = apexHost.toLowerCase();
+  return HOSTNAME.test(host) && host !== apex && !host.endsWith(`.${apex}`) ? host : null;
+}
