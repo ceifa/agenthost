@@ -111,6 +111,14 @@ describe("admin and retention", () => {
     expect(f.get).not.toHaveBeenCalled();
   });
 
+  it.each(["not-base64!", btoa("{"), btoa(JSON.stringify({ phase: "nope", offset: 0 }))])("rejects a malformed site cursor %s", async (cursor) => {
+    const f = testBucket();
+    f.json("_users/a", user, true);
+    const res = await handleAdmin(new Request("https://admin.example.com/admin/api/sites?username=a&cursor=" + encodeURIComponent(cursor)), f.env);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid cursor" });
+  });
+
   it("preserves inline metadata and asset payload keys during admin rename", async () => {
     const f = testBucket(1);
     f.json("_users/alice", user, true);

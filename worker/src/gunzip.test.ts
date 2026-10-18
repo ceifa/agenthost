@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { gunzipStream } from "./gunzip";
 import { peek } from "./sniff";
+import { gzip } from "./test-tar";
 
 // A body arriving in network-sized pieces, optionally with empty chunks between.
 function chunked(bytes: Uint8Array, size: number, emptyEvery = 0): ReadableStream<Uint8Array> {
@@ -18,10 +19,6 @@ function chunked(bytes: Uint8Array, size: number, emptyEvery = 0): ReadableStrea
 
 async function drain(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-async function gzip(raw: Uint8Array): Promise<Uint8Array> {
-  return drain(new Blob([raw]).stream().pipeThrough(new CompressionStream("gzip")));
 }
 
 function random(n: number): Uint8Array {

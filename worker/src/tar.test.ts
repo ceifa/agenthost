@@ -1,33 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseTar, TarLimitError, type TarEntry } from "./tar";
-
-const enc = new TextEncoder();
-
-// Minimal ustar writer: enough header for the parser (name, size, typeflag).
-function header(name: string, size: number, flag = "0"): Uint8Array {
-  const h = new Uint8Array(512);
-  h.set(enc.encode(name).subarray(0, 100), 0);
-  h.set(enc.encode(size.toString(8).padStart(11, "0")), 124);
-  h[156] = flag.charCodeAt(0);
-  h.set(enc.encode("ustar\0"), 257);
-  return h;
-}
-
-function tar(entries: { name: string; body?: Uint8Array; flag?: string }[], end = true): Uint8Array {
-  const parts: Uint8Array[] = [];
-  for (const e of entries) {
-    const body = e.body ?? new Uint8Array(0);
-    parts.push(header(e.name, body.length, e.flag), body, new Uint8Array((512 - (body.length % 512)) % 512));
-  }
-  if (end) parts.push(new Uint8Array(1024));
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let off = 0;
-  for (const p of parts) {
-    out.set(p, off);
-    off += p.length;
-  }
-  return out;
-}
+import { enc, header, tar } from "./test-tar";
 
 // Chunks are views of the one source buffer, like a request body's.
 function chunked(bytes: Uint8Array, size: number): ReadableStream<Uint8Array> {
