@@ -4,8 +4,12 @@ import { getMeta, getUser, userUsage } from "./storage";
 import { sha256Hex } from "./ids";
 import { LIMITS } from "./config";
 import { testBucket } from "./test-bucket";
+import { header, tar } from "./test-tar";
 
 afterEach(() => vi.unstubAllGlobals());
+
+const gzip = async (bytes: Uint8Array) =>
+  new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
 
 async function fixture(legacy = false) {
   const f = testBucket();
@@ -93,5 +97,95 @@ describe("efficient single-file publishing", () => {
     expect((await f.request("# Next", { "content-length": "6" })).status).toBe(200);
     expect((await getMeta(f.bucket, "alice", "docs"))!.generation).toBe(9);
     expect((await getUser(f.bucket, "alice"))!.legacySiteIds).toEqual([]);
+  });
+});
+
+describe("archive publishing", () => {
+  async function archiveFixture() {
+    const f = await fixture();
+    const post = (body: BodyInit | null, opts: { owner?: boolean; query?: string; headers?: Record<string, string> } = {}) =>
+      handlePublish(new Request(`https://example.com/publish?id=docs${opts.owner === false ? "" : "&username=alice"}${opts.query ?? ""}`, {
+        method: "POST", body, headers: { ...(opts.owner === false ? {} : { authorization: "Bearer owner" }), ...opts.headers },
+        ...({ duplex: "half" } as object),
+      }), f.env);
+    const error = async (res: Response) => ({ status: res.status, ...(await res.json<{ error: string }>()) });
+    return { ...f, post, error };
+  }
+
+  it("mints an account, an access key and a generation on an anonymous publish", async () => {
+    const f = await archiveFixture();
+    const res = await f.post(tar([{ name: "./index.html", body: "<p>hi</p>" }, { name: "css/app.css", body: "a{}" }]), { owner: false });
+    expect(res.status).toBe(200);
+    const body = await res.json<Record<string, string | number>>();
+    const username = body.username as string;
+    expect(body).toMatchObject({ siteId: "docs", generation: 1, fileCount: 2, bytes: 12, url: `https://${username}-docs.example.com/` });
+    expect(body.shareUrl).toBe(`https://${username}-docs.example.com/?k=${body.accessKey}`);
+    expect(body.claimUrl).toBe(`https://example.com/claim?username=${username}`);
+    const user = (await getUser(f.bucket, username))!;
+    expect(user).toMatchObject({ plan: "free", legacySiteIds: [], tokenHash: await sha256Hex(body.ownerToken as string) });
+    const meta = (await getMeta(f.bucket, username, "docs"))!;
+    expect(meta).toMatchObject({ generation: 1, bytes: 12, fileCount: 2, public: false, keyHash: await sha256Hex(body.accessKey as string) });
+    expect(f.records.get(`sites/${username}/docs/css/app.css`)).toMatchObject({ body: "a{}", httpMetadata: { contentType: "text/css; charset=utf-8" } });
+  });
+
+  it("keeps the access key on redeploy and deletes files the new archive dropped", async () => {
+    const f = await archiveFixture();
+    const first = await (await f.post(tar([{ name: "index.html", body: "one" }, { name: "old.css", body: "x" }]))).json<Record<string, unknown>>();
+    const second = await (await f.post(await gzip(tar([{ name: "index.html", body: "two" }])))).json<Record<string, unknown>>();
+    expect(first.accessKey).toBeTypeOf("string");
+    expect(second).not.toHaveProperty("accessKey");
+    expect(second).not.toHaveProperty("ownerToken");
+    expect(second).toMatchObject({ generation: 2, fileCount: 1, shareUrl: "https://alice-docs.example.com/" });
+    expect(f.records.has("sites/alice/docs/old.css")).toBe(false);
+    expect(f.records.get("sites/alice/docs/index.html")!.body).toBe("two");
+    expect((await getMeta(f.bucket, "alice", "docs"))!.keyHash).toBe(await sha256Hex(first.accessKey as string));
+  });
+
+  it("skips Finder cruft, directories and control-object names", async () => {
+    const f = await archiveFixture();
+    const res = await f.post(tar([
+      { name: "dir/", flag: "5" }, { name: "._index.html", body: "x" }, { name: "a/.DS_Store", body: "x" },
+      { name: "_gen", body: "99" }, { name: "_meta", body: "{}" }, { name: "index.html", body: "ok" },
+    ]));
+    expect(await res.json()).toMatchObject({ fileCount: 1, bytes: 2 });
+    expect([...f.records.keys()].filter(k => k.startsWith("sites/"))).toEqual(["sites/alice/docs/index.html"]);
+  });
+
+  it.each<{ name: string; body: () => Uint8Array; query?: string; headers?: Record<string, string>; status: number; error: string | RegExp }>([
+    { name: "a symlink", body: () => tar([{ name: "link", flag: "2" }]), status: 400, error: "links are not allowed (link)" },
+    { name: "a parent path", body: () => tar([{ name: "../evil.html", body: "x" }]), status: 400, error: "unsafe path rejected: ../evil.html" },
+    { name: "no files", body: () => tar([{ name: "dir/", flag: "5" }]), status: 400, error: "archive contained no files" },
+    { name: "too many files", body: () => tar(Array.from({ length: LIMITS.free.filesPerSite + 1 }, (_, i) => ({ name: `${i}.txt`, body: "x" }))), status: 413, error: `too many files; max is ${LIMITS.free.filesPerSite}` },
+    { name: "an oversized entry", body: () => header("big.bin", LIMITS.free.perFile + 1), status: 413, error: `entry big.bin declares ${LIMITS.free.perFile + 1} bytes; max is ${LIMITS.free.perFile}` },
+    { name: "a zip", body: () => new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0]), status: 400, error: "zip is not supported — send a tar (tar cf - -C ./dist .)" },
+    { name: "binary garbage", body: () => new Uint8Array([0, 1, 2, 3]), status: 400, error: "unrecognized body — send a tar, a .md/.html document, or name it with ?file=<name>" },
+    { name: "garbage labelled as a tarball", body: () => new TextEncoder().encode("not gzip"), headers: { "content-type": "application/gzip" }, status: 400, error: /^bad archive: / },
+    { name: "an unsafe ?file= name", body: () => new TextEncoder().encode("x"), query: "&file=../x", status: 400, error: "invalid file name: ../x" },
+    { name: "a control ?file= name", body: () => new TextEncoder().encode("x"), query: "&file=_gen", status: 400, error: "reserved filename: _gen" },
+  ])("rejects $name without committing", async ({ body, query, headers, status, error }) => {
+    const f = await archiveFixture();
+    const res = await f.error(await f.post(body(), { query, headers }));
+    expect(res.status).toBe(status);
+    if (typeof error === "string") expect(res.error).toBe(error);
+    else expect(res.error).toMatch(error);
+    expect(f.records.has("_sites/alice/docs")).toBe(false);
+  });
+
+  it("rejects an archive past the account's remaining budget", async () => {
+    const f = await archiveFixture();
+    f.json("_sites/alice/other", { generation: 1, bytes: LIMITS.free.perUser - 4 }, true);
+    const res = await f.error(await f.post(tar([{ name: "a.txt", body: "abc" }, { name: "b.txt", body: "de" }])));
+    expect(res).toEqual({ status: 413, error: "site exceeds size budget of 4 bytes (plan free)" });
+    expect(f.records.has("_sites/alice/docs")).toBe(false);
+  });
+
+  it("answers bad methods, empty bodies and rate limits before touching storage", async () => {
+    const f = await archiveFixture();
+    expect((await handlePublish(new Request("https://example.com/publish"), f.env)).status).toBe(405);
+    expect(await f.error(await f.post(null))).toEqual({ status: 400, error: "empty body — pipe a tar or a single file" });
+    (f.env as { PUBLISH_LIMITER: unknown }).PUBLISH_LIMITER = { limit: async () => ({ success: false }) };
+    expect((await f.post(tar([{ name: "a.txt", body: "a" }]))).status).toBe(429);
+    expect(f.get).not.toHaveBeenCalled();
+    expect(f.put).not.toHaveBeenCalled();
   });
 });

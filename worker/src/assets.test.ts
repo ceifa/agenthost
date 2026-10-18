@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { apexApp } from "./apex";
+import { sha256Hex } from "./ids";
+import { testBucket } from "./test-bucket";
 import { attachmentDisposition, safeAssetName } from "./assets";
 import { signDirectDownload, signDirectUpload } from "./r2-signed";
 import { assetDownloadHtml } from "./templates";
@@ -50,5 +53,54 @@ describe("direct R2 asset transfer", () => {
     expect(safeAssetName("../folder/video final.mp4")).toBe("video final.mp4");
     expect(safeAssetName("bad\r\nname.mp4")).toBeNull();
     expect(attachmentDisposition("vídeo final.mp4")).toContain("filename*=UTF-8''v%C3%ADdeo%20final.mp4");
+  });
+});
+
+describe("asset share page", () => {
+  async function fixture(overrides: Record<string, unknown> = {}, limited = false) {
+    const f = testBucket();
+    f.json("_assets/alice/abc/_meta", {
+      id: "abc", username: "alice", name: "demo.mp4", contentType: "video/mp4", bytes: 4, objectKey: "assets/alice/abc/blob",
+      keyHash: await sha256Hex("key"), public: false, status: "ready", createdAt: 0, lastDeployAt: 0, ...overrides,
+    }, true);
+    f.records.set("assets/alice/abc/blob", { body: "data" });
+    const testEnv = { ...f.env, ...env, ACCESS_LIMITER: { limit: async () => ({ success: !limited }) } } as Env;
+    const get = (path: string, headers?: HeadersInit) => apexApp.fetch(new Request(`https://example.com/a/alice/abc${path}`, { headers }), testEnv);
+    return { ...f, get };
+  }
+
+  it("prompts for the key, then logs a reader in with a path-scoped cookie", async () => {
+    const f = await fixture();
+    const prompt = await f.get("");
+    expect(prompt.status).toBe(401);
+    expect(prompt.headers.get("cache-control")).toBe("no-store");
+    expect(await prompt.text()).not.toContain("Incorrect key");
+
+    const wrong = await f.get("?k=nope");
+    expect(wrong.status).toBe(401);
+    expect(await wrong.text()).toContain("Incorrect key");
+
+    const login = await f.get("?k=key&x=1");
+    expect(login.status).toBe(302);
+    expect(login.headers.get("location")).toBe("/a/alice/abc?x=1");
+    expect(login.headers.get("set-cookie")).toMatch(/^aa_auth_abc=key; Path=\/a\/alice\/abc; Secure; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
+
+    const page = await f.get("", { cookie: "aa_auth_abc=key" });
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain("demo.mp4");
+    expect(html).toContain("https://example.com/a/alice/abc?k=key");
+  });
+
+  it("throttles wrong keys", async () => {
+    const f = await fixture({}, true);
+    expect((await f.get("?k=nope")).status).toBe(429);
+    expect((await f.get("")).status).toBe(401);
+  });
+
+  it("serves public assets without a key and pending ones as 425", async () => {
+    expect((await (await fixture({ public: true })).get("")).status).toBe(200);
+    expect((await (await fixture({ status: "pending" })).get("", { cookie: "aa_auth_abc=key" })).status).toBe(425);
+    expect((await (await fixture()).get("/../nope")).status).toBe(404);
   });
 });
