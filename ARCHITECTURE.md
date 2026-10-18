@@ -1,7 +1,7 @@
 # agenthost — Architecture
 
-> Static-site and asset hosting **built for AI agents**. An agent publishes a static site
-> or a large downloadable file and gets back a private share URL. Zero signup, zero key
+> Hosting **built for AI agents**. An agent publishes a page, docs or any files as a
+> **share** and gets back a private share URL. Zero signup, zero key
 > to start. Inspired by [postplan](https://www.npmjs.com/package/postplan) (friction-zero
 > publish) and [lakebed.dev](https://lakebed.dev) (optional claim-to-upgrade), built
 > entirely on **Cloudflare**.
@@ -34,8 +34,8 @@ uniqueness-race that would otherwise need a Durable Object).
 
 **We use:**
 
-- **Workers** — the only compute. One script: routes by `Host`. Apex → landing / publish.
-  `*.agenthost.page` → serve a site. `*.workers.dev` → admin (behind Access). Custom domain →
+- **Workers** — the only compute. One script: routes by `Host`. Apex → landing / shares API.
+  `*.agenthost.page` → serve a share. `*.workers.dev` → admin (behind Access). Custom domain →
   serve a site. One deploy.
 - **R2** — the only byte store. One bucket holds every file of every version of every
   site, plus tiny metadata objects. **Read-after-write is strongly consistent per object**
@@ -51,7 +51,7 @@ uniqueness-race that would otherwise need a Durable Object).
   free `_domains/{host}` mapping in R2 plus a one-time dashboard step: the admin adds
   the domain as a zone and attaches the Worker as a Custom Domain (free routing + TLS).
   No Cloudflare for SaaS. Trade-off: the customer's zone lives in the admin's account.
-- **Rate Limiting Rules (WAF)** — zone-level rate limit on `/publish`. Zero code, no DO.
+- **Rate limiting** — per-IP Workers rate-limit bindings on publishes and uploads. No DO.
 - **Wildcard DNS + Worker route** — proxied `*` A-record (`192.0.2.1` dummy) + route
   `*.agenthost.page/*`. Free Universal SSL covers the **single-level** wildcard
   `*.agenthost.page` on all plans (verified — no Enterprise/ACM needed).
@@ -115,16 +115,22 @@ author meant.
 ## 4. Data model (R2 only)
 
 ```
-sites/{username}/{siteId}/{path}        # current static files, OVERWRITTEN IN PLACE (no history)
-_sites/{username}/{siteId}             # { generation, createdAt, lastDeployAt, bytes, fileCount, keyHash, public, tombstone? }
-assets/{username}/{assetId}/blob        # payload, uploaded/downloaded directly through R2 S3
-_assets/{username}/{assetId}/_meta      # metadata + access-key hash + upload state
+sites/{username}/{siteId}/{path}        # a share's files, OVERWRITTEN IN PLACE (no history)
+_sites/{username}/{siteId}             # { generation, createdAt, lastDeployAt, bytes, fileCount, accessKey, public, tombstone?, pending? }
 _users/{username}                       # JSON, see below
 _domains/{host}                         # JSON: { username, siteId }  (paid custom domains)
 ```
 
-The site metadata record is the per-site bookkeeping the **retention sweep** and **per-user quota** read
-(§9). User usage is *derived* by summing each site's metadata `bytes` — there is no mutable
+**A share is one tree of files.** A page, a docs folder, a single video and a dataset are
+the same thing; what `/` shows is decided at serve time (§6). There used to be a separate
+"asset" kind (own records, own URLs on the apex, own key gate, no redeploy, no rotation).
+The only real difference was how the bytes arrive, so that is all that stayed different
+(§5). The storage prefixes kept the name `sites/` because renaming them is a bucket-wide
+copy that buys nothing.
+
+The share record is the per-share bookkeeping the **retention sweep** and **per-user quota**
+read (§9). User usage is *derived* by summing each share's `bytes` plus its `pending` upload
+reservations — there is no mutable
 usage counter (we have no Durable Object for atomic increments, so summing the source of
 truth avoids a race; a small over-shoot from concurrent deploys is acceptable and
 self-corrects next publish).
@@ -144,19 +150,20 @@ entries — globally, with no purge API. See §6.
 
 ```jsonc
 {
-  "tokenHash": "sha256(ownerToken)",   // the secret itself is never stored
-  "email": "you@x.com",                // optional, unverified contact (set on claim)
+  "tokenHash": "sha256(secret)",       // ownerToken is "{username}.{secret}"; the secret is never stored
+  "email": "you@x.com",                // optional, unverified contact (PATCH /account)
   "plan": "free" | "paid",             // only the admin changes this
   "customDomain": "status.acme.com",   // optional, admin-registered
   "createdAt": 1718800000
 }
 ```
 
-**Compact, directly listable metadata.** Small control records (sites, users, assets and
+**Compact, directly listable metadata.** Small control records (shares, users and
 custom domains) store their JSON once in R2 `customMetadata.json` with an empty body.
 `R2.list({ include: ["customMetadata"] })` returns these records without per-object GETs.
-Every record must fit R2's metadata limit; the only free-form field, the claim email, is
-capped at 254 characters. The same PUT maintains the object and its index; there is no
+Every record must fit R2's metadata limit; the free-form fields are the email (≤ 254
+characters) and pending upload paths (≤ 512 characters, at most one per file the plan
+allows). The same PUT maintains the object and its index; there is no
 second index object or paid database.
 
 Older layouts (nested `sites/{u}/{s}/_meta` + `_gen`, JSON bodies, `legacySiteIds`) were
@@ -179,16 +186,25 @@ because usernames are auto-generated with entropy.
 
 ---
 
-## 5. Publish flow
+## 5. Writing a share
+
+Two ways in, because the physics differ: a request body through the Worker is cheap,
+streamable and capped at ~100 MB by the zone; a 5 GB video can't take that path.
+Both write files into the same tree and commit the same record.
+
+| | Body through the Worker | Presigned upload |
+|---|---|---|
+| Call | `PUT /shares/{id}` | `POST /shares/{id}/uploads` → R2 PUT → `…/uploads/complete` |
+| Carries | a tar, or one file | one file at a path |
+| Semantics | `replace` (default, deletes orphans) or `?mode=merge` | always merges |
 
 **Canonical, zero-install command an agent runs:**
 
 ```bash
-tar cf - -C ./dist . | curl -s --data-binary @- \
-  https://agenthost.page/publish
+tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/shares/myblog
 ```
 
-**Server steps (`POST agenthost.page/publish`):**
+**Server steps (`PUT /shares/{id}`):**
 
 0. **Detect the body** (`src/sniff.ts`). Peek the first 1 KB *without consuming it* (the
    peeked bytes are replayed ahead of the rest, so the stream stays intact) and branch on
@@ -200,15 +216,16 @@ tar cf - -C ./dist . | curl -s --data-binary @- \
    `?file=<name>` still wins outright, and non-archive *binary* is rejected up front rather
    than published as a document.
 1. **Resolve account.** No `Authorization` → generate a memorable `username`; create
-   `_users/{username}` and mint an `ownerToken` (random 32 bytes; store only its
-   `sha256`). With `Authorization: Bearer <ownerToken>` → verify against
-   `_users/{username}.tokenHash`. Redeploys hit the same URL.
-2. **Resolve `siteId`** from the request (agent-chosen; default if omitted).
-3. **Compute the effective size budget.** Read the user's `plan` and sum the other sites'
-   metadata `bytes` plus asset reservations. List `_sites/{username}/` with custom metadata
-   rather than enumerating file prefixes and GETting every record. Effective cap =
-   `min(perSiteCap, userQuota − usageOfOtherSites)` (see §9 for the numbers). This makes the
-   per-user quota fail *fast* during the stream rather than after.
+   `_users/{username}` and mint a secret (random 32 bytes; store only its `sha256`). The
+   agent gets `ownerToken = "{username}.{secret}"`: one string both names and proves the
+   account (usernames never contain a dot), so no call needs a separate `?username=`.
+2. **Resolve the share id** from the path; it's sanitized and required.
+3. **Compute the effective size budget.** Read the user's `plan`, sum the other shares'
+   `bytes` and pending reservations from one `_sites/{username}/` LIST, and list this
+   share's files. Budget = `min(perShareCap, userQuota − otherShares) − ownPending`. A merge
+   starts its tally from the files already there and subtracts a file it overwrites, so
+   the count is exact rather than conservative. This makes the quotas fail *fast* during
+   the stream rather than after.
 4. **Stream-untar to R2.** Pipe the body through native `node:zlib` gunzip (not
    `DecompressionStream`, which rejects bsdtar's zero-padding after the member and drops
    the archive's tail) + a streaming tar parser; stream each
@@ -217,53 +234,55 @@ tar cf - -C ./dist . | curl -s --data-binary @- \
    (≤3 in-flight puts)**. **Never buffer the whole archive, nor a whole file:** memory stays
    flat, and on the Free plan's ~10 ms CPU budget the Worker can't afford to touch the
    bytes. A bare tar skips inflation entirely, the cheapest path for large or
-   already-compressed payloads. Tally total bytes + file count as you go. Reject: paths
-   containing `..`, symlinks, files over the per-file cap, file count over the cap, or total
-   over the effective budget from step 3.
-5. **Delete orphans.** `R2.list` the site prefix and delete keys present in the previous
-   deploy but absent from this one (so removed files actually disappear).
+   already-compressed payloads. Reject: paths containing `..`, symlinks, files over the
+   per-file cap, file count over the cap, or total over the effective budget from step 3.
+5. **Delete orphans** (replace only): files in the step-3 listing this publish didn't
+   write. Paths with an upload in flight are left alone.
 6. **Commit `_sites/{username}/{siteId}`** `{ generation: previous + 1, createdAt (preserve),
-   lastDeployAt: now, bytes, fileCount, keyHash, public, tombstone? }`. On **first** publish, generate the access key and store `sha256(key)` as
-   `keyHash` (default `public: false`); on redeploy, preserve `keyHash`/`public` so existing
-   share links keep working. `lastDeployAt` is what the retention sweep reads.
+   lastDeployAt: now, bytes, fileCount, accessKey, public, tombstone?, pending? }`. The
+   first write of a share mints the access key (`public: false`); later writes preserve key
+   and visibility so links keep working. `lastDeployAt` is what the retention sweep reads.
 7. **Respond 200 JSON:**
 
    ```json
    { "url": "https://cleverotter4f2-myblog.agenthost.page/?k=<access-key>",
+     "id": "myblog",
      "username": "cleverotter4f2",
-     "siteId": "myblog",
      "fileCount": 12,
      "bytes": 48213,
-     "ownerToken": "<shown once — save to redeploy>" }
+     "ownerToken": "<only when this call created the account>" }
    ```
 
-   One link, nothing to choose: the access key exists only inside `url`, and only on the
-   publish that minted it. Redeploys return the bare URL; `ownerToken` isn't re-shown.
+   One link, nothing to choose: `url` always carries the key (unless the share is public),
+   on every write and on `GET /shares/{id}`.
 
-**One site-publish path only.** Everything-in-one-POST remains the static-site contract. Large
-binary assets deliberately use the direct-R2 flow below because proxying those bytes through
-a Worker is wasteful and hits Worker upload limits.
+### 5.5 Presigned uploads
 
-### 5.5 Direct asset flow
+1. `POST /shares/{id}/uploads` sends only `{path, bytes, contentType?}`. The Worker checks the
+   per-file cap and the share/account budget — a file already at `path` is replaced, so its
+   size is credited back — records `pending[path] = {bytes, expiresAt}` on the share record
+   (creating the share if new), and returns a 15-minute presigned PUT for the file's final
+   key with exact signed `Content-Length` and `Content-Type`.
+2. The caller PUTs the payload **directly to `<account>.r2.cloudflarestorage.com`**. No bytes
+   cross the Worker. The signed length keeps the URL from exceeding the reservation; the URL
+   is scoped to one key.
+3. `POST /shares/{id}/uploads/complete` `R2.head`s the object, checks its size (a mismatch
+   deletes it), recounts the tree from one LIST, drops the reservation and bumps the
+   generation.
 
-Assets are account-authenticated and private by default. The control plane is a three-request
-flow around an R2 S3 presigned URL:
+The PUT lands on the live key, before completion. A reader who misses the cache in that
+window gets the new file a little early — the same non-atomic window publish already
+accepts; staging plus a server-side copy would double the writes of a 5 GB file to close
+it. An upload never completed is deleted by the sweep, with its reservation, after a day.
+Presigning needs a bucket-scoped R2 S3 key as Worker secrets. R2 caps a single PUT at 5 GB,
+which is the paid per-file cap.
 
-1. `POST /asset` sends only `{name, bytes, contentType}`. The Worker checks account quota,
-   writes pending metadata, and returns a 15-minute presigned PUT URL plus exact signed
-   `Content-Length`, `Content-Type`, and `Content-Disposition` headers.
-2. The caller PUTs the payload **directly to `<account>.r2.cloudflarestorage.com`**. No asset
-   bytes cross the Worker. Signing the content length prevents using the URL to exceed quota;
-   the URL is scoped to one object key.
-3. `POST /a/{username}/{assetId}/complete` asks the Worker to `R2.head` the object and verify
-   its size before marking it ready. Abandoned pending uploads are swept after one day.
+### 5.6 The rest of the API
 
-The private share page lives at `/a/{username}/{assetId}?k=…`. After access-key validation it
-renders file metadata and a Download button carrying a fresh five-minute presigned R2 GET.
-The PUT stores `Content-Disposition: attachment`, so the direct GET downloads rather than
-opening inline. The Worker serves HTML and metadata only; **downloads are R2 → browser**.
-Presigned URLs require a bucket-scoped R2 S3 access key stored as Worker secrets; public
-account/bucket identifiers are vars. R2 caps a single PUT at 5 GB, which is the paid asset cap.
+`GET /shares`, `GET|PATCH|DELETE /shares/{id}`, `POST /shares/{id}/key` (rotate),
+`DELETE /shares/{id}/files/{path}`, `PATCH /account`. REST over the old query-string
+endpoints was chosen alongside the hard cut to shares: with every client breaking anyway,
+the churn cost nothing.
 
 ---
 
@@ -272,37 +291,46 @@ account/bucket identifiers are vars. R2 caps a single PUT at 5 GB, which is the 
 Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` enabled:
 
 1. Parse `Host`:
-   - apex `agenthost.page` / `www` → landing page + `/publish` + `/llms.txt` (Static Assets
-     + endpoints).
+   - apex `agenthost.page` / `www` → landing page + `/shares` API + `/llms.txt` (Static
+     Assets + endpoints).
    - `*.workers.dev` → admin surface, behind Cloudflare Access (§8).
    - `{username}-{siteId}.agenthost.page` → split on the **first** hyphen (usernames are
-     hyphen-free) → `{username, siteId}`; it's a site request.
+     hyphen-free) → `{username, siteId}`; it's a share request.
    - any other host → look up `_domains/{host}` in R2 → `{username, siteId}` (paid custom
      domain).
-2. The path is the file path within the site (`{rest}`); `siteId` came from the Host, not
-   the path.
+2. The path, percent-decoded, is the file path within the share (`{rest}`); `siteId` came
+   from the Host. Files are stored under their decoded names, so `/a%20b.pdf` is `a b.pdf`.
 3. Read the authoritative site record fresh: **one R2 GET** for generation, takedown and
    access state, never cached. Check access and takedowns before consulting route/content
    caches or returning a conditional 304.
 4. Map path: `/` and `/dir/` → `index.html`; `/dir` tries the exact file before
    `/dir/index.html`. A Markdown-only homepage uses the first valid SUMMARY entry,
-   README, or the first document. Successful resolutions are edge-cached under
+   README, or the first document. With neither, `/` is the **file index**: a preview of
+   the only file (video, audio, image and PDF inline) or a list of all of them, each with
+   a `?download` link — this is what replaced the old asset download page. Successful
+   resolutions are edge-cached under
    `https://as-routes.internal/{username}/{siteId}/g{gen}/r{RENDER_VERSION}/{rest}`.
    Cold GET requests retain the fetched object for serving, removing HEAD-then-GET.
    HEAD requests probe metadata only. Warm route caching avoids repeated file probes.
    Misses are not cached. Only the resolved filename is stored; no access keys or
-   access decisions. The separate cache host prevents collisions with site files.
+   access decisions. The separate cache host prevents collisions with share files, and
+   paths are re-encoded in both cache URLs so a `?` or `#` in a filename can't split them.
 5. **Cache check:** `cache.match` on a synthetic, generation-pinned key
    `cache://{username}/{siteId}/g{gen}/{rest}` (the `gen` is in the *cache* key, never the
    public URL). Hit → return. Because the key embeds `gen`, a deploy bumping `gen` orphans
    every old entry globally — no purge API, no mixed assets. A **rendered** markdown page
-   gets one extra segment, `/r{RENDER_VERSION}`: the bytes of a static file belong to the
+   or file index gets one extra segment, `/r{RENDER_VERSION}`: the bytes of a static file belong to the
    site, but that HTML belongs to *our* renderer, and `gen` only moves when the site
    republishes. Without it, shipping a renderer change would reach only sites that happen
    to publish again (`config.ts` — bump it when the markdown output changes).
 6. For static files (including raw Markdown), pass range and revalidation headers
    to `cache.match`: Cloudflare can return `304`/`206` directly from the edge. Store
    `ETag`, `Last-Modified`, and `Content-Length` with full responses to support this.
+   Objects over 512 MB (the Cache API's limit) are never put: they stream from R2 on every
+   request, ranges included, so a 5 GB video seeks fine. Workers impose no response size
+   limit; this costs one invocation per range request, and was preferred over presigned
+   GETs because it keeps one URL per file that works in `<video src>` and behind the
+   share's own key gate.
    **Miss:** `R2.get(key, { onlyIf, range })` handles the same conditions. Legacy cache
    entries without the required headers also fall back to R2. Partial/conditional
    responses never overwrite the cached full object. Unresolved routes use the site's
@@ -310,6 +338,9 @@ Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` ena
    Published HTML and cached rendered Markdown stream through `HTMLRewriter`; only
    uncached Markdown needs full text for parsing. Cache the undecorated body and inject
    the Share widget/live-reload script per request. No `<base>` is injected.
+7. `?download` serves any file — HTML and Markdown included — as itself with
+   `Content-Disposition: attachment`; `?raw` serves Markdown source as plain text. Both
+   are set after the cache, so one entry serves every variant.
 
 Warm requests still pay for the two fresh control-object reads, but no file-resolution
 R2 operations. The serving regression tests enforce these storage-operation budgets:
@@ -325,7 +356,7 @@ These are operation counts, not production latency measurements. Run
 `pnpm -C worker exec vitest run test/serve-performance.test.ts` to check the budgets,
 generation invalidation, access changes, streaming, and conditional-cache delegation.
 
-**`noindex` on all hosted sites.** Every response served from a user subdomain or custom
+**`noindex` on all shares.** Every response served from a user subdomain or custom
 domain carries `X-Robots-Tag: noindex, nofollow`. Hosted sites are never indexed — this
 protects the apex domain's search reputation from spam/phishing content. **Only the landing
 page** (apex `agenthost.page`) is indexable. There is no per-site opt-in to indexing in the
@@ -344,21 +375,25 @@ the previous build.
 
 ## 6.5 Private by default — access control
 
-Every hosted site is **private by default**, gated by a per-site **access key** (the
-"password"). Only the apex (landing, `/llms.txt`, `/publish`, `/admin`) is public.
+Every share is **private by default**, gated by a per-share **access key** (the
+"password"). Only the apex (landing, `/llms.txt`, the API, `/admin`) is public.
 
-**Key model.** On first publish the Worker generates a per-site access key — a **medium
-alphanumeric code (~8–10 chars)**, typeable in the prompt and short enough for a URL; it
-stores only `sha256(key)` in `_meta.keyHash` and returns the key **once** in the publish
-response,
-along with a ready-made **share URL**:
-`https://{username}-{siteId}.agenthost.page/?k=<key>`. The key **persists across redeploys**
-(shared links keep working). The owner (with `ownerToken`) can **rotate** it (invalidates
-old links) or flip `_meta.public = true` to drop the gate entirely.
+**Key model.** A share's first write generates its access key — a **medium alphanumeric
+code (~8–10 chars)**, typeable in the prompt and short enough for a URL — and every response
+returns a ready-made **share URL**: `https://{username}-{siteId}.agenthost.page/?k=<key>`.
+The key **persists across writes** (shared links keep working). The owner can **rotate** it
+(invalidates old links) or set `public: true` to drop the gate entirely.
+
+The key is **stored as is**, not hashed. A hash protected nothing: anyone able to read the
+record can read the files it guards, and the key exists to travel in URLs. Storing it lets
+every response (and `GET /shares/{id}`) hand the link back, where the hash made agents
+keep the first publish's link or rotate. The owner token, which does guard writes, stays
+hashed. Records written before this kept only `keyHash`; the gate still accepts those, and
+rotating replaces the hash with a stored key.
 
 **Authorization — runs before §6 serve:**
 1. **Valid auth cookie** for this site → authorized, serve.
-2. Else **`?k=<key>`** present and `sha256(k) === keyHash` → set an auth cookie scoped to
+2. Else **`?k=<key>`** present and equal to the share's key → set an auth cookie scoped to
    the site's subdomain (`Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age` ~1y), then **302 to
    the same URL minus `?k`** so the key doesn't linger in history/referrer. The next request
    carries the cookie → authorized. *(This is the "enters once, stays in" requirement.)*
@@ -367,7 +402,7 @@ old links) or flip `_meta.public = true` to drop the gate entirely.
    manual prompt" requirement.)*
 
 So a shared link logs the visitor in once and the cookie keeps them in; a bare visit
-prompts. `public` sites skip all of this.
+prompts. `public` shares skip all of this.
 
 **Injected share widget.** On every authorized **`text/html`** response the Worker injects
 (via `HTMLRewriter`, appended before `</body>`) a tiny script + a floating **"Share"**
@@ -451,7 +486,7 @@ move hosted user sites off `agenthost.page`.
 - **Hosted user sites + landing stay on `agenthost.page`.** Accepted residual risk: a
   malicious site could set a `Domain=.agenthost.page` cookie that reaches sibling user sites.
   This is **low-impact by design**: the §6.5 gate validates the cookie value against each
-  site's `keyHash`, so a forged/fixed cookie that doesn't equal the real key simply fails
+  share's key, so a forged/fixed cookie that doesn't equal the real key simply fails
   and falls through to the prompt — it cannot forge access to another site. We document it
   and move on; a content sandbox domain remains an easy future hardening if needed.
 
@@ -511,17 +546,21 @@ Three tiers, friction-zero default, founder-gated upgrades:
 | URL | `{auto}-{id}.agenthost.page` | + **custom username** |
 | Custom domain | — | `status.acme.com` (admin-registered) |
 | Publish / serve | full | full (identical) |
-| Retention | 15 days since last publish | infinite |
-| Quota | 250 MB/site, 500 MB/account | 1 GB/site, ~unlimited account |
+| Retention | 15 days since last change | infinite |
+| Quota | 100 MB/file, 250 MB/share, 500 MB/account | 5 GB/file, otherwise ~unlimited |
 
-- **Anonymous (default).** Publish returns `ownerToken` once (stored only as a hash).
-  Redeploy to the same URL by sending `Authorization: Bearer <ownerToken>`. The publish
-  response prints it with a "save this to redeploy" note. Token loss = publish a new URL
-  (documented plainly).
-- **Claim (optional, free).** Attach an email as recovery/abuse contact (unverified
-  string in v1).
+- **Anonymous (default).** The first `PUT` returns `ownerToken` once (only the secret's
+  hash is stored). Every later call sends `Authorization: Bearer <ownerToken>`. Token loss
+  = start over at new URLs (documented plainly).
+- **Recovery email (optional, free).** `PATCH /account` attaches a recovery/abuse contact
+  (unverified string in v1).
 - **Paid (founder enables via admin).** Custom username (rename, one `R2.head` collision
   check) and/or custom domain (a `_domains` mapping + one-time dashboard zone/Custom Domain).
+  A rename keeps the token's secret but changes its prefix: the owner now sends
+  `{newname}.{secret}`. The customer's URLs change anyway, so they have to be told either way;
+  an alias record for the old name was rejected as permanent machinery for a rare,
+  operator-driven event. Rename copies every file through the Worker, which is slow for
+  large accounts but needs no CPU and has no duration limit.
 
 ---
 
@@ -535,9 +574,9 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
 - **Auth = Cloudflare Access**, configured in the dashboard to allow only the operator's
   email (`ALLOWED_ADMIN_EMAIL`). The Worker verifies the signed Access JWT
   (`Cf-Access-Jwt-Assertion`) as defense-in-depth — no hand-rolled auth.
-- **Operations** (all behind Access): list users/sites (`R2.list` on `_users/` and
-  `sites/{username}/`), set `plan`, rename a username, attach a custom domain (writes
-  `_domains/{host}` + returns the dashboard checklist), and take down an abusive site. Each
+- **Operations** (all behind Access): list users/shares (`R2.list` on `_users/` and
+  `_sites/{username}/`), set `plan`, rename a username, attach a custom domain (writes
+  `_domains/{host}` + returns the dashboard checklist), and take down an abusive share. Each
   is a JSON edit in R2.
 - Scales fine on `R2.list` at low volume; D1 can back the admin later if listing grows —
   additive, never touches the hot path.
@@ -550,39 +589,41 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
 
 | Limit | Free | Paid |
 |---|---|---|
-| Per file | 5 MB | 25 MB |
-| Files per site | 50 | 1000 |
-| Size per site | 250 MB | 1 GB |
+| Per file | 100 MB | 5 GB |
+| Files per share | 50 | 1000 |
+| Size per share | 250 MB | effectively unlimited |
 | **Total per user** | **500 MB** | effectively unlimited |
-| **Retention** | **15 days** since last publish | **infinite** |
-| Direct asset | 100 MB | 5 GB |
+| **Retention** | **15 days** since last change | **infinite** |
 
-Per-file / per-site / file-count caps are enforced **during the untar stream** (fail fast,
-§5 step 4). The per-user total is enforced by folding it into the effective size budget
-(§5 step 3) — derived from per-site `_meta.bytes`, no mutable counter.
+One table whichever way a file arrives — the agent never has to know which door a 30 MB
+file takes. A free 100 MB file was already possible as an asset, so unifying added no abuse
+surface. Caps are enforced **during the untar stream** (fail fast, §5 step 4) and at upload
+reservation (§5.5). The per-user total is derived from the share records — `bytes` plus
+pending reservations — with no mutable counter. A reservation that replaces a file counts
+both until it completes: briefly conservative, never under.
 
 ### Retention sweep (cron)
 
-A **Cron Trigger** on the same Worker runs nightly and deletes free-tier sites whose
-`lastDeployAt` is older than 15 days — keeping R2 from bloating with abandoned sites.
-Redeploying resets the clock (`lastDeployAt` bumps every publish). **Paid users
-(`plan === "paid"`) are skipped — infinite retention.** Deleting a site = `R2.list` its
-prefix + delete all keys and its flat metadata record. A free account whose
-`createdAt` is older than 90 days and has no site or asset left after the pass loses its
-`_users/{username}` record too; its owner token then gets a 403 and the agent starts a
-new account. The 90-day floor keeps a brand-new account mid-first-publish safe. Users,
-sites and assets are processed one cursor page at a time; the ordered user/asset
-inventories are merged without a global plan map or extra profile GETs. Deletions are idempotent and logged with a bounded sample plus full counts. A failed
-cron retries from the beginning on the next run; there is no durable checkpoint PUT.
-Paid ready assets are retained, but abandoned pending uploads expire after one day.
+A **Cron Trigger** on the same Worker runs nightly and deletes free-tier shares whose
+`lastDeployAt` is older than 15 days — keeping R2 from bloating with abandoned shares.
+Any write resets the clock. **Paid users (`plan === "paid"`) are skipped — infinite
+retention.** Deleting a share = `R2.list` its prefix + delete all keys and its record.
+Uploads reserved more than a day ago and never completed are deleted, with whatever
+landed at their path, on every plan. A free account whose `createdAt` is older than 90 days
+and has no share left after the pass loses its `_users/{username}` record too; its owner
+token then gets a 403 and the agent starts a new account. The 90-day floor keeps a
+brand-new account mid-first-publish safe. Users and shares are processed one cursor page
+at a time without a global plan map or extra profile GETs. Deletions are idempotent and
+logged with a bounded sample plus full counts. A failed cron retries from the beginning
+on the next run; there is no durable checkpoint PUT.
 
 ### Abuse
 
 Public-by-default publishing means day-one abuse risk. Controls, **no Durable Object**:
 
-- **`X-Robots-Tag: noindex`** on all hosted sites (§6) so spam/phishing can't ride the
+- **`X-Robots-Tag: noindex`** on all shares (§6) so spam/phishing can't ride the
   domain's search reputation.
-- **Cloudflare Rate Limiting Rules (WAF)** on `/publish` — zone-level, zero code.
+- **Per-IP rate limits** on publishes, uploads and wrong access keys.
 - **Size/count/quota caps** (above), enforced during untar.
 - **Takedown** endpoint in the admin (§8).
 - Turnstile deferred.
@@ -603,13 +644,14 @@ agenthost/
 ├─ pnpm-workspace.yaml
 ├─ turbo.json                   # build/deploy task graph across packages
 ├─ worker/                      # (2) THE BACKEND — the entire server (Hono on Workers)
-│  ├─ src/index.ts              # fetch entry: routes by Host ; apex→landing/publish/admin ; *→serve ; custom-domain→serve
-│  ├─ src/publish.ts            # streaming files → bounded R2 puts → delete orphans → merged metadata commit
-│  ├─ src/serve.ts              # host→username, fresh metadata, gen-keyed Cache API, R2 get, /_gen probe, widget + live-reload inject
+│  ├─ src/index.ts              # fetch entry: routes by Host ; apex→landing/API ; admin ; *→serve ; custom-domain→serve
+│  ├─ src/apex.ts               # the /shares REST API, /account, /llms.txt, /skill/
+│  ├─ src/publish.ts            # PUT /shares/{id}: streaming files → bounded R2 puts → orphans → metadata commit
+│  ├─ src/uploads.ts            # presigned uploads: quota reservation, exact-size signing, completion
+│  ├─ src/serve.ts              # host→username, fresh metadata, gen-keyed Cache API, R2 get, file index, /_gen probe, widget + live-reload inject
 │  ├─ src/client/*.ts           # browser scripts (live reload, copy link, docs shell), readable TS with DOM types
 │  ├─ src/client/gen/           # ↑ minified into `export default "<js>"` modules by scripts/build-client.mjs (gitignored)
-│  ├─ src/assets.ts             # asset metadata/access pages + direct upload completion
-│  ├─ src/r2-signed.ts          # short-lived exact-size R2 PUT and direct GET signing
+│  ├─ src/r2-signed.ts          # short-lived exact-size R2 PUT signing
 │  ├─ src/skill.ts              # /skill/* — skills/agenthost with agenthost.page → APEX_HOST
 │  ├─ src/admin.ts              # admin JSON routes (Hono sub-router, behind Cloudflare Access)
 │  ├─ src/ids.ts                # username gen, reserved-word denylist, content-type guess
@@ -620,7 +662,7 @@ agenthost/
 │  └─ src/pages/index.astro     #   the one-liner + curl contract
 ├─ skills/agenthost/           # (3) THE SHAREABLE SKILL (Agent Skill layout); also served at /skill/ for APEX_HOST
 │  ├─ SKILL.md                  #   agent-readable; name + description frontmatter
-│  └─ references/http-api.md    #   full HTTP publish contract
+│  └─ references/http-api.md    #   full HTTP API contract
 ├─ admin/                       # (4) ADMIN UI — Svelte (Vite SPA), static build → admin/dist
 │  └─ src/App.svelte            #   founder dashboard; talks to worker /admin JSON routes
 ├─ public/                      # build output: landing/dist → / , admin/dist → /admin (ASSETS)

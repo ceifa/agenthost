@@ -1,38 +1,37 @@
 # agenthost
 
-Static-site and asset hosting **built for AI agents**. An agent publishes a site,
-Markdown docs, or a large downloadable file and gets back a private share link.
+Hosting **built for AI agents**. An agent publishes a page, Markdown docs, or any
+files — videos and datasets included — as a *share* and gets back a private link.
 Built entirely on Cloudflare — one Worker and one R2 bucket.
 
 ## Publish
 
 ```bash
 # a single .md or .html — just pipe it in, no headers
-curl -s --data-binary @report.md 'https://agenthost.page/publish?id=report'
+curl -s -X PUT --data-binary @report.md https://agenthost.page/shares/report
 
 # or a whole folder — tar it
-tar cf - -C ./dist . | curl -s --data-binary @- \
-  'https://agenthost.page/publish?id=myblog'
+tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/shares/myblog
 ```
 
 You get back a private `url` (hand it to a human — the access key rides in it and
-logs them in on first open), your auto-generated `username`, and an `ownerToken`
-to redeploy the same URL later.
+logs them in on first open) and an `ownerToken` that every later call sends to
+update the same URL or create new ones.
 
-Sites are served at `https://{username}-{id}.agenthost.page/` — each site is the
+Shares are served at `https://{username}-{id}.agenthost.page/` — each one is the
 root of its own subdomain, so both absolute (`/css/app.css`) and relative
-(`./css/app.css`) asset paths work. (The commands above target the public instance
-at `agenthost.page`; self-host on your own domain with [DEPLOYING.md](./DEPLOYING.md).)
+(`./css/app.css`) asset paths work. A share with no page of its own previews its
+file at `/` (video, audio, images and PDFs play inline) or lists its files.
+(The commands above target the public instance at `agenthost.page`; self-host on
+your own domain with [DEPLOYING.md](./DEPLOYING.md).)
 
-## Upload a large asset
+## Large files
 
-Three `curl` calls with an existing account: initiate (`POST /asset`), `PUT` the
-file to the signed R2 URL it returns, then complete. Only those small control
-requests go through the Worker; upload and download payloads use short-lived,
-object-scoped R2 URLs, so large files never pass through Worker compute. The
-returned share page shows file details and a Download button. Paid accounts
-support direct single-file uploads up to 5 GB. The exact recipe is in the
-[skill](./skills/agenthost/SKILL.md#upload-a-downloadable-asset).
+Files too big to stream through the Worker go straight to R2: reserve
+(`POST /shares/{id}/uploads`), `PUT` the file to the signed URL it returns, then
+complete. The file joins the share like any other — `<video src="/demo.mp4">` in
+the share's page works, with seeking. Paid accounts support files up to 5 GB. The
+exact recipe is in the [skill](./skills/agenthost/SKILL.md#large-files).
 
 ## Install the skill
 
@@ -58,12 +57,13 @@ references under `/skill/`), with `agenthost.page` replaced by that instance's
 - **One Worker, one R2 bucket — nothing else.** R2's strong read-after-write
   consistency is what lets the publish→serve loop work without a database or any
   other coordination primitive.
-- **Direct asset data path:** the Worker signs exact-size PUT and GET URLs; bytes
-  move client ↔ R2 while the Worker handles only metadata, access, and the share page.
-- **Routing by `Host`:** the apex serves the landing page + `/publish`;
-  `*.{apex}` subdomains serve hosted sites; `admin.{apex}` serves the admin
+- **Two ways in, one tree:** a tar or file streams through the Worker; a large
+  file goes client → R2 on an exact-size presigned PUT. Both land in the same
+  share and are served the same way.
+- **Routing by `Host`:** the apex serves the landing page + the `/shares` API;
+  `*.{apex}` subdomains serve shares; `admin.{apex}` serves the admin
   console (behind Cloudflare Access, verified again in the Worker).
-- **Private by default.** Each site has an access key; a cookie keeps visitors
+- **Private by default.** Each share has an access key; a cookie keeps visitors
   signed in, and an injected Share button copies a key-embedded link.
 - **Markdown → docs.** A folder of `.md` renders as a GitBook-style site: nested
   sidebar (honoring `SUMMARY.md`), on-this-page outline, prev/next, GFM, mermaid,
@@ -75,7 +75,7 @@ references under `/skill/`), with `agenthost.page` replaced by that instance's
 
 | Path | What |
 |------|------|
-| `worker/` | The entire backend — Hono on Workers (publish, serve, admin, cron). |
+| `worker/` | The entire backend — Hono on Workers (shares API, serve, admin, cron). |
 | `landing/` | Astro static landing page, built into `public/`. |
 | `admin/` | Svelte SPA admin console, built into `public/admin/`. |
 | `skills/agenthost/` | The `agenthost` Agent Skill (`SKILL.md` + `references/`). |
