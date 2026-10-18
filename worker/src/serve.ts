@@ -5,7 +5,7 @@
 import type { Env } from "./env";
 import { AUTH_COOKIE_PREFIX, AUTH_COOKIE_MAX_AGE, RENDER_VERSION, LIVE } from "./config";
 import { sha256Hex, timingSafeEqual, contentTypeFor, shareUrl, clientIp } from "./ids";
-import { getMeta, getGen, siteFileKey, RESERVED_FILE, type SiteMeta } from "./storage";
+import { getMeta, getGen, siteFileKey, isReservedFile, type SiteMeta } from "./storage";
 import { renderMarkdown, defaultMarkdownDoc, loadDocIndexCached, readMarkdownSource, type DocIndex } from "./markdown";
 import { interstitialHtml, shareWidget, liveScript, notFoundHtml, goneHtml } from "./templates";
 
@@ -162,7 +162,7 @@ async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, user
     candidates.push(rest + "/index.html");
   }
   for (const rel of candidates) {
-    if (RESERVED_FILE(rel)) continue; // never serve the _gen/_meta control objects
+    if (isReservedFile(rel)) continue; // never serve the _gen/_meta control objects
     const target = classify(username, siteId, rel);
     const conditional = target.kind === "static" || (target.kind === "md" && new URL(req.url).searchParams.has("raw"));
     const object = req.method === "HEAD"

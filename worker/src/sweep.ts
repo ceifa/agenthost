@@ -3,7 +3,7 @@
 
 import type { Env } from "./env";
 import { LIMITS } from "./config";
-import { assetMetaKey, listAssetsPage, listUsersPage, listSitesPage, deleteSite, type AssetMeta } from "./storage";
+import { assetMetaKey, assetRecords, deleteSite, siteRecords, userRecords, type AssetMeta } from "./storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -31,42 +31,24 @@ export async function runRetentionSweep(env: Env, now: number): Promise<SweepRes
       recordDelete(`asset:${asset.username}/${asset.id}`);
     }
   };
-  async function* assetRecords() {
-    let cursor: string | undefined;
-    do {
-      const page = await listAssetsPage(env.SITES, undefined, cursor);
-      yield* page.items;
-      cursor = page.cursor;
-    } while (cursor);
-  }
   // Merge the two lexically ordered R2 inventories. This retains at most one
   // page from each, with no extra profile reads or per-user asset LISTs.
-  const assets = assetRecords();
+  const assets = assetRecords(env.SITES);
   let asset = await assets.next();
-  let userCursor: string | undefined;
-  do {
-    const users = await listUsersPage(env.SITES, userCursor);
-    for (const { username, user } of users.items) {
-      const days = LIMITS[user.plan].retentionDays;
-      while (!asset.done && asset.value.username <= username) {
-        await expireAsset(asset.value, asset.value.username === username ? days : LIMITS.free.retentionDays);
-        asset = await assets.next();
-      }
-      let siteCursor: string | undefined;
-      do {
-        const sites = await listSitesPage(env.SITES, username, user, siteCursor);
-        for (const { siteId, meta } of sites.items) {
-          checked++;
-          if (days !== null && now - meta.lastDeployAt > days * DAY_MS) {
-            await deleteSite(env.SITES, username, siteId);
-            recordDelete(`${username}/${siteId}`);
-          }
-        }
-        siteCursor = sites.cursor;
-      } while (siteCursor);
+  for await (const { username, user } of userRecords(env.SITES)) {
+    const days = LIMITS[user.plan].retentionDays;
+    while (!asset.done && asset.value.username <= username) {
+      await expireAsset(asset.value, asset.value.username === username ? days : LIMITS.free.retentionDays);
+      asset = await assets.next();
     }
-    userCursor = users.cursor;
-  } while (userCursor);
+    for await (const { siteId, meta } of siteRecords(env.SITES, username, user)) {
+      checked++;
+      if (days !== null && now - meta.lastDeployAt > days * DAY_MS) {
+        await deleteSite(env.SITES, username, siteId);
+        recordDelete(`${username}/${siteId}`);
+      }
+    }
+  }
 
   while (!asset.done) {
     await expireAsset(asset.value, LIMITS.free.retentionDays);

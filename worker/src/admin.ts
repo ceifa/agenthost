@@ -18,12 +18,14 @@ import {
   putMeta,
   putDomain,
   userSitesPrefix,
+  userMetaPrefix,
   userKey,
   assetMetaKey,
   getAssetMeta,
   listAssetMetas,
   putAssetMeta,
   mapBounded,
+  InvalidCursorError,
 } from "./storage";
 import { isValidUsername } from "./ids";
 import { customDomainSetup } from "./domains";
@@ -53,9 +55,10 @@ api.get("/sites", async (c) => {
   const user = await getUser(c.env.SITES, username);
   if (!user) return c.json({ error: "user not found" }, 404);
   let page;
-  try { page = await listSitesPage(c.env.SITES, username, user, c.req.query("cursor")); }
-  catch (error) {
-    if (error instanceof Error && (error.message === "invalid cursor" || error instanceof SyntaxError || error.name === "InvalidCharacterError")) return c.json({ error: "invalid cursor" }, 400);
+  try {
+    page = await listSitesPage(c.env.SITES, username, user, c.req.query("cursor"));
+  } catch (error) {
+    if (error instanceof InvalidCursorError) return c.json({ error: error.message }, 400);
     throw error;
   }
   const sites = page.items.map(({ siteId, meta: m }) => ({
@@ -112,16 +115,21 @@ api.post("/rename", async (c) => {
   if (!user) return c.json({ error: "unknown username" }, 404);
 
   await putUser(c.env.SITES, to, user);
-  const objs = await listAll(c.env.SITES, userSitesPrefix(from));
-  const flat = await listAll(c.env.SITES, `_sites/${from}/`);
+  // Site files and their metadata records, each moved to the same place under `to`.
+  const moves: [string, string][] = [];
+  for (const [fromPrefix, toPrefix] of [
+    [userSitesPrefix(from), userSitesPrefix(to)],
+    [userMetaPrefix(from), userMetaPrefix(to)],
+  ] as const) {
+    for (const o of await listAll(c.env.SITES, fromPrefix)) moves.push([o.key, toPrefix + o.key.slice(fromPrefix.length)]);
+  }
   // Copy in bounded batches — sequential round trips would crawl on big accounts.
-  await mapBounded([...objs, ...flat], async (o) => {
-    const body = await c.env.SITES.get(o.key);
+  await mapBounded(moves, async ([fromKey, toKey]) => {
+    const body = await c.env.SITES.get(fromKey);
     if (!body) return;
-    const newKey = o.key.startsWith("_sites/") ? o.key.replace(`_sites/${from}/`, `_sites/${to}/`) : o.key.replace(userSitesPrefix(from), userSitesPrefix(to));
-    await c.env.SITES.put(newKey, body.body, { httpMetadata: body.httpMetadata, customMetadata: body.customMetadata });
+    await c.env.SITES.put(toKey, body.body, { httpMetadata: body.httpMetadata, customMetadata: body.customMetadata });
   });
-  await deleteKeys(c.env.SITES, [...objs, ...flat].map((o) => o.key));
+  await deleteKeys(c.env.SITES, moves.map(([fromKey]) => fromKey));
 
   // Asset payloads stay at their immutable R2 keys; only their tiny metadata
   // moves to the renamed account, avoiding a multi-gigabyte copy through Worker.

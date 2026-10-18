@@ -33,7 +33,7 @@ import {
   legacyMetaKey,
   genKey,
   deleteKeys,
-  RESERVED_FILE,
+  isReservedFile,
   type SiteMeta,
   type UserRecord,
 } from "./storage";
@@ -315,7 +315,7 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
       // Single raw document: no archive to stream, so read the body directly and
       // write it under a name that serves at `/`.
       const name = mode.name;
-      if (RESERVED_FILE(name)) perr = fail(400, `reserved filename: ${name}`);
+      if (isReservedFile(name)) perr = fail(400, `reserved filename: ${name}`);
       else {
         const cap = Math.min(limits.perFile, totalBudget);
         const lengthHeader = req.headers.get("content-length");
@@ -375,7 +375,7 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
           continue; // silently skipped cruft (._*, .DS_Store, dirs)
         }
         // Never let a user file clobber the per-site control objects.
-        if (RESERVED_FILE(path)) continue;
+        if (isReservedFile(path)) continue;
 
         if (entry.size > limits.perFile) {
           perr = fail(413, `file ${path} is ${entry.size} bytes; max is ${limits.perFile}`);
@@ -421,7 +421,7 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
     const existing = await listAll(env.SITES, prefix);
     const orphans = existing
       .map((o) => o.key)
-      .filter((k) => !RESERVED_FILE(k.slice(prefix.length)) && !writtenKeys.has(k));
+      .filter((k) => !isReservedFile(k.slice(prefix.length)) && !writtenKeys.has(k));
     await deleteKeys(env.SITES, orphans);
   }
 
