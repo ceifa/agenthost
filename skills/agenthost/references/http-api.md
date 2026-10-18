@@ -115,7 +115,7 @@ JSON `{ "error": "<message>" }` with the status:
 - macOS cruft (`.DS_Store`, `._*`) and directory entries are skipped silently.
 - Absolute (`/css/app.css`) and relative (`./css/app.css`) asset paths both work.
 - All sites send `X-Robots-Tag: noindex, nofollow`.
-- Open pages reload themselves when the site is republished (they poll `/_gen`, which is why `_gen` and `_meta` are reserved filenames). Add `<meta name="agenthost-live" content="off">` to an HTML page to opt out.
+- Open pages reload themselves when the site is republished (they poll `/_gen`, which is why `_gen` is a reserved filename). Add `<meta name="agenthost-live" content="off">` to an HTML page to opt out.
 
 ## Limits
 

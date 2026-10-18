@@ -190,13 +190,9 @@ Custom domains need no config or secrets — see §5 (dashboard-only setup).
 Tunable limits/quotas (per-file size, files per site, retention, etc.) live in
 `worker/src/config.ts`.
 
-## Performance metadata rollout
+## Control records
 
-No new Cloudflare products, bindings, plans or paid indexes are required. New accounts
-use merged `_sites/{username}/{siteId}` records; existing sites migrate only when
-republished. Small JSON control records live in R2 `customMetadata.json` with empty
-bodies; inspection tools must read custom metadata as well as legacy JSON bodies. The
-admin UI and Worker must ship together because inventory APIs now return cursor pages.
-Do not roll back to a Worker that only understands nested `_meta`/`_gen` records after
-flat sites have been created. Retention keeps the same nightly schedule, processes
-cursor pages and retries idempotently without adding checkpoint writes.
+Small JSON control records (`_users/`, `_sites/`, `_assets/…/_meta`, `_domains/`) live in
+R2 `customMetadata.json` with empty bodies; inspection tools must read custom metadata,
+not the body. The Worker no longer reads the older layouts, so a bucket from before
+2026-10-18 needs its legacy records migrated before this Worker serves it.

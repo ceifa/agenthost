@@ -62,7 +62,7 @@ describe("asset share page", () => {
     f.json("_assets/alice/abc/_meta", {
       id: "abc", username: "alice", name: "demo.mp4", contentType: "video/mp4", bytes: 4, objectKey: "assets/alice/abc/blob",
       keyHash: await sha256Hex("key"), public: false, status: "ready", createdAt: 0, lastDeployAt: 0, ...overrides,
-    }, true);
+    });
     f.records.set("assets/alice/abc/blob", { body: "data" });
     const testEnv = { ...f.env, ...env, ACCESS_LIMITER: { limit: async () => ({ success: !limited }) } } as Env;
     const get = (path: string, headers?: HeadersInit) => apexApp.fetch(new Request(`https://example.com/a/alice/abc${path}`, { headers }), testEnv);
@@ -109,7 +109,7 @@ describe("asset share page", () => {
 describe("asset creation", () => {
   it.each(["null", "[]", "{not json"])("answers a %s body with 400", async (raw) => {
     const f = testBucket();
-    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0, legacySiteIds: [] }, true);
+    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0 });
     const res = await apexApp.fetch(new Request("https://example.com/asset?username=alice", {
       method: "POST", body: raw, headers: { authorization: "Bearer owner", "content-type": "application/json" },
     }), { ...f.env, ...env } as Env);
@@ -119,7 +119,7 @@ describe("asset creation", () => {
 
   it("answers with a url that already carries the access key", async () => {
     const f = testBucket();
-    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0, legacySiteIds: [] }, true);
+    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0 });
     const res = await apexApp.fetch(new Request("https://example.com/asset?username=alice", {
       method: "POST",
       body: JSON.stringify({ name: "demo.mp4", bytes: 10, contentType: "video/mp4" }),

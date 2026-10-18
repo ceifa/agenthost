@@ -93,7 +93,7 @@ export async function createAsset(c: AppContext): Promise<Response> {
     return c.json({ error: `asset is ${bytes} bytes; plan ${owner.user.plan} allows ${limit.perAsset}` }, 413);
   }
   const [siteBytes, existingAssetBytes] = await Promise.all([
-    userUsage(c.env.SITES, owner.username, undefined, owner.user),
+    userUsage(c.env.SITES, owner.username),
     assetUsage(c.env.SITES, owner.username),
   ]);
   if (siteBytes + existingAssetBytes + bytes > limit.perUser) {

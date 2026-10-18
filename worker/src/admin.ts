@@ -56,12 +56,7 @@ api.get("/sites", async (c) => {
   if (!username) return c.json({ error: "username required" }, 400);
   const user = await getUser(c.env.SITES, username);
   if (!user) return c.json({ error: "user not found" }, 404);
-  let page;
-  try { page = await listSitesPage(c.env.SITES, username, user, c.req.query("cursor")); }
-  catch (error) {
-    if (error instanceof Error && error.message === "invalid cursor") return c.json({ error: "invalid cursor" }, 400);
-    throw error;
-  }
+  const page = await listSitesPage(c.env.SITES, username, c.req.query("cursor"));
   const sites = page.items.map(({ siteId, meta: m }) => ({
     siteId,
     bytes: m.bytes,

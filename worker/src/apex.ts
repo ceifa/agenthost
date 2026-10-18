@@ -45,7 +45,7 @@ app.post("/claim", async (c) => {
   const owner = await requireOwner(c);
   if (owner instanceof Response) return owner;
   const email = ((await readBody(c)).email as string | undefined) ?? c.req.query("email");
-  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+  if (!email || email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return c.json({ error: "valid email required" }, 400);
   }
   await putUser(c.env.SITES, owner.username, { ...owner.user, email });

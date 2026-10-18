@@ -117,8 +117,6 @@ author meant.
 ```
 sites/{username}/{siteId}/{path}        # current static files, OVERWRITTEN IN PLACE (no history)
 _sites/{username}/{siteId}             # { generation, createdAt, lastDeployAt, bytes, fileCount, keyHash, public, tombstone? }
-sites/{username}/{siteId}/_gen          # legacy generation; retained until the next publish
-sites/{username}/{siteId}/_meta         # legacy metadata; retained until the next publish
 assets/{username}/{assetId}/blob        # payload, uploaded/downloaded directly through R2 S3
 _assets/{username}/{assetId}/_meta      # metadata + access-key hash + upload state
 _users/{username}                       # JSON, see below
@@ -150,24 +148,20 @@ entries — globally, with no purge API. See §6.
   "email": "you@x.com",                // optional, unverified contact (set on claim)
   "plan": "free" | "paid",             // only the admin changes this
   "customDomain": "status.acme.com",   // optional, admin-registered
-  "createdAt": 1718800000,
-  "legacySiteIds": []                  // absent for old accounts; remaining legacy IDs during migration
+  "createdAt": 1718800000
 }
 ```
 
 **Compact, directly listable metadata.** Small control records (sites, users, assets and
 custom domains) store their JSON once in R2 `customMetadata.json` with an empty body.
 `R2.list({ include: ["customMetadata"] })` returns these records without per-object GETs.
-Records over 6,000 UTF-8 bytes and older body-JSON records fall back to a GET. The same
-PUT maintains the object and its index; there is no second index object or paid database.
+Every record must fit R2's metadata limit; the only free-form field, the claim email, is
+capped at 254 characters. The same PUT maintains the object and its index; there is no
+second index object or paid database.
 
-New accounts use flat site records immediately. Existing accounts migrate on successful
-publishes, with no bulk rewrite: their profile records remaining legacy site IDs, so
-mixed inventories enumerate flat metadata plus only the remaining legacy controls.
-An absent catalog still discovers migrated sites through their unchanged file prefixes
-if a catalog write was interrupted. Admin edits preserve an unmigrated record's layout.
-The old Worker cannot read flat records: rollback must retain these compatible readers.
-The accepted overwrite-in-place/concurrent-publish quota limitations still apply.
+Older layouts (nested `sites/{u}/{s}/_meta` + `_gen`, JSON bodies, `legacySiteIds`) were
+migrated in one pass on 2026-10-18 and are no longer read. The accepted
+overwrite-in-place/concurrent-publish quota limitations still apply.
 
 Per-file R2 `httpMetadata`:
 
@@ -232,11 +226,7 @@ tar cf - -C ./dist . | curl -s --data-binary @- \
    lastDeployAt: now, bytes, fileCount, keyHash, public, tombstone? }`. On **first** publish, generate the access key and store `sha256(key)` as
    `keyHash` (default `public: false`); on redeploy, preserve `keyHash`/`public` so existing
    share links keep working. `lastDeployAt` is what the retention sweep reads.
-7. **Finish legacy migration if needed.** Delete the old `_meta`/`_gen` and record remaining
-   legacy IDs in the account. This account PUT replaces the old generation PUT; ordinary
-   republishes need only one control PUT. Files stay at their existing keys. R2
-   read-after-write makes the merged generation visible immediately.
-8. **Respond 200 JSON:**
+7. **Respond 200 JSON:**
 
    ```json
    { "url": "https://cleverotter4f2-myblog.agenthost.page/?k=<access-key>",
@@ -291,12 +281,9 @@ Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` ena
      domain).
 2. The path is the file path within the site (`{rest}`); `siteId` came from the Host, not
    the path.
-3. Read the authoritative merged site record fresh. Warm migrated requests use **one R2
-   GET** for generation, takedown and access state. Bounded isolate hints choose only the
-   storage layout; they never cache authorization. Cold migrated requests may first probe
-   the legacy key, still using no more control reads than the previous two-read flow.
-   Legacy sites retain their old metadata/generation reads until republished. Check access
-   and takedowns before consulting route/content caches or returning a conditional 304.
+3. Read the authoritative site record fresh: **one R2 GET** for generation, takedown and
+   access state, never cached. Check access and takedowns before consulting route/content
+   caches or returning a conditional 304.
 4. Map path: `/` and `/dir/` → `index.html`; `/dir` tries the exact file before
    `/dir/index.html`. A Markdown-only homepage uses the first valid SUMMARY entry,
    README, or the first document. Successful resolutions are edge-cached under
@@ -409,9 +396,8 @@ mechanism works on our markdown shell and on user-published HTML. Cost is the wh
   input to clear. Constants live in `LIVE` (`worker/src/config.ts`).
 - **Server answers from a per-site edge micro-cache.** `/_gen` is public (a version tag
   reveals nothing the 401/404 pages don't) and handled before the access gate, so it never
-  performs authorization or touches `ACCESS_LIMITER`. Migrated sites read the merged
-  record for its generation; legacy probes may need one extra layout-discovery GET.
-  The version sits in the Cache API for
+  performs authorization or touches `ACCESS_LIMITER`. It reads the site record for its
+  generation. The version sits in the Cache API for
   a few seconds, so R2 sees one read per site, per colo, per TTL regardless of readers.
   ETag/304 keeps the steady-state poll to a header exchange. Every poll is still one Worker
   invocation — that is the floor, and why the interval is long.

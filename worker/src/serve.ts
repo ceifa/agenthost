@@ -6,7 +6,7 @@ import type { Env } from "./env";
 import { AUTH_COOKIE_PREFIX, RENDER_VERSION, LIVE } from "./config";
 import { sha256Hex, contentTypeFor, shareUrl } from "./ids";
 import { checkAccessKey } from "./auth";
-import { getMeta, getGen, siteFileKey, RESERVED_FILE } from "./storage";
+import { getMeta, siteFileKey } from "./storage";
 import { renderDoc, homeDoc, loadDocIndexCached, readMarkdownSource, type DocIndex } from "./markdown";
 import { shareWidget, liveScript, notFoundHtml, goneHtml } from "./templates";
 
@@ -62,12 +62,11 @@ export function genResponse(version: string, ifNoneMatch: string | null): Respon
 }
 
 // Live-reload probe. Deliberately public and answered before the access gate: a
-// version tag reveals nothing the 401/404 pages don't. A migrated site's probe
-// costs one R2 read — and usually none, because the answer sits in a
-// per-site edge micro-cache for LIVE.genCacheTtlSeconds. Every reader in a colo
-// shares that read. Legacy probes may first discover the old layout with an
-// extra read. (cache.delete on publish would only clear the publishing
-// colo, so detection latency is poll interval + TTL by design.)
+// version tag reveals nothing the 401/404 pages don't. A probe costs one R2
+// read — and usually none, because the answer sits in a per-site edge
+// micro-cache for LIVE.genCacheTtlSeconds. Every reader in a colo shares that
+// read. (cache.delete on publish would only clear the publishing colo, so
+// detection latency is poll interval + TTL by design.)
 async function handleGen(
   req: Request,
   env: Env,
@@ -79,7 +78,7 @@ async function handleGen(
   const cacheReq = new Request(`${CACHE_HOST}/${username}/${siteId}/r${RENDER_VERSION}/_gen`);
   let hit = await cache.match(cacheReq);
   if (!hit) {
-    const gen = await getGen(env.SITES, username, siteId);
+    const gen = (await getMeta(env.SITES, username, siteId))?.generation ?? 0;
     hit = new Response(versionTag(gen), {
       headers: { "content-type": "text/plain; charset=utf-8", "cache-control": `public, s-maxage=${LIVE.genCacheTtlSeconds}` },
     });
@@ -111,7 +110,6 @@ async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, user
     candidates.push(rest + "/index.html");
   }
   for (const rel of candidates) {
-    if (RESERVED_FILE(rel)) continue; // never serve the _gen/_meta control objects
     const target = classify(username, siteId, rel);
     const conditional = target.kind === "static" || (target.kind === "md" && new URL(req.url).searchParams.has("raw"));
     const object = req.method === "HEAD"
@@ -203,7 +201,7 @@ export async function handleSite(
     if (gate instanceof Response) return gate;
     key = gate;
   }
-  const gen = meta.generation ?? await getGen(env.SITES, username, siteId);
+  const gen = meta.generation;
 
   const raw = url.searchParams.has("raw");
   const share = shareUrl(host, key);
