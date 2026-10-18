@@ -8,9 +8,9 @@ import { gzip, header, tar } from "./test-tar";
 
 afterEach(() => vi.unstubAllGlobals());
 
-async function fixture(legacy = false) {
+async function fixture() {
   const f = testBucket();
-  f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0, ...(legacy ? {} : { legacySiteIds: [] }) }, !legacy);
+  f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0 });
   const request = (body: BodyInit, headers: Record<string, string> = {}) => handlePublish(new Request("https://example.com/publish?username=alice&id=docs", {
     method: "POST", body, headers: { authorization: "Bearer owner", "content-type": "text/markdown", ...headers },
     ...({ duplex: "half" } as object),
@@ -42,7 +42,7 @@ describe("efficient single-file publishing", () => {
 
   it.each([true, false])("enforces remaining account quota before writing (known length: %s)", async known => {
     const f = await fixture();
-    f.json("_sites/alice/other", { generation: 1, bytes: LIMITS.free.perUser - 4 }, true);
+    f.json("_sites/alice/other", { generation: 1, bytes: LIMITS.free.perUser - 4 });
     const res = await f.request("# Too large", known ? { "content-length": "11" } : {});
     expect(res.status).toBe(413);
     expect(f.put).not.toHaveBeenCalled();
@@ -58,42 +58,6 @@ describe("efficient single-file publishing", () => {
     expect(await res.json()).toEqual({ error: "bad archive: R2 unavailable" });
     await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
     expect(f.records.has("_sites/alice/docs")).toBe(false);
-  });
-
-  it("migrates legacy sites on publish without extra control PUTs or clearing a takedown", async () => {
-    const f = await fixture(true);
-    const old = { public: true, keyHash: "key", tombstone: true, createdAt: 0, lastDeployAt: 0, bytes: 5, fileCount: 1 };
-    f.json("sites/alice/docs/_meta", old);
-    f.records.set("sites/alice/docs/_gen", { body: "7" });
-    f.records.set("sites/alice/docs/README.md", { body: "# Old" });
-    f.json("sites/alice/other/_meta", old);
-    const res = await f.request("# Home", { "content-length": "6" });
-    expect(res.status).toBe(200);
-    const meta = (await getMeta(f.bucket, "alice", "docs"))!;
-    expect(meta.generation).toBe(8);
-    expect(meta.tombstone).toBe(true);
-    const account = (await getUser(f.bucket, "alice"))!;
-    expect(account.legacySiteIds).toEqual(["other"]);
-    expect(await userUsage(f.bucket, "alice", undefined, account)).toBe(11);
-    expect(f.put.mock.calls.map(([key]) => key)).toEqual(["sites/alice/docs/README.md", "_sites/alice/docs", "_users/alice"]);
-    expect(f.records.has("sites/alice/docs/_meta")).toBe(false);
-    expect(f.records.has("sites/alice/docs/_gen")).toBe(false);
-  });
-
-  it("recovers inventory and generation when a migration catalog PUT fails", async () => {
-    const f = await fixture(true);
-    f.json("sites/alice/docs/_meta", { public: true, keyHash: "key", createdAt: 0, lastDeployAt: 0, bytes: 5, fileCount: 1 });
-    f.records.set("sites/alice/docs/_gen", { body: "7" });
-    const put = f.put.getMockImplementation()!;
-    f.put.mockImplementationOnce(put).mockImplementationOnce(put).mockRejectedValueOnce(new Error("catalog failed"));
-    await expect(f.request("# Home", { "content-length": "6" })).rejects.toThrow("catalog failed");
-    const legacy = (await getUser(f.bucket, "alice"))!;
-    expect(legacy.legacySiteIds).toBeUndefined();
-    expect(await userUsage(f.bucket, "alice", undefined, legacy)).toBe(6);
-    expect((await getMeta(f.bucket, "alice", "docs"))!.generation).toBe(8);
-    expect((await f.request("# Next", { "content-length": "6" })).status).toBe(200);
-    expect((await getMeta(f.bucket, "alice", "docs"))!.generation).toBe(9);
-    expect((await getUser(f.bucket, "alice"))!.legacySiteIds).toEqual([]);
   });
 });
 
@@ -120,7 +84,7 @@ describe("archive publishing", () => {
     expect(body).toMatchObject({ siteId: "docs", fileCount: 2, bytes: 12, url: `https://${username}-docs.example.com/?k=${key}` });
     expect(body.claimUrl).toBe(`https://example.com/claim?username=${username}`);
     const user = (await getUser(f.bucket, username))!;
-    expect(user).toMatchObject({ plan: "free", legacySiteIds: [], tokenHash: await sha256Hex(body.ownerToken as string) });
+    expect(user).toMatchObject({ plan: "free", tokenHash: await sha256Hex(body.ownerToken as string) });
     const meta = (await getMeta(f.bucket, username, "docs"))!;
     expect(meta).toMatchObject({ generation: 1, bytes: 12, fileCount: 2, public: false, keyHash: await sha256Hex(key) });
     expect(f.records.get(`sites/${username}/docs/css/app.css`)).toMatchObject({ body: "a{}", httpMetadata: { contentType: "text/css; charset=utf-8" } });
@@ -139,11 +103,11 @@ describe("archive publishing", () => {
     expect((await getMeta(f.bucket, "alice", "docs"))!).toMatchObject({ generation: 2, keyHash: await sha256Hex(key) });
   });
 
-  it("skips Finder cruft, directories and control-object names", async () => {
+  it("skips Finder cruft, directories and the live-reload probe path", async () => {
     const f = await archiveFixture();
     const res = await f.post(tar([
       { name: "dir/", flag: "5" }, { name: "._index.html", body: "x" }, { name: "a/.DS_Store", body: "x" },
-      { name: "_gen", body: "99" }, { name: "_meta", body: "{}" }, { name: "index.html", body: "ok" },
+      { name: "_gen", body: "99" }, { name: "index.html", body: "ok" },
     ]));
     expect(await res.json()).toMatchObject({ fileCount: 1, bytes: 2 });
     expect([...f.records.keys()].filter(k => k.startsWith("sites/"))).toEqual(["sites/alice/docs/index.html"]);
@@ -171,7 +135,7 @@ describe("archive publishing", () => {
 
   it("rejects an archive past the account's remaining budget", async () => {
     const f = await archiveFixture();
-    f.json("_sites/alice/other", { generation: 1, bytes: LIMITS.free.perUser - 4 }, true);
+    f.json("_sites/alice/other", { generation: 1, bytes: LIMITS.free.perUser - 4 });
     const res = await f.error(await f.post(tar([{ name: "a.txt", body: "abc" }, { name: "b.txt", body: "de" }])));
     expect(res).toEqual({ status: 413, error: "site exceeds size budget of 4 bytes (plan free)" });
     expect(f.records.has("_sites/alice/docs")).toBe(false);

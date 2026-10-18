@@ -75,6 +75,6 @@ Hand over the `url` from **step 1**; completing returns it without the key.
 ## Limits
 
 - Free: 50 files, 5 MB per file, 250 MB per site, 500 MB per account (sites and assets combined). Free sites are deleted 15 days after their last publish, so republish to keep one alive.
-- `_gen` and `_meta` are reserved filenames.
+- `_gen` is a reserved filename.
 
 Public sites, key rotation, recovery email, deleting assets, every response field and error code: [references/http-api.md](references/http-api.md).

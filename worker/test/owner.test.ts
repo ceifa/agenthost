@@ -7,8 +7,8 @@ import { testBucket } from "./test-bucket";
 describe("POST /key/public", () => {
   async function setPublic(query: string, body?: unknown) {
     const f = testBucket();
-    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0, legacySiteIds: [] }, true);
-    f.json("_sites/alice/docs", { generation: 1, public: false, keyHash: "hash", lastDeployAt: 0 }, true);
+    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0 });
+    f.json("_sites/alice/docs", { generation: 1, public: false, keyHash: "hash", lastDeployAt: 0 });
     const res = await apexApp.fetch(new Request(`https://example.com/key/public?username=alice&id=docs${query}`, {
       method: "POST",
       headers: { authorization: "Bearer owner", "content-type": "application/json" },
@@ -36,5 +36,19 @@ describe("POST /key/public", () => {
     const { res, meta } = await setPublic(query, body);
     expect(await res.json()).toEqual({ ok: true, public: expected });
     expect(meta?.public).toBe(expected);
+  });
+});
+
+describe("POST /claim", () => {
+  it("refuses an email too long to fit the account record", async () => {
+    const f = testBucket();
+    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0 });
+    const claim = (email: string) => apexApp.fetch(new Request("https://example.com/claim?username=alice", {
+      method: "POST",
+      headers: { authorization: "Bearer owner", "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    }), f.env);
+    expect((await claim(`${"a".repeat(7000)}@x.com`)).status).toBe(400);
+    expect((await claim("me@x.com")).status).toBe(200);
   });
 });

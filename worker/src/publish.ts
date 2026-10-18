@@ -22,19 +22,15 @@ import {
   putUser,
   getMeta,
   putMeta,
-  getGen,
   assetUsage,
-  siteRecords,
+  userUsage,
   listAll,
   siteFileKey,
   sitePrefix,
   userKey,
-  legacyMetaKey,
-  genKey,
   deleteKeys,
   RESERVED_FILE,
   type SiteMeta,
-  type UserRecord,
 } from "./storage";
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -232,17 +228,6 @@ interface PublishError {
 }
 const fail = (status: number, message: string): PublishError => ({ status, message });
 
-async function inventory(bucket: R2Bucket, username: string, siteId: string, account: UserRecord) {
-  let bytes = 0;
-  const migrating = account.legacySiteIds === undefined || account.legacySiteIds.includes(siteId);
-  const legacySiteIds: string[] = [];
-  for await (const site of siteRecords(bucket, username, account, siteId)) {
-    bytes += site.meta.bytes ?? 0;
-    if (migrating && site.meta.generation === undefined) legacySiteIds.push(site.siteId);
-  }
-  return { bytes, migrating, legacySiteIds };
-}
-
 export async function handlePublish(req: Request, env: Env): Promise<Response> {
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
   if (!req.body) return json({ error: "empty body — pipe a tar or a single file" }, 400);
@@ -260,14 +245,12 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   let plan: "free" | "paid" = "free";
   let isNewUser = false;
   let ownerToken: string | undefined;
-  let account: UserRecord | undefined;
 
   if (req.headers.has("authorization")) {
     const owner = await verifyOwner(req, env);
     if (!owner.ok) return json({ error: owner.error }, owner.status);
     username = owner.ctx.username;
     plan = owner.ctx.user.plan;
-    account = owner.ctx.user;
   } else {
     // Anonymous → always a brand-new account (owned sites require the token).
     do {
@@ -281,14 +264,14 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
 
   // Fail fast on over-quota: budget = min(per-site cap, account quota minus other sites).
   const limits = LIMITS[plan];
-  const [otherSites, assetBytes, existingMeta] = isNewUser
-    ? ([{ bytes: 0, migrating: false, legacySiteIds: [] }, 0, null] as const)
+  const [siteBytes, assetBytes, existingMeta] = isNewUser
+    ? ([0, 0, null] as const)
     : await Promise.all([
-        inventory(env.SITES, username, siteId, account!),
+        userUsage(env.SITES, username, siteId),
         assetUsage(env.SITES, username),
         getMeta(env.SITES, username, siteId),
       ]);
-  const otherUsage = otherSites.bytes + assetBytes;
+  const otherUsage = siteBytes + assetBytes;
   const totalBudget = Math.min(limits.perSite, Math.max(0, limits.perUser - otherUsage));
 
   const gate = new PutGate(PUT_CONCURRENCY);
@@ -373,7 +356,6 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
           }
           continue; // silently skipped cruft (._*, .DS_Store, dirs)
         }
-        // Never let a user file clobber the per-site control objects.
         if (RESERVED_FILE(path)) continue;
 
         if (fileCount + 1 > limits.filesPerSite) {
@@ -409,21 +391,20 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   }
   if (fileCount === 0) return json({ error: "archive contained no files" }, 400);
 
-  // Delete files removed since the last deploy (keep the _gen/_meta control
-  // objects). A brand-new username can't have prior objects — skip the list.
+  // Delete files removed since the last deploy. A brand-new username can't
+  // have prior objects — skip the list.
   if (!isNewUser) {
     const prefix = sitePrefix(username, siteId);
     const existing = await listAll(env.SITES, prefix);
     const orphans = existing
       .map((o) => o.key)
-      .filter((k) => !RESERVED_FILE(k.slice(prefix.length)) && !writtenKeys.has(k));
+      .filter((k) => !writtenKeys.has(k));
     await deleteKeys(env.SITES, orphans);
   }
 
   if (isNewUser) {
     await putUser(env.SITES, username, {
       tokenHash: await sha256Hex(ownerToken!),
-      legacySiteIds: [],
       plan: "free",
       createdAt: Date.now(),
     });
@@ -440,7 +421,7 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   }
 
   const meta: SiteMeta = {
-    generation: (existingMeta?.generation ?? (existingMeta ? await getGen(env.SITES, username, siteId) : 0)) + 1,
+    generation: (existingMeta?.generation ?? 0) + 1,
     createdAt: existingMeta?.createdAt ?? Date.now(),
     lastDeployAt: Date.now(),
     bytes: totalBytes,
@@ -450,22 +431,6 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
     ...(existingMeta?.tombstone ? { tombstone: true } : {}),
   };
   await putMeta(env.SITES, username, siteId, meta);
-
-  // Remove old controls before updating the inventory. If that final account
-  // write fails, legacy enumeration still discovers the new record through the
-  // site's unchanged file prefix, and the next publish can finish migration.
-  if (existingMeta && existingMeta.generation === undefined) {
-    await env.SITES.delete([legacyMetaKey(username, siteId), genKey(username, siteId)]);
-  }
-
-  // The merged record commits generation and access state in one PUT. While
-  // migrating, the catalog write replaces the old separate generation PUT.
-  if (account && otherSites.migrating) {
-    await putUser(env.SITES, username, {
-      ...account,
-      legacySiteIds: otherSites.legacySiteIds,
-    });
-  }
 
   const host = siteHost(username, siteId, apex);
   return json({

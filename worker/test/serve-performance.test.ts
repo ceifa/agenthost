@@ -6,10 +6,9 @@ import type { Env } from "../src/env";
 const prefix = "sites/u/docs/";
 const controlKeys = ["_sites/u/docs"];
 
-function fixture(files: Record<string, string>, legacy = false) {
-  const meta = { generation: legacy ? undefined : 1, lastDeployAt: 1, public: true, keyHash: null as string | null, tombstone: false };
+function fixture(files: Record<string, string>) {
+  const meta = { generation: 1, lastDeployAt: 1, public: true, keyHash: null as string | null, tombstone: false };
   const objects = new Map(Object.entries(files).map(([path, body]) => [prefix + path, body]));
-  objects.set(prefix + "_gen", "1");
   const cacheEntries = new Map<string, Response>();
   const pending: Promise<unknown>[] = [];
   const cache = {
@@ -26,11 +25,13 @@ function fixture(files: Record<string, string>, legacy = false) {
   };
   const bucket = {
     get: vi.fn(async (key: string, _opts?: unknown) => {
-      const content = key === (legacy ? prefix + "_meta" : "_sites/u/docs") ? JSON.stringify(meta) : objects.get(key);
+      const control = key === "_sites/u/docs";
+      const content = control ? "" : objects.get(key);
       if (content === undefined) return null;
       const response = new Response(content);
       return {
         body: response.body,
+        customMetadata: control ? { json: JSON.stringify(meta) } : undefined,
         text: () => response.text(),
         json: () => response.json(),
         size: new TextEncoder().encode(content).length,
@@ -68,13 +69,6 @@ function fixture(files: Record<string, string>, legacy = false) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("serving I/O budgets", () => {
-  it("keeps legacy sites readable with their existing two-read warm budget", async () => {
-    const f = fixture({ "index.html": "<body>Legacy</body>" }, true);
-    await f.warm();
-    expect(await (await f.request()).text()).toContain("Legacy");
-    expect(f.bucket.get.mock.calls.map(([key]) => key).sort()).toEqual([prefix + "_meta", prefix + "_gen"].sort());
-  });
-
   it("uses a single content GET on a cold HTML route", async () => {
     const f = fixture({ "index.html": "<body>Home</body>" });
     expect(await (await f.request()).text()).toContain("Home");
@@ -181,9 +175,8 @@ describe("serving I/O budgets", () => {
     expect(await (await f.request()).text()).toContain('<h1 id="home">');
   });
 
-  it("does not cache missing routes or expose control objects", async () => {
+  it("does not cache missing routes", async () => {
     const f = fixture({});
-    expect((await f.request("/_meta")).status).toBe(404);
     expect((await f.request("/new.css")).status).toBe(404);
     await f.settle();
     expect(f.cache.put).not.toHaveBeenCalled();

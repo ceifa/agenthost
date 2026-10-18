@@ -48,7 +48,7 @@ export async function runRetentionSweep(env: Env, now: number): Promise<SweepRes
       if (!(await expireAsset(asset.value, own ? days : LIMITS.free.retentionDays)) && own) kept++;
       asset = await assets.next();
     }
-    for await (const { siteId, meta } of siteRecords(env.SITES, username, user)) {
+    for await (const { siteId, meta } of siteRecords(env.SITES, username)) {
       checked++;
       if (days !== null && now - meta.lastDeployAt > days * DAY_MS) {
         await deleteSite(env.SITES, username, siteId);
