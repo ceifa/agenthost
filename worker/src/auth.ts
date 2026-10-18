@@ -1,6 +1,7 @@
 // Auth helpers: ownerToken verification (data-plane) and Access email
 // verification (admin).
 
+import type { Context } from "hono";
 import type { Env } from "./env";
 import { getUser, type UserRecord } from "./storage";
 import { sha256Hex, timingSafeEqual } from "./ids";
@@ -35,6 +36,14 @@ export async function verifyOwner(req: Request, env: Env): Promise<OwnerResult> 
     return { ok: false, status: 403, error: "invalid username or owner token" };
   }
   return { ok: true, ctx: { username, user } };
+}
+
+export type AppContext = Context<{ Bindings: Env }>;
+
+// verifyOwner for a Hono route: the owner, or the JSON error response to return.
+export async function requireOwner(c: AppContext): Promise<OwnerCtx | Response> {
+  const owner = await verifyOwner(c.req.raw, c.env);
+  return owner.ok ? owner.ctx : c.json({ error: owner.error }, owner.status);
 }
 
 // Admin auth: verify the *signed* Access JWT (Cf-Access-Jwt-Assertion), not the

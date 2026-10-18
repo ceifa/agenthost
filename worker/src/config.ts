@@ -44,6 +44,10 @@ export const DEFAULT_SITE_ID = "site";
 export const AUTH_COOKIE_PREFIX = "as_auth_";
 export const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // ~1 year, seconds
 
+// Edge-cache entries keyed by a site's generation can be immutable: a deploy
+// bumps the generation, which mints a fresh key and orphans the old entry.
+export const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
+
 // Rendered markdown is cached per deploy generation, which a *site* bumps when it
 // publishes — a Worker deploy doesn't. Without this, shipping a change to the
 // renderer or the shell would only reach sites that happen to republish. Bump it

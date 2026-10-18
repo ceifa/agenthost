@@ -1,4 +1,4 @@
-// Username generation, reserved-word denylist, siteId sanitizing, content-type guess.
+// Usernames, ids and secrets, siteId sanitizing, site URLs, content-type guess.
 
 const ADJECTIVES = [
   "clever", "brave", "calm", "swift", "bright", "gentle", "lively", "merry",
@@ -75,13 +75,16 @@ export function sanitizeSiteId(raw: string | undefined | null): string | null {
 
 const ALPHANUM = "abcdefghijkmnpqrstuvwxyz23456789"; // no ambiguous 0/o/1/l
 
-export function generateAccessKey(len = 10): string {
+// Random, unambiguous lowercase id. 32 symbols divide 256, so no modulo bias.
+export function randomId(len: number): string {
   const buf = new Uint8Array(len);
   crypto.getRandomValues(buf);
   let out = "";
   for (const b of buf) out += ALPHANUM[b % ALPHANUM.length]!;
   return out;
 }
+
+export const generateAccessKey = () => randomId(10);
 
 // 32 random bytes; only its sha256 is ever stored.
 export function generateOwnerToken(): string {
@@ -121,10 +124,6 @@ export const siteHost = (username: string, siteId: string, apex: string) => `${u
 // widget) goes through these.
 export const siteUrl = (host: string) => `https://${host}/`;
 export const shareUrl = (host: string, key?: string | null) => `https://${host}/${key ? `?k=${key}` : ""}`;
-
-// Caller identity for the rate limiters. Falls back to a shared sentinel when the
-// header is absent (e.g. local dev) so the limiter key stays well-formed.
-export const clientIp = (req: Request): string => req.headers.get("cf-connecting-ip") ?? "unknown";
 
 const CONTENT_TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",

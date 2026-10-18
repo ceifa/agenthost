@@ -5,7 +5,7 @@ import { markdownShell, esc } from "./templates";
 import { highlightCode, languageName } from "./highlight";
 import { listAll, sitePrefix } from "./storage";
 import type { Env } from "./env";
-import { RENDER_LIMITS, RENDER_VERSION } from "./config";
+import { IMMUTABLE_CACHE, RENDER_LIMITS, RENDER_VERSION } from "./config";
 
 const usesMermaid = (md: string) => /```\s*mermaid/i.test(md);
 
@@ -200,13 +200,13 @@ async function loadSummaryNav(env: Env, username: string, siteId: string, files:
 }
 
 // The site's .md listing + SUMMARY nav — loaded once per render and shareable
-// across resolveTarget/renderMarkdown so a request never lists twice.
+// across route resolution and the render so a request never lists twice.
 export interface DocIndex {
   files: string[];
   nav: NavEntry[] | null;
 }
 
-export async function loadDocIndex(env: Env, username: string, siteId: string): Promise<DocIndex> {
+async function loadDocIndex(env: Env, username: string, siteId: string): Promise<DocIndex> {
   const files = await listMarkdown(env, username, siteId);
   const nav = await loadSummaryNav(env, username, siteId, files);
   return { files, nav };
@@ -220,7 +220,7 @@ export async function loadDocIndexCached(env: Env, ctx: ExecutionContext, userna
   if (hit) return hit.json<DocIndex>();
   const index = await loadDocIndex(env, username, siteId);
   ctx.waitUntil(caches.default.put(key, new Response(JSON.stringify(index), {
-    headers: { "content-type": "application/json", "cache-control": "public, max-age=31536000, immutable" },
+    headers: { "content-type": "application/json", "cache-control": IMMUTABLE_CACHE },
   })));
   return index;
 }
@@ -274,29 +274,10 @@ export function renderDoc(siteId: string, mdPath: string, source: string, index:
   });
 }
 
-export async function renderMarkdown(
-  env: Env,
-  username: string,
-  siteId: string,
-  mdPath: string,
-  source: string,
-  index?: DocIndex,
-): Promise<string> {
-  return renderDoc(siteId, mdPath, source, index ?? (await loadDocIndex(env, username, siteId)));
-}
-
 // The doc shown at `/` for a markdown-only site: first SUMMARY entry, else README.
-export async function defaultMarkdownDoc(
-  env: Env,
-  username: string,
-  siteId: string,
-  prefetched?: DocIndex,
-): Promise<{ path: string; index: DocIndex } | null> {
-  const index = prefetched ?? await loadDocIndex(env, username, siteId);
-  const { files, nav } = index;
+export function homeDoc({ files, nav }: DocIndex): string | null {
   if (!files.length) return null;
   const fileSet = new Set(files);
   const first = nav?.find((n) => fileSet.has(n.href));
-  const path = first?.href ?? files.find((f) => /^readme\.md$/i.test(f)) ?? files.find((f) => !isSummary(f)) ?? files[0]!;
-  return { path, index };
+  return first?.href ?? files.find((f) => /^readme\.md$/i.test(f)) ?? files.find((f) => !isSummary(f)) ?? files[0]!;
 }

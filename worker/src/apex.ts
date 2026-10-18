@@ -3,24 +3,16 @@
 // landing page).
 
 import { Hono } from "hono";
-import type { Context } from "hono";
 import type { Env } from "./env";
 import { handlePublish } from "./publish";
-import { verifyOwner, type OwnerCtx } from "./auth";
+import { requireOwner, type AppContext } from "./auth";
 import { getMeta, putMeta, putUser, type SiteMeta } from "./storage";
 import { generateAccessKey, sha256Hex, sanitizeSiteId, siteHost, shareUrl } from "./ids";
 import { llmsTxt } from "./llms";
 import { skillFile } from "./skill";
 import { completeAsset, createAsset, deleteAsset, serveAsset } from "./assets";
 
-type Ctx = Context<{ Bindings: Env }>;
-
-async function requireOwner(c: Ctx): Promise<OwnerCtx | Response> {
-  const owner = await verifyOwner(c.req.raw, c.env);
-  return owner.ok ? owner.ctx : c.json({ error: owner.error }, owner.status);
-}
-
-async function requireSite(c: Ctx, username: string): Promise<{ siteId: string; meta: SiteMeta } | Response> {
+async function requireSite(c: AppContext, username: string): Promise<{ siteId: string; meta: SiteMeta } | Response> {
   const siteId = sanitizeSiteId(c.req.query("id"));
   if (!siteId) return c.json({ error: "id required" }, 400);
   const meta = await getMeta(c.env.SITES, username, siteId);
@@ -29,7 +21,7 @@ async function requireSite(c: Ctx, username: string): Promise<{ siteId: string; 
 }
 
 // Tolerates an empty/non-JSON body.
-async function readBody(c: Ctx): Promise<Record<string, unknown>> {
+async function readBody(c: AppContext): Promise<Record<string, unknown>> {
   try {
     return (await c.req.json()) as Record<string, unknown>;
   } catch {

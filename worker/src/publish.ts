@@ -2,7 +2,7 @@
 // generation and access metadata together.
 
 import type { Env } from "./env";
-import { LIMITS, PUT_CONCURRENCY, DEFAULT_SITE_ID } from "./config";
+import { LIMITS, PUT_CONCURRENCY, DEFAULT_SITE_ID, type PlanLimits } from "./config";
 import {
   generateUsername,
   generateOwnerToken,
@@ -13,8 +13,8 @@ import {
   siteHost,
   siteUrl,
   shareUrl,
-  clientIp,
 } from "./ids";
+import { json, clientIp } from "./http";
 import { verifyOwner } from "./auth";
 import { parseTar, TarLimitError, type TarEntry } from "./tar";
 import { gunzipStream } from "./gunzip";
@@ -38,66 +38,18 @@ import {
   type UserRecord,
 } from "./storage";
 
-function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", ...headers },
-  });
-}
-
-// Caps in-flight R2 puts so a wide archive can't spawn hundreds at once.
-class PutGate {
-  private inFlight = new Set<Promise<unknown>>();
-  private firstError: unknown = null;
-  constructor(private readonly max: number) {}
-
-  async add(task: () => Promise<unknown>): Promise<void> {
-    if (this.firstError) throw this.firstError;
-    const p = task()
-      .catch((e) => {
-        if (!this.firstError) this.firstError = e;
-      })
-      .finally(() => this.inFlight.delete(p));
-    this.inFlight.add(p);
-    if (this.inFlight.size >= this.max) await Promise.race(this.inFlight);
-    if (this.firstError) throw this.firstError;
-  }
-
-  async drain(): Promise<void> {
-    while (this.inFlight.size) await Promise.race(this.inFlight);
-    if (this.firstError) throw this.firstError;
+// A request we refuse, with the status to refuse it with.
+class PublishError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
   }
 }
 
-// Streams one tar entry into R2 without buffering it. `read` settles once the
-// entry's bytes are all consumed, and only then may the parser advance; `stored`
-// settles when R2 has the object.
-function streamEntry(
-  bucket: R2Bucket,
-  key: string,
-  entry: TarEntry,
-  contentType: string,
-): { read: Promise<void>; stored: Promise<unknown> } {
-  const opts = { httpMetadata: { contentType } };
-  if (entry.size === 0) return { read: Promise.resolve(), stored: bucket.put(key, new Uint8Array(0), opts) };
-  // R2 needs the length up front; FixedLengthStream carries it and rejects a mismatch.
-  const { readable, writable } = new FixedLengthStream(entry.size);
-  const stored = bucket.put(key, readable, opts);
-  const abort = new AbortController();
-  const read = entry.body.pipeTo(writable, { signal: abort.signal });
-  // A failed PUT stops consumption. Abort the producer as well, so neither
-  // branch waits forever on backpressure. Both failures are observed.
-  void stored.catch(error => {
-    abort.abort(error);
-    void readable.cancel(error).catch(() => {});
-  });
-  void read.catch(() => {});
-  return { read, stored };
-}
+// ── reading the body ──
 
 // Returns a safe relative key, or null to skip the entry.
 function safePath(raw: string): string | null {
-  let p = raw.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
+  const p = raw.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
   if (!p) return null;
   // macOS AppleDouble / Finder cruft — never intended web content.
   const base = p.slice(p.lastIndexOf("/") + 1);
@@ -155,13 +107,13 @@ function dispositionFileName(req: Request): string | null {
 // far more often than the truth, but a gzip header is a gzip header.
 type Mode =
   | { kind: "file"; name: string }
-  | { kind: "archive"; gzipped: boolean }
-  | { kind: "invalid"; message: string };
+  | { kind: "archive"; gzipped: boolean };
 
-const named = (raw: string): Mode => {
+function named(raw: string): Mode {
   const name = safePath(raw);
-  return name ? { kind: "file", name } : { kind: "invalid", message: `invalid file name: ${raw}` };
-};
+  if (!name) throw new PublishError(400, `invalid file name: ${raw}`);
+  return { kind: "file", name };
+}
 
 function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
   // `?file=` is the caller being explicit — it outranks everything, including the
@@ -176,7 +128,7 @@ function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
   if (claimsArchive(contentType)) return { kind: "archive", gzipped: true };
 
   if (isZip(head)) {
-    return { kind: "invalid", message: "zip is not supported — send a tar (tar cf - -C ./dist .)" };
+    throw new PublishError(400, "zip is not supported — send a tar (tar cf - -C ./dist .)");
   }
 
   // Not an archive, so it's one document: prefer the name it came with, since the
@@ -188,10 +140,7 @@ function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
   // matter → markdown, a doctype/html tag → html, prose → markdown.
   const kind = singleFileKind(contentType) ?? sniffDocKind(head);
   if (kind === null) {
-    return {
-      kind: "invalid",
-      message: "unrecognized body — send a tar, a .md/.html document, or name it with ?file=<name>",
-    };
+    throw new PublishError(400, "unrecognized body — send a tar, a .md/.html document, or name it with ?file=<name>");
   }
   // Named so it serves at `/`: html as-is, markdown as the docs home.
   return { kind: "file", name: kind === "html" ? "index.html" : "README.md" };
@@ -209,7 +158,7 @@ async function readBounded(body: ReadableStream<Uint8Array>, max: number): Promi
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
-      if (total > max) throw new TarLimitError(`file is ${total}+ bytes; max is ${max}`);
+      if (total > max) throw new PublishError(413, `file is ${total}+ bytes; max is ${max}`);
       chunks.push(value);
     }
   } catch (error) {
@@ -227,12 +176,183 @@ async function readBounded(body: ReadableStream<Uint8Array>, max: number): Promi
   return out;
 }
 
-interface PublishError {
-  status: number;
-  message: string;
-}
-const fail = (status: number, message: string): PublishError => ({ status, message });
+// ── writing files ──
 
+// Caps in-flight R2 puts so a wide archive can't spawn hundreds at once.
+class PutGate {
+  private inFlight = new Set<Promise<unknown>>();
+  private firstError: unknown = null;
+  constructor(private readonly max: number) {}
+
+  async add(task: () => Promise<unknown>): Promise<void> {
+    if (this.firstError) throw this.firstError;
+    const p = task()
+      .catch((e) => {
+        if (!this.firstError) this.firstError = e;
+      })
+      .finally(() => this.inFlight.delete(p));
+    this.inFlight.add(p);
+    if (this.inFlight.size >= this.max) await Promise.race(this.inFlight);
+    if (this.firstError) throw this.firstError;
+  }
+
+  async drain(): Promise<void> {
+    while (this.inFlight.size) await Promise.race(this.inFlight);
+    if (this.firstError) throw this.firstError;
+  }
+}
+
+// Streams `size` bytes into R2 without buffering them. `read` settles once the
+// source is consumed; `stored` settles when R2 has the object.
+function streamToR2(
+  bucket: R2Bucket,
+  key: string,
+  source: ReadableStream<Uint8Array>,
+  size: number,
+  contentType: string,
+): { read: Promise<void>; stored: Promise<unknown> } {
+  const opts = { httpMetadata: { contentType } };
+  if (size === 0) return { read: Promise.resolve(), stored: bucket.put(key, new Uint8Array(0), opts) };
+  // R2 needs the length up front; FixedLengthStream carries it and rejects a mismatch.
+  const { readable, writable } = new FixedLengthStream(size);
+  const stored = bucket.put(key, readable, opts);
+  const abort = new AbortController();
+  const read = source.pipeTo(writable, { signal: abort.signal });
+  // A failed PUT stops consumption. Abort the producer as well, so neither
+  // branch waits forever on backpressure. Both failures are observed.
+  void stored.catch(error => {
+    abort.abort(error);
+    void readable.cancel(error).catch(() => {});
+  });
+  void read.catch(() => {});
+  return { read, stored };
+}
+
+interface Written {
+  keys: Set<string>;
+  bytes: number;
+  fileCount: number;
+}
+
+interface Target {
+  bucket: R2Bucket;
+  username: string;
+  siteId: string;
+  limits: PlanLimits;
+  budget: number; // bytes this site may hold: min(per-site cap, account quota left)
+  budgetError: () => PublishError;
+}
+
+// One raw document, written under a name that serves at `/`.
+async function writeDocument(
+  t: Target,
+  name: string,
+  req: Request,
+  body: ReadableStream<Uint8Array>,
+  cancelBody: (reason?: unknown) => Promise<void>,
+): Promise<Written> {
+  if (isReservedFile(name)) throw new PublishError(400, `reserved filename: ${name}`);
+  const cap = Math.min(t.limits.perFile, t.budget);
+  const lengthHeader = req.headers.get("content-length");
+  const declared = lengthHeader !== null && /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : null;
+  if (declared !== null && (!Number.isSafeInteger(declared) || declared > cap)) {
+    throw new PublishError(413, `file is ${declared} bytes; max is ${cap}`);
+  }
+  if (declared === 0) throw new PublishError(400, "empty file");
+
+  const key = siteFileKey(t.username, t.siteId, name);
+  const contentType = contentTypeFor(name);
+  if (declared !== null) {
+    const { read, stored } = streamToR2(t.bucket, key, body, declared, contentType);
+    // The replayed body can sit in a pending pull; stop the request itself too.
+    void stored.catch(error => void cancelBody(error).catch(() => {}));
+    await Promise.all([read, stored]);
+    return { keys: new Set([key]), bytes: declared, fileCount: 1 };
+  }
+
+  const bytes = await readBounded(body, cap);
+  if (bytes.byteLength === 0) throw new PublishError(400, "empty file");
+  if (bytes.byteLength > t.budget) throw t.budgetError();
+  await t.bucket.put(key, bytes, { httpMetadata: { contentType } });
+  return { keys: new Set([key]), bytes: bytes.byteLength, fileCount: 1 };
+}
+
+// A tar (optionally gzipped), each entry streamed into R2 as it arrives.
+async function writeArchive(t: Target, stream: ReadableStream<Uint8Array>): Promise<Written> {
+  const gate = new PutGate(PUT_CONCURRENCY);
+  const written: Written = { keys: new Set(), bytes: 0, fileCount: 0 };
+  try {
+    // The parser enforces the per-file cap on each header, so an inflated size
+    // can't make it buffer a giant entry.
+    for await (const entry of parseTar(stream, { maxEntrySize: t.limits.perFile })) {
+      if (entry.type === "symlink" || entry.type === "hardlink") {
+        throw new PublishError(400, `links are not allowed (${entry.path})`);
+      }
+      if (entry.type !== "file") continue;
+
+      const path = safePath(entry.path);
+      if (path === null) {
+        if (entry.path.split("/").includes("..")) throw new PublishError(400, `unsafe path rejected: ${entry.path}`);
+        continue; // silently skipped cruft (._*, .DS_Store, dirs)
+      }
+      // Never let a user file clobber the per-site control objects.
+      if (isReservedFile(path)) continue;
+
+      if (written.fileCount + 1 > t.limits.filesPerSite) {
+        throw new PublishError(413, `too many files; max is ${t.limits.filesPerSite}`);
+      }
+      if (written.bytes + entry.size > t.budget) throw t.budgetError();
+
+      written.bytes += entry.size;
+      written.fileCount += 1;
+      const key = siteFileKey(t.username, t.siteId, path);
+      written.keys.add(key);
+      const { read, stored } = streamToR2(t.bucket, key, entry.body, entry.size, contentTypeFor(path));
+      await gate.add(() => stored);
+      await read;
+    }
+  } catch (error) {
+    // Let in-flight puts settle before refusing; their errors lose to the refusal.
+    if (error instanceof PublishError) await gate.drain().catch(() => {});
+    throw error;
+  }
+  await gate.drain();
+  if (written.fileCount === 0) throw new PublishError(400, "archive contained no files");
+  return written;
+}
+
+function failureResponse(error: unknown): Response {
+  if (error instanceof PublishError) return json({ error: error.message }, error.status);
+  if (error instanceof TarLimitError) return json({ error: error.message }, 413);
+  const message = error instanceof Error ? error.message : "failed to read archive";
+  return json({ error: `bad archive: ${message}` }, 400);
+}
+
+// ── the request ──
+
+interface Account {
+  username: string;
+  plan: "free" | "paid";
+  user?: UserRecord; // absent for an account this request is minting
+  ownerToken?: string; // only for a new account — returned once, never stored
+}
+
+async function resolveAccount(req: Request, env: Env): Promise<Account | Response> {
+  if (req.headers.has("authorization")) {
+    const owner = await verifyOwner(req, env);
+    if (!owner.ok) return json({ error: owner.error }, owner.status);
+    return { username: owner.ctx.username, plan: owner.ctx.user.plan, user: owner.ctx.user };
+  }
+  // Anonymous → always a brand-new account (owned sites require the token).
+  let username: string;
+  do {
+    username = generateUsername();
+  } while (await env.SITES.head(userKey(username)));
+  return { username, plan: "free", ownerToken: generateOwnerToken() };
+}
+
+// Bytes held by the account's other sites, and — while its inventory is still
+// being migrated off the legacy layout — which of those remain legacy.
 async function inventory(bucket: R2Bucket, username: string, siteId: string, account: UserRecord) {
   let bytes = 0;
   const migrating = account.legacySiteIds === undefined || account.legacySiteIds.includes(siteId);
@@ -255,179 +375,58 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   }
 
   const url = new URL(req.url);
-  const apex = env.APEX_HOST;
-
-  let username: string;
-  let plan: "free" | "paid" = "free";
-  let isNewUser = false;
-  let ownerToken: string | undefined;
-  let account: UserRecord | undefined;
-
-  if (req.headers.has("authorization")) {
-    const owner = await verifyOwner(req, env);
-    if (!owner.ok) return json({ error: owner.error }, owner.status);
-    username = owner.ctx.username;
-    plan = owner.ctx.user.plan;
-    account = owner.ctx.user;
-  } else {
-    // Anonymous → always a brand-new account (owned sites require the token).
-    do {
-      username = generateUsername();
-    } while (await env.SITES.head(userKey(username)));
-    ownerToken = generateOwnerToken();
-    isNewUser = true;
-  }
-
+  const account = await resolveAccount(req, env);
+  if (account instanceof Response) return account;
+  const { username, plan, user } = account;
   const siteId = sanitizeSiteId(url.searchParams.get("id") ?? req.headers.get("x-agenthost-site")) ?? DEFAULT_SITE_ID;
 
   // Fail fast on over-quota: budget = min(per-site cap, account quota minus other sites).
   const limits = LIMITS[plan];
-  const [otherSites, assetBytes, existingMeta] = isNewUser
-    ? ([{ bytes: 0, migrating: false, legacySiteIds: [] }, 0, null] as const)
-    : await Promise.all([
-        inventory(env.SITES, username, siteId, account!),
+  const [otherSites, assetBytes, existingMeta] = user
+    ? await Promise.all([
+        inventory(env.SITES, username, siteId, user),
         assetUsage(env.SITES, username),
         getMeta(env.SITES, username, siteId),
-      ]);
-  const otherUsage = otherSites.bytes + assetBytes;
-  const totalBudget = Math.min(limits.perSite, Math.max(0, limits.perUser - otherUsage));
-
-  const gate = new PutGate(PUT_CONCURRENCY);
-  const writtenKeys = new Set<string>();
-  let totalBytes = 0;
-  let fileCount = 0;
-  let perr: PublishError | null = null;
+      ])
+    : [{ bytes: 0, migrating: false, legacySiteIds: [] }, 0, null] as const;
+  const budget = Math.min(limits.perSite, Math.max(0, limits.perUser - otherSites.bytes - assetBytes));
+  const target: Target = {
+    bucket: env.SITES, username, siteId, limits, budget,
+    budgetError: () => new PublishError(413, `site exceeds size budget of ${budget} bytes (plan ${plan})`),
+  };
 
   // Peek before branching: the payload's own bytes decide archive-vs-document,
   // with the Content-Type header as a fallback rather than the source of truth.
   let payload: Awaited<ReturnType<typeof peek>>;
-  try { payload = await peek(req.body); }
-  catch { return json({ error: "failed to read request body" }, 400); }
-  const { head, stream: body, cancel: cancelBody } = payload;
-  const mode = detectMode(req, url, head);
-  if (mode.kind === "invalid") {
-    void cancelBody().catch(() => {});
-    return json({ error: mode.message }, 400);
-  }
-
   try {
-    if (mode.kind === "file") {
-      // Single raw document: no archive to stream, so read the body directly and
-      // write it under a name that serves at `/`.
-      const name = mode.name;
-      if (isReservedFile(name)) perr = fail(400, `reserved filename: ${name}`);
-      else {
-        const cap = Math.min(limits.perFile, totalBudget);
-        const lengthHeader = req.headers.get("content-length");
-        const declared = lengthHeader !== null && /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : null;
-        if (declared !== null && (!Number.isSafeInteger(declared) || declared > cap)) {
-          throw new TarLimitError(`file is ${declared} bytes; max is ${cap}`);
-        }
-        if (declared === 0) {
-          void cancelBody().catch(() => {});
-          return json({ error: "empty file" }, 400);
-        }
-        const key = siteFileKey(username, siteId, name);
-        if (declared !== null && declared > 0) {
-          const { readable, writable } = new FixedLengthStream(declared);
-          const stored = env.SITES.put(key, readable, { httpMetadata: { contentType: contentTypeFor(name) } });
-          const abort = new AbortController();
-          void stored.catch(error => {
-            abort.abort(error);
-            void readable.cancel(error).catch(() => {});
-            void cancelBody(error).catch(() => {});
-          });
-          await Promise.all([body.pipeTo(writable, { signal: abort.signal }), stored]);
-          totalBytes = declared;
-          fileCount = 1;
-          writtenKeys.add(key);
-        } else {
-          const bytes = await readBounded(body, cap);
-          if (bytes.byteLength === 0) perr = fail(400, "empty file");
-          else if (bytes.byteLength > totalBudget)
-            perr = fail(413, `site exceeds size budget of ${totalBudget} bytes (plan ${plan})`);
-          else {
-            totalBytes = bytes.byteLength;
-            fileCount = 1;
-            writtenKeys.add(key);
-            await env.SITES.put(key, bytes, { httpMetadata: { contentType: contentTypeFor(name) } });
-          }
-        }
-      }
-    } else {
-      // Bare tars are accepted too — only gzipped bodies go through the inflater.
-      const stream = mode.gzipped ? gunzipStream(body) : body;
-      // Hard cap at the per-file limit so an inflated header size can't force the
-      // parser to buffer a giant entry before publish's own check runs.
-      for await (const entry of parseTar(stream, { maxEntrySize: limits.perFile })) {
-        if (entry.type === "symlink" || entry.type === "hardlink") {
-          perr = fail(400, `links are not allowed (${entry.path})`);
-          break;
-        }
-        if (entry.type !== "file") continue;
-
-        const path = safePath(entry.path);
-        if (path === null) {
-          if (entry.path.split("/").some((s) => s === "..")) {
-            perr = fail(400, `unsafe path rejected: ${entry.path}`);
-            break;
-          }
-          continue; // silently skipped cruft (._*, .DS_Store, dirs)
-        }
-        // Never let a user file clobber the per-site control objects.
-        if (isReservedFile(path)) continue;
-
-        if (entry.size > limits.perFile) {
-          perr = fail(413, `file ${path} is ${entry.size} bytes; max is ${limits.perFile}`);
-          break;
-        }
-        if (fileCount + 1 > limits.filesPerSite) {
-          perr = fail(413, `too many files; max is ${limits.filesPerSite}`);
-          break;
-        }
-        if (totalBytes + entry.size > totalBudget) {
-          perr = fail(413, `site exceeds size budget of ${totalBudget} bytes (plan ${plan})`);
-          break;
-        }
-
-        totalBytes += entry.size;
-        fileCount += 1;
-        const key = siteFileKey(username, siteId, path);
-        writtenKeys.add(key);
-        const { read, stored } = streamEntry(env.SITES, key, entry, contentTypeFor(path));
-        await gate.add(() => stored);
-        await read;
-      }
-      await gate.drain();
-    }
-  } catch (e) {
-    void cancelBody(e).catch(() => {});
-    if (perr) return json({ error: perr.message }, perr.status);
-    if (e instanceof TarLimitError) return json({ error: e.message }, 413);
-    const message = e instanceof Error ? e.message : "failed to read archive";
-    return json({ error: `bad archive: ${message}` }, 400);
+    payload = await peek(req.body);
+  } catch {
+    return json({ error: "failed to read request body" }, 400);
   }
+  const { head, stream: body, cancel: cancelBody } = payload;
 
-  if (perr) {
-    void cancelBody().catch(() => {});
-    return json({ error: perr.message }, perr.status);
+  let written: Written;
+  try {
+    const mode = detectMode(req, url, head);
+    written = mode.kind === "file"
+      ? await writeDocument(target, mode.name, req, body, cancelBody)
+      : await writeArchive(target, mode.gzipped ? gunzipStream(body) : body); // bare tars skip the inflater
+  } catch (error) {
+    void cancelBody(error).catch(() => {});
+    return failureResponse(error);
   }
-  if (fileCount === 0) return json({ error: "archive contained no files" }, 400);
 
   // Delete files removed since the last deploy (keep the _gen/_meta control
   // objects). A brand-new username can't have prior objects — skip the list.
-  if (!isNewUser) {
+  if (user) {
     const prefix = sitePrefix(username, siteId);
-    const existing = await listAll(env.SITES, prefix);
-    const orphans = existing
+    const orphans = (await listAll(env.SITES, prefix))
       .map((o) => o.key)
-      .filter((k) => !isReservedFile(k.slice(prefix.length)) && !writtenKeys.has(k));
+      .filter((k) => !isReservedFile(k.slice(prefix.length)) && !written.keys.has(k));
     await deleteKeys(env.SITES, orphans);
-  }
-
-  if (isNewUser) {
+  } else {
     await putUser(env.SITES, username, {
-      tokenHash: await sha256Hex(ownerToken!),
+      tokenHash: await sha256Hex(account.ownerToken!),
       legacySiteIds: [],
       plan: "free",
       createdAt: Date.now(),
@@ -436,7 +435,6 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
 
   // Mint an access key only on a site's first publish (or if one is missing);
   // redeploys preserve the existing keyHash/public so share links keep working.
-  const isPublic = existingMeta?.public ?? false;
   let keyHash = existingMeta?.keyHash ?? "";
   let accessKey: string | undefined;
   if (!keyHash) {
@@ -444,14 +442,16 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
     keyHash = await sha256Hex(accessKey);
   }
 
+  const previousGen = existingMeta ? existingMeta.generation ?? await getGen(env.SITES, username, siteId) : 0;
+  const generation = previousGen + 1;
   const meta: SiteMeta = {
-    generation: (existingMeta?.generation ?? (existingMeta ? await getGen(env.SITES, username, siteId) : 0)) + 1,
+    generation,
     createdAt: existingMeta?.createdAt ?? Date.now(),
     lastDeployAt: Date.now(),
-    bytes: totalBytes,
-    fileCount,
+    bytes: written.bytes,
+    fileCount: written.fileCount,
     keyHash,
-    public: isPublic,
+    public: existingMeta?.public ?? false,
     ...(existingMeta?.tombstone ? { tombstone: true } : {}),
   };
   await putMeta(env.SITES, username, siteId, meta);
@@ -465,25 +465,20 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
 
   // The merged record commits generation and access state in one PUT. While
   // migrating, the catalog write replaces the old separate generation PUT.
-  if (account && otherSites.migrating) {
-    await putUser(env.SITES, username, {
-      ...account,
-      legacySiteIds: otherSites.legacySiteIds,
-    });
+  if (user && otherSites.migrating) {
+    await putUser(env.SITES, username, { ...user, legacySiteIds: otherSites.legacySiteIds });
   }
-  const generation = meta.generation!;
 
-  const host = siteHost(username, siteId, apex);
+  const host = siteHost(username, siteId, env.APEX_HOST);
   return json({
     url: siteUrl(host),
     shareUrl: shareUrl(host, accessKey),
     username,
     siteId,
     generation,
-    fileCount,
-    bytes: totalBytes,
+    fileCount: written.fileCount,
+    bytes: written.bytes,
     ...(accessKey ? { accessKey } : {}),
-    ...(ownerToken ? { ownerToken } : {}),
-    ...(isNewUser ? { claimUrl: `https://${apex}/claim?username=${username}` } : {}),
+    ...(account.ownerToken ? { ownerToken: account.ownerToken, claimUrl: `https://${env.APEX_HOST}/claim?username=${username}` } : {}),
   });
 }
