@@ -6,7 +6,7 @@ import type { Env } from "./env";
 import { AUTH_COOKIE_PREFIX, AUTH_COOKIE_MAX_AGE, RENDER_VERSION, LIVE } from "./config";
 import { sha256Hex, timingSafeEqual, contentTypeFor, shareUrl, clientIp } from "./ids";
 import { getMeta, getGen, siteFileKey, RESERVED_FILE, type SiteMeta } from "./storage";
-import { renderMarkdown, defaultMarkdownDoc, loadDocIndexCached, readMarkdownSource, type DocIndex } from "./markdown";
+import { renderDoc, homeDoc, loadDocIndexCached, readMarkdownSource, type DocIndex } from "./markdown";
 import { interstitialHtml, shareWidget, liveScript, notFoundHtml, goneHtml } from "./templates";
 
 function getCookie(req: Request, name: string): string | null {
@@ -173,8 +173,8 @@ async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, user
   // Markdown-only site: `/` renders README.md / first SUMMARY entry.
   if (rest === "") {
     const index = await loadDocIndexCached(env, ctx, username, siteId, gen);
-    const md = await defaultMarkdownDoc(env, username, siteId, index);
-    if (md) return { ...classify(username, siteId, md.path), docIndex: md.index };
+    const home = homeDoc(index);
+    if (home) return { ...classify(username, siteId, home), docIndex: index };
   }
   return null;
 }
@@ -303,7 +303,7 @@ export async function handleSite(
       if (!obj || !("body" in obj)) return null;
       const source = await readMarkdownSource(obj as R2ObjectBody);
       const index = target.docIndex ?? await loadDocIndexCached(env, ctx, username, siteId, gen);
-      return renderMarkdown(env, username, siteId, target.relPath, source, index);
+      return renderDoc(siteId, target.relPath, source, index);
     });
   }
 

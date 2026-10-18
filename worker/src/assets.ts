@@ -26,16 +26,7 @@ import { assetDownloadHtml, assetPendingHtml, interstitialHtml, notFoundHtml } f
 
 type Ctx = Context<{ Bindings: Env }>;
 
-const ASSET_ID_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
 const ASSET_COOKIE_PREFIX = "aa_auth_";
-
-function assetId(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  let out = "";
-  for (const b of bytes) out += ASSET_ID_ALPHABET[b % ASSET_ID_ALPHABET.length]!;
-  return out;
-}
 
 export function safeAssetName(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
@@ -128,7 +119,7 @@ export async function createAsset(c: Ctx): Promise<Response> {
     return c.json({ error: `account exceeds asset storage budget of ${limit.perUser} bytes` }, 413);
   }
 
-  const id = assetId();
+  const id = generateAccessKey(16);
   const key = assetObjectKey(owner.username, id);
   const contentType = safeContentType(body.contentType, name);
   const accessKey = generateAccessKey();
