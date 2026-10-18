@@ -22,8 +22,6 @@ function body(chunks: Uint8Array[], open = false) {
 const kb = (n: number) => new Uint8Array(n * 1024);
 
 describe("abandoning a peeked body", () => {
-  // workerd stalls the connection's next request after a partly read body is
-  // cancelled, so whatever already arrived is read out first.
   it.each(["replay stream", "peek handle"])("drains what already arrived before letting go (%s)", async (via) => {
     const b = body([kb(1), kb(4), kb(4), kb(1)]);
     const peeked = await peek(b.stream);
@@ -48,5 +46,14 @@ describe("abandoning a peeked body", () => {
     await peeked.cancel("rejected");
     expect(b.cancel).toHaveBeenCalledWith("rejected");
     expect(b.pulled()).toBeLessThanOrEqual(ABANDON_LIMITS.bytes / (64 * 1024) + 1);
+  });
+
+  it("drains once however many paths give up on the body", async () => {
+    const chunks = Array.from({ length: 4 * ABANDON_LIMITS.bytes / (64 * 1024) }, () => kb(64));
+    const b = body(chunks);
+    const peeked = await peek(b.stream);
+    await Promise.all([peeked.stream.cancel("a"), peeked.cancel("b"), peeked.cancel("c")]);
+    expect(b.pulled()).toBeLessThanOrEqual(ABANDON_LIMITS.bytes / (64 * 1024) + 1);
+    expect(b.cancel).toHaveBeenCalledOnce();
   });
 });

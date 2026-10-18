@@ -4,7 +4,7 @@
 import { ASSET_LIMITS } from "./config";
 import { requireOwner, type AppContext } from "./auth";
 import { checkAccessKey } from "./access";
-import { NOINDEX, clientIp } from "./http";
+import { NOINDEX, clientIp, readFields } from "./http";
 import {
   assetObjectKey,
   removeAsset,
@@ -75,12 +75,8 @@ export async function createAsset(c: AppContext): Promise<Response> {
   const owner = await requireOwner(c);
   if (owner instanceof Response) return owner;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json<Record<string, unknown>>();
-  } catch {
-    return c.json({ error: "JSON body required" }, 400);
-  }
+  const body = await readFields(c);
+  if (body instanceof Response) return body;
   const name = safeAssetName(body.name);
   const bytes = body.bytes;
   if (!name) return c.json({ error: "valid file name required (max 180 characters)" }, 400);

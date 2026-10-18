@@ -32,9 +32,7 @@ export function customDomainSetup(host: string): ProvisionResult {
 
 const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
 
-// A custom domain as the Host router will see it (lowercase, no trailing dot),
-// or null if it isn't a hostname or belongs to the apex, whose hosts never
-// reach the custom-domain lookup.
+// Routing looks domains up by the lowercased Host; apex hosts never reach that lookup.
 export function normalizeHost(raw: string, apexHost: string): string | null {
   const host = raw.trim().toLowerCase().replace(/\.$/, "");
   const apex = apexHost.toLowerCase();

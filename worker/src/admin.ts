@@ -5,7 +5,8 @@
 
 import { Hono } from "hono";
 import type { Env } from "./env";
-import { verifyAdmin, type AppContext } from "./auth";
+import { verifyAdmin } from "./auth";
+import { readFields } from "./http";
 import {
   listAll,
   listUsersPage,
@@ -32,24 +33,6 @@ import { isValidUsername } from "./ids";
 import { customDomainSetup, normalizeHost } from "./domains";
 
 const api = new Hono<{ Bindings: Env }>();
-
-type Fields<K extends string> = Record<K, string> & Record<string, unknown>;
-
-// The JSON body, with each of `required` a non-empty string — or the 400 to return.
-async function readFields<K extends string>(c: AppContext, ...required: K[]): Promise<Fields<K> | Response> {
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "JSON body required" }, 400);
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({ error: "JSON object required" }, 400);
-  const fields = body as Record<string, unknown>;
-  if (required.some(k => typeof fields[k] !== "string" || fields[k] === "")) {
-    return c.json({ error: `${required.join(", ")} required` }, 400);
-  }
-  return fields as Fields<K>;
-}
 
 api.use("*", async (c, next) => {
   if (!(await verifyAdmin(c.req.raw, c.env))) return c.json({ error: "forbidden" }, 403);

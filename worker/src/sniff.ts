@@ -20,13 +20,10 @@ export interface Peeked {
   cancel: (reason?: unknown) => Promise<void>;
 }
 
-// What abandoning a request body may still read before cancelling it.
 export const ABANDON_LIMITS = { bytes: 1024 * 1024, ms: 250 };
 
-// workerd stalls the connection's next request when a request body is read
-// partway and then cancelled (an untouched one is fine, it drains that itself).
-// So read out what is already in flight first. A body still arriving past these
-// bounds is cut off: a client mid-upload is not worth waiting for.
+// workerd stalls the connection's next request after a partly read body is
+// cancelled, so read out what already arrived first (within bounds).
 async function abandon(reader: ReadableStreamDefaultReader<Uint8Array>, reason: unknown): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<null>(resolve => (timer = setTimeout(() => resolve(null), ABANDON_LIMITS.ms)));
@@ -74,6 +71,9 @@ export async function peek(input: ReadableStream<Uint8Array>, n = SNIFF_BYTES): 
     off += slice.byteLength;
   }
 
+  let abandoning: Promise<void> | undefined;
+  const stop = (reason: unknown) => (abandoning ??= abandon(reader, reason));
+
   let replayed = false;
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -96,10 +96,10 @@ export async function peek(input: ReadableStream<Uint8Array>, n = SNIFF_BYTES): 
         if (value?.byteLength) return controller.enqueue(value);
       }
     },
-    cancel: reason => abandon(reader, reason),
+    cancel: stop,
   });
 
-  return { head, stream, cancel: reason => abandon(reader, reason) };
+  return { head, stream, cancel: stop };
 }
 
 /** gzip member header (RFC 1952): 1f 8b. */

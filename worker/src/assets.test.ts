@@ -104,3 +104,15 @@ describe("asset share page", () => {
     expect((await (await fixture()).get("/../nope")).status).toBe(404);
   });
 });
+
+describe("asset creation", () => {
+  it.each(["null", "[]", "{not json"])("answers a %s body with 400", async (raw) => {
+    const f = testBucket();
+    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0, legacySiteIds: [] }, true);
+    const res = await apexApp.fetch(new Request("https://example.com/asset?username=alice", {
+      method: "POST", body: raw, headers: { authorization: "Bearer owner", "content-type": "application/json" },
+    }), { ...f.env, ...env } as Env);
+    expect(res.status).toBe(400);
+    expect(f.put).not.toHaveBeenCalled();
+  });
+});
