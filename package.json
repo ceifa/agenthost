@@ -18,8 +18,5 @@
   "devDependencies": {
     "turbo": "^2.5.5",
     "typescript": "^5.7.3"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "workerd", "sharp", "@cloudflare/workerd-darwin-arm64", "@cloudflare/workerd-darwin-64"]
   }
 }

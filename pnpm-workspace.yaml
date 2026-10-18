@@ -2,3 +2,10 @@ packages:
   - worker
   - landing
   - admin
+
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - sharp
+  - "@cloudflare/workerd-darwin-arm64"
+  - "@cloudflare/workerd-darwin-64"
