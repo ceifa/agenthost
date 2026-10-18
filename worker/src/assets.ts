@@ -1,10 +1,8 @@
 // Direct asset uploads and download pages. Only JSON/HTML and R2 HEAD requests
 // cross the Worker; PUT/GET payloads use short-lived, object-scoped R2 URLs.
 
-import type { Context } from "hono";
-import type { Env } from "./env";
-import { ASSET_LIMITS, AUTH_COOKIE_MAX_AGE } from "./config";
-import { verifyOwner } from "./auth";
+import { ASSET_LIMITS } from "./config";
+import { checkAccessKey, requireOwner, type AppContext } from "./auth";
 import {
   assetMetaKey,
   assetObjectKey,
@@ -19,12 +17,9 @@ import {
   contentTypeFor,
   generateAccessKey,
   sha256Hex,
-  timingSafeEqual,
 } from "./ids";
 import { signDirectDownload, signDirectUpload } from "./r2-signed";
-import { assetDownloadHtml, assetPendingHtml, interstitialHtml, notFoundHtml } from "./templates";
-
-type Ctx = Context<{ Bindings: Env }>;
+import { assetDownloadHtml, assetPendingHtml, notFoundHtml } from "./templates";
 
 const ASSET_COOKIE_PREFIX = "aa_auth_";
 
@@ -62,32 +57,17 @@ function html(body: string, status = 200, headers?: Record<string, string>): Res
   });
 }
 
-function getCookie(req: Request, name: string): string | null {
-  const header = req.headers.get("cookie");
-  if (!header) return null;
-  for (const part of header.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq !== -1 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
-  }
-  return null;
-}
-
 function assetUrl(apex: string, username: string, id: string): string {
   return `https://${apex}/a/${encodeURIComponent(username)}/${encodeURIComponent(id)}`;
 }
 
-async function requireOwner(c: Ctx) {
-  const owner = await verifyOwner(c.req.raw, c.env);
-  return owner.ok ? owner.ctx : c.json({ error: owner.error }, owner.status);
-}
-
-async function ownedAsset(c: Ctx, username: string, id: string): Promise<AssetMeta | Response> {
+async function ownedAsset(c: AppContext, username: string, id: string): Promise<AssetMeta | Response> {
   const meta = await getAssetMeta(c.env.SITES, username, id);
   if (!meta) return c.json({ error: "asset not found" }, 404);
   return meta;
 }
 
-export async function createAsset(c: Ctx): Promise<Response> {
+export async function createAsset(c: AppContext): Promise<Response> {
   if (!(await c.env.PUBLISH_LIMITER.limit({ key: `asset:${clientIp(c.req.raw)}` })).success) {
     return c.json({ error: "rate limit exceeded — slow down and retry shortly" }, 429);
   }
@@ -167,7 +147,7 @@ export async function createAsset(c: Ctx): Promise<Response> {
   });
 }
 
-export async function completeAsset(c: Ctx): Promise<Response> {
+export async function completeAsset(c: AppContext): Promise<Response> {
   const owner = await requireOwner(c);
   if (owner instanceof Response) return owner;
   const id = c.req.param("id");
@@ -187,7 +167,7 @@ export async function completeAsset(c: Ctx): Promise<Response> {
   return c.json({ ok: true, url: assetUrl(c.env.APEX_HOST, owner.username, id), name: ready.name, bytes: ready.bytes });
 }
 
-export async function deleteAsset(c: Ctx): Promise<Response> {
+export async function deleteAsset(c: AppContext): Promise<Response> {
   const owner = await requireOwner(c);
   if (owner instanceof Response) return owner;
   const id = c.req.param("id");
@@ -201,39 +181,24 @@ export async function deleteAsset(c: Ctx): Promise<Response> {
   return c.json({ ok: true });
 }
 
-export async function serveAsset(c: Ctx): Promise<Response> {
+export async function serveAsset(c: AppContext): Promise<Response> {
   const username = c.req.param("username");
   const id = c.req.param("id");
   if (!username || !id) return html(notFoundHtml(), 404);
   const meta = await getAssetMeta(c.env.SITES, username, id);
   if (!meta) return html(notFoundHtml(), 404);
 
-  const req = c.req.raw;
-  const url = new URL(req.url);
   let accessKey: string | null = null;
   if (!meta.public) {
-    const cookieName = ASSET_COOKIE_PREFIX + id;
-    const cookie = getCookie(req, cookieName);
-    if (cookie && timingSafeEqual(await sha256Hex(cookie), meta.keyHash)) {
-      accessKey = cookie;
-    } else {
-      const key = url.searchParams.get("k");
-      if (key && timingSafeEqual(await sha256Hex(key), meta.keyHash)) {
-        const clean = new URL(url);
-        clean.searchParams.delete("k");
-        const response = new Response(null, { status: 302, headers: { location: clean.pathname + clean.search } });
-        response.headers.append(
-          "set-cookie",
-          `${cookieName}=${key}; Path=/a/${encodeURIComponent(username)}/${encodeURIComponent(id)}; Secure; HttpOnly; SameSite=Lax; Max-Age=${AUTH_COOKIE_MAX_AGE}`,
-        );
-        return response;
-      }
-      const wrong = !!key;
-      if (wrong && !(await c.env.ACCESS_LIMITER.limit({ key: `asset:${clientIp(req)}:${id}` })).success) {
-        return html(interstitialHtml({ siteId: meta.name, apexHost: c.env.APEX_HOST, wrong: true }), 429);
-      }
-      return html(interstitialHtml({ siteId: meta.name, apexHost: c.env.APEX_HOST, wrong }), 401);
-    }
+    const gate = await checkAccessKey(c.req.raw, c.env, {
+      keyHash: meta.keyHash,
+      label: meta.name,
+      cookieName: ASSET_COOKIE_PREFIX + id,
+      cookiePath: `/a/${encodeURIComponent(username)}/${encodeURIComponent(id)}`,
+      limiterKey: `asset:${id}`,
+    });
+    if (gate instanceof Response) return gate;
+    accessKey = gate;
   }
 
   if (meta.status !== "ready") return html(assetPendingHtml(meta.name), 425);
