@@ -160,13 +160,14 @@
       <p class="empty">No sites published.</p>
     {:else}
       <div class="table sites">
-        <div class="tr th"><span>Address</span><span class="num">Size</span><span class="num">Files</span><span>Deployed</span><span></span></div>
+        <div class="tr th"><span>Address</span><span>Visibility</span><span class="num">Size</span><span class="num">Files</span><span>Deployed</span><span></span></div>
         {#each sites as s (s.siteId)}
           <div class="tr" class:down={s.tombstone} class:focus={focusSite === s.siteId}>
             <span class="addr">
               <a href="https://{siteHost(user.username, s.siteId)}/" target="_blank" rel="noreferrer"><span class="dim">{user.username}-</span>{s.siteId}<span class="dim">.{APEX}</span></a>
-              {#if s.tombstone}<span class="tag red">taken down</span>{:else if s.public}<span class="tag">public</span>{/if}
+              {#if s.tombstone}<span class="tag red">taken down</span>{/if}
             </span>
+            <span class:dim={!s.public}>{s.public ? "Public" : "Private"}</span>
             <span class="num">{fmtBytes(s.bytes)}</span>
             <span class="num">{s.fileCount}</span>
             <span title={fmtDate(s.lastDeployAt)}>{ago(s.lastDeployAt)}</span>
@@ -230,7 +231,7 @@
 </article>
 
 <style>
-  article { padding: 28px 36px 64px; max-width: 1240px; }
+  article { padding: 28px 36px 64px; }
 
   .head { display: flex; align-items: flex-start; gap: 14px; }
   .who { flex: 1; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; min-width: 0; }
@@ -253,7 +254,7 @@
 
   /* Rows are subgrids so every column lines up with its header. */
   .table { display: grid; column-gap: 16px; border-top: 1px solid var(--line); font-size: 14px; }
-  .sites { grid-template-columns: minmax(0, 1fr) auto auto auto auto; }
+  .sites { grid-template-columns: minmax(0, 1fr) auto auto auto auto auto; }
   .assets { grid-template-columns: minmax(0, 1fr) auto minmax(0, 180px) auto auto; }
   .tr { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; padding: 9px 10px; border-bottom: 1px solid var(--line); border-left: 2px solid transparent; }
   .th { color: var(--dim); font-size: 12px; padding-top: 7px; padding-bottom: 7px; }
@@ -285,10 +286,12 @@
     article { padding: 20px 16px 48px; }
     .head { flex-wrap: wrap; }
     h1 { font-size: 22px; }
-    .sites, .assets { grid-template-columns: 1fr auto; }
+    .sites { grid-template-columns: auto 1fr auto; }
+    .assets { grid-template-columns: 1fr auto; }
     .tr { row-gap: 4px; }
     .th { display: none !important; }
     .tr > .addr { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }
-    .tr > span:nth-child(3), .tr > span:nth-child(4) { display: none; }
+    .sites .tr > span:nth-child(4), .sites .tr > span:nth-child(5),
+    .assets .tr > span:nth-child(3), .assets .tr > span:nth-child(4) { display: none; }
   }
 </style>
