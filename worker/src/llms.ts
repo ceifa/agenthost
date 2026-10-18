@@ -29,7 +29,6 @@ tar cf - -C ./dist . | curl -s --data-binary @- \\
 }
 The key in url comes back only on a site's first publish; redeploys return the bare
 url, so keep the first one.
-}
 
 ## Redeploy the SAME url (needs ownerToken)
 tar cf - -C ./dist . | curl --data-binary @- \\
