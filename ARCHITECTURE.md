@@ -608,7 +608,7 @@ Public-by-default publishing means day-one abuse risk. Controls, **no Durable Ob
 TypeScript · **Hono** in the Worker · **Astro** for the landing · **Svelte** for the admin ·
 **rolldown** to minify the browser scripts the Worker inlines · Wrangler to deploy. The landing and admin are each built to static output and copied into
 `public/`, which the Worker serves via Static Assets — so it's still **one `wrangler
-deploy`**. No test framework, linter, or formatter — kept deliberately lean.
+deploy`**. Vitest for the Worker's unit tests; no linter or formatter — kept deliberately lean.
 
 ```
 agenthost/
@@ -616,17 +616,23 @@ agenthost/
 ├─ pnpm-workspace.yaml
 ├─ turbo.json                   # build/deploy task graph across packages
 ├─ worker/                      # (2) THE BACKEND — the entire server (Hono on Workers)
-│  ├─ src/index.ts              # Hono app: apex→landing/publish/admin ; *→serve ; custom-domain→serve
+│  ├─ src/index.ts              # fetch entry: routes by Host (apex / admin / site subdomain / custom domain) + cron
+│  ├─ src/apex.ts               # apex Hono app: /publish, owner key endpoints, /llms.txt, /skill/*, landing fallthrough
 │  ├─ src/publish.ts            # streaming files → bounded R2 puts → delete orphans → merged metadata commit
 │  ├─ src/serve.ts              # host→username, fresh metadata, gen-keyed Cache API, R2 get, /_gen probe, widget + live-reload inject
+│  ├─ src/access.ts             # access-key gate shared by private sites and assets (cookie, ?k login, throttled prompt)
+│  ├─ src/auth.ts               # owner-token check and Cloudflare Access JWT verification
+│  ├─ src/storage.ts            # R2 key layout, metadata records, paginated listings, usage
+│  ├─ src/markdown.ts           # markdown → docs shell (sidebar, TOC, pager); templates.ts holds the HTML
 │  ├─ src/client/*.ts           # browser scripts (live reload, copy link, docs shell), readable TS with DOM types
-│  ├─ src/client/gen/           # ↑ minified into `export default "<js>"` modules by scripts/build-client.mjs (gitignored)
+│  ├─ src/client/gen/           # ↑ minified into `export default "<js>"` modules by scripts/codegen.mjs (gitignored)
 │  ├─ src/assets.ts             # asset metadata/access pages + direct upload completion
 │  ├─ src/r2-signed.ts          # short-lived exact-size R2 PUT and direct GET signing
 │  ├─ src/skill.ts              # /skill/* — skills/agenthost with agenthost.page → APEX_HOST
 │  ├─ src/admin.ts              # admin JSON routes (Hono sub-router, behind Cloudflare Access)
-│  ├─ src/ids.ts                # username gen, reserved-word denylist, content-type guess
-│  ├─ src/tar.ts                # streaming gzip+tar reader (no full buffering)
+│  ├─ src/sweep.ts              # nightly retention sweep
+│  ├─ src/ids.ts                # username/id/secret gen, reserved-word denylist, site URLs, content-type guess
+│  ├─ src/tar.ts                # streaming tar reader (no full buffering); gunzip.ts inflates
 │  ├─ src/sniff.ts              # peek the first 1 KB → archive vs md vs html (Content-Type optional)
 │  └─ wrangler.jsonc            # r2=SITES; assets binding + run_worker_first; routes; cron
 ├─ landing/                     # (1) LANDING PAGE for agents — Astro, static build → landing/dist
@@ -643,7 +649,4 @@ agenthost/
 One deployable. The build copies `landing/dist` and `admin/dist` into `public/`; the Worker
 serves both via Static Assets and routes everything else by Host.
 
-**Contract & types:** the API is defined once as a shared zod schema (validation +
-inferred types + optional OpenAPI/MCP schema), and the Worker exports its Hono `AppType` so
-the admin consumes it via the typed `hc` client — no codegen, contract drift caught
-at build time. Dev runs local-first against Miniflare-simulated R2/Cache.
+Dev runs local-first against Miniflare-simulated R2/Cache.

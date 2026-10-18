@@ -2,7 +2,7 @@
 
 import { LIVE } from "./config";
 // Browser scripts, written readably in ./client/*.ts and minified into strings by
-// scripts/build-client.mjs. Each reads its parameters from data- attributes on
+// scripts/codegen.mjs. Each reads its parameters from data- attributes on
 // its own <script> tag.
 import LIVE_JS from "./client/gen/live";
 import COPY_LINK_JS from "./client/gen/copy-link";

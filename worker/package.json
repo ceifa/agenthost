@@ -5,12 +5,12 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "build:client": "node scripts/build-client.mjs",
-    "dev": "pnpm run build:client && node ../scripts/wrangler.mjs dev",
-    "deploy": "pnpm run build:client && node ../scripts/wrangler.mjs deploy",
+    "codegen": "node scripts/codegen.mjs",
+    "dev": "pnpm run codegen && node ../scripts/wrangler.mjs dev",
+    "deploy": "pnpm run codegen && node ../scripts/wrangler.mjs deploy",
     "types": "node ../scripts/wrangler.mjs types",
-    "typecheck": "pnpm run build:client && tsc --noEmit && tsc --noEmit -p src/client",
-    "test": "pnpm run build:client && vitest run"
+    "typecheck": "pnpm run codegen && tsc --noEmit && tsc --noEmit -p src/client",
+    "test": "pnpm run codegen && vitest run"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",

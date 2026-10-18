@@ -1,6 +1,6 @@
 // Live reload for every HTML page the Worker serves.
 //
-// The Worker inlines this script (minified by scripts/build-client.mjs) next to
+// The Worker inlines this script (minified by scripts/codegen.mjs) next to
 // the Share widget. The <script> tag carries the page's version tag in
 // data-version and the tuning constants (LIVE in ../config.ts) as JSON in
 // data-cfg, so the constants have one source of truth.
