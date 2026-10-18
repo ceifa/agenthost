@@ -582,10 +582,12 @@ A **Cron Trigger** on the same Worker runs nightly and deletes free-tier sites w
 `lastDeployAt` is older than 15 days — keeping R2 from bloating with abandoned sites.
 Redeploying resets the clock (`lastDeployAt` bumps every publish). **Paid users
 (`plan === "paid"`) are skipped — infinite retention.** Deleting a site = `R2.list` its
-prefix + delete all keys and its flat metadata record; the `_users/{username}` record
-is left in place. Users, sites and assets are processed one cursor page at a time; the
-ordered user/asset inventories are merged without a global plan map or extra profile
-GETs. Deletions are idempotent and logged with a bounded sample plus full counts. A failed
+prefix + delete all keys and its flat metadata record. A free account whose
+`createdAt` is older than 90 days and has no site or asset left after the pass loses its
+`_users/{username}` record too; its owner token then gets a 403 and the agent starts a
+new account. The 90-day floor keeps a brand-new account mid-first-publish safe. Users,
+sites and assets are processed one cursor page at a time; the ordered user/asset
+inventories are merged without a global plan map or extra profile GETs. Deletions are idempotent and logged with a bounded sample plus full counts. A failed
 cron retries from the beginning on the next run; there is no durable checkpoint PUT.
 Paid ready assets are retained, but abandoned pending uploads expire after one day.
 
