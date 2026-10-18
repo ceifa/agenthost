@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import worker from "./index";
-import { handleAdmin } from "./admin";
-import { getDomain, getUser } from "./storage";
+import worker from "../src/index";
+import { handleAdmin } from "../src/admin";
+import { getDomain, getUser } from "../src/storage";
 import { testBucket } from "./test-bucket";
 
 afterEach(() => vi.unstubAllGlobals());

@@ -336,7 +336,7 @@ R2 operations. The serving regression tests enforce these storage-operation budg
 | Static asset revalidation / range | 4 | 2 |
 
 These are operation counts, not production latency measurements. Run
-`pnpm -C worker exec vitest run src/serve-performance.test.ts` to check the budgets,
+`pnpm -C worker exec vitest run test/serve-performance.test.ts` to check the budgets,
 generation invalidation, access changes, streaming, and conditional-cache delegation.
 
 **`noindex` on all hosted sites.** Every response served from a user subdomain or custom

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Env } from "./env";
-import worker from "./index";
-import { apexApp } from "./apex";
+import type { Env } from "../src/env";
+import worker from "../src/index";
+import { apexApp } from "../src/apex";
 
-vi.mock("./apex", () => ({
+vi.mock("../src/apex", () => ({
   apexApp: { fetch: vi.fn(() => new Response("apex")) },
 }));
 

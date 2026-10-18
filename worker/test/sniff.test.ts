@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { peek } from "./sniff";
+import { peek } from "../src/sniff";
 
 // A request body: `chunks` arrive, then the body ends, or stays open if `open`.
 function body(chunks: Uint8Array[], open = false) {

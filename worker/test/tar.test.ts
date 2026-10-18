@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTar, TarLimitError, type TarEntry } from "./tar";
+import { parseTar, TarLimitError, type TarEntry } from "../src/tar";
 import { enc, header, tar } from "./test-tar";
 
 // Chunks are views of the one source buffer, like a request body's.

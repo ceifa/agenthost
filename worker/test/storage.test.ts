@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { assetUsage, getMeta, getGen, getUser, putMeta, putUser, listSitesPage, listUsersPage, userUsage, mapBounded } from "./storage";
-import { handleAdmin } from "./admin";
-import { runRetentionSweep } from "./sweep";
+import { assetUsage, getMeta, getGen, getUser, putMeta, putUser, listSitesPage, listUsersPage, userUsage, mapBounded } from "../src/storage";
+import { handleAdmin } from "../src/admin";
+import { runRetentionSweep } from "../src/sweep";
 import { testBucket } from "./test-bucket";
 
 const user = { tokenHash: "hash", plan: "free" as const, createdAt: 0, legacySiteIds: [] as string[] };

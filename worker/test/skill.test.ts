@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Env } from "./env";
-import { apexApp } from "./apex";
-import files from "./gen/skill";
+import type { Env } from "../src/env";
+import { apexApp } from "../src/apex";
+import files from "../src/gen/skill";
 
 const landing = new Response("landing", { status: 404 });
 const env = (apexHost: string) => ({ APEX_HOST: apexHost, ASSETS: { fetch: async () => landing.clone() } }) as unknown as Env;

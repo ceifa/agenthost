@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { gunzipStream } from "./gunzip";
-import { peek } from "./sniff";
+import { gunzipStream } from "../src/gunzip";
+import { peek } from "../src/sniff";
 import { gzip } from "./test-tar";
 
 // A body arriving in network-sized pieces, optionally with empty chunks between.

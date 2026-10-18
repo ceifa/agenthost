@@ -8,7 +8,7 @@
       "highlight.js/lib/languages/*": ["./src/shims/highlight-language.d.ts"]
     }
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts"],
   // Browser scripts have their own tsconfig (DOM lib); only their built output belongs here.
   "exclude": ["src/client/*.ts"]
 }

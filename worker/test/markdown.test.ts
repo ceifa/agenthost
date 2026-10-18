@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { docHref, parseSummary, renderDoc, readMarkdownSource } from "./markdown";
-import { RENDER_LIMITS } from "./config";
+import { docHref, parseSummary, renderDoc, readMarkdownSource } from "../src/markdown";
+import { RENDER_LIMITS } from "../src/config";
 
 const index = (files: string[], nav: ReturnType<typeof parseSummary> | null = null) => ({ files, nav });
 

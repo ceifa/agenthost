@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { apexApp } from "./apex";
-import { sha256Hex } from "./ids";
+import { apexApp } from "../src/apex";
+import { sha256Hex } from "../src/ids";
 import { testBucket } from "./test-bucket";
-import { attachmentDisposition, safeAssetName } from "./assets";
-import { signDirectDownload, signDirectUpload } from "./r2-signed";
-import { assetDownloadHtml } from "./templates";
-import type { Env } from "./env";
+import { attachmentDisposition, safeAssetName } from "../src/assets";
+import { signDirectDownload, signDirectUpload } from "../src/r2-signed";
+import { assetDownloadHtml } from "../src/templates";
+import type { Env } from "../src/env";
 
 const env = {
   R2_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",

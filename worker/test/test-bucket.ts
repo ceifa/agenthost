@@ -1,7 +1,7 @@
 // In-memory R2 fixture: list ordering, delimiter/cursor behavior and metadata
 // projection matter to these tests just as much as object bodies do.
 import { vi } from "vitest";
-import type { Env } from "./env";
+import type { Env } from "../src/env";
 
 interface Stored { body: string; customMetadata?: Record<string, string>; httpMetadata?: R2HTTPMetadata }
 export function testBucket(pageSize = 1000) {

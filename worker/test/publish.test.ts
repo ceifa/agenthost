@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { handlePublish } from "./publish";
-import { getMeta, getUser, userUsage } from "./storage";
-import { sha256Hex } from "./ids";
-import { LIMITS } from "./config";
+import { handlePublish } from "../src/publish";
+import { getMeta, getUser, userUsage } from "../src/storage";
+import { sha256Hex } from "../src/ids";
+import { LIMITS } from "../src/config";
 import { testBucket } from "./test-bucket";
 import { gzip, header, tar } from "./test-tar";
 
