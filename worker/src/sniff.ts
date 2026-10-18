@@ -20,6 +20,26 @@ export interface Peeked {
   cancel: (reason?: unknown) => Promise<void>;
 }
 
+// workerd stalls the connection's next request after a partly read body is
+// cancelled, so read out what already arrived first (up to 1 MiB / 250 ms).
+async function abandon(reader: ReadableStreamDefaultReader<Uint8Array>, reason: unknown): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<null>(resolve => (timer = setTimeout(() => resolve(null), 250)));
+  try {
+    for (let left = 1024 * 1024; left > 0;) {
+      const next = await Promise.race([reader.read(), timeout]);
+      if (next === null) break;
+      if (next.done) return;
+      left -= next.value?.byteLength ?? 0;
+    }
+  } catch {
+    return; // the body errored: nothing left to drain
+  } finally {
+    clearTimeout(timer);
+  }
+  await reader.cancel(reason).catch(() => {});
+}
+
 // Reads up to `n` bytes *without* consuming them: the returned stream replays the
 // buffered head and then hands out the untouched rest, so both the single-file
 // reader and the tar parser still see a complete body.
@@ -49,6 +69,9 @@ export async function peek(input: ReadableStream<Uint8Array>, n = SNIFF_BYTES): 
     off += slice.byteLength;
   }
 
+  let abandoning: Promise<void> | undefined;
+  const cancel = (reason?: unknown) => (abandoning ??= abandon(reader, reason));
+
   let replayed = false;
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -71,12 +94,10 @@ export async function peek(input: ReadableStream<Uint8Array>, n = SNIFF_BYTES): 
         if (value?.byteLength) return controller.enqueue(value);
       }
     },
-    async cancel(reason) {
-      await reader.cancel(reason);
-    },
+    cancel,
   });
 
-  return { head, stream, cancel: reason => reader.cancel(reason) };
+  return { head, stream, cancel };
 }
 
 /** gzip member header (RFC 1952): 1f 8b. */

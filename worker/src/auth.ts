@@ -1,9 +1,14 @@
-// Auth helpers: ownerToken verification (data-plane) and Access email
-// verification (admin).
+// Auth helpers: ownerToken verification (data-plane), the access-key gate on
+// private sites and assets, and Access email verification (admin).
 
+import type { Context } from "hono";
 import type { Env } from "./env";
+import { AUTH_COOKIE_MAX_AGE } from "./config";
 import { getUser, type UserRecord } from "./storage";
-import { sha256Hex, timingSafeEqual } from "./ids";
+import { sha256Hex, timingSafeEqual, clientIp } from "./ids";
+import { interstitialHtml } from "./templates";
+
+export type AppContext = Context<{ Bindings: Env }>;
 
 export interface OwnerCtx {
   username: string;
@@ -35,6 +40,51 @@ export async function verifyOwner(req: Request, env: Env): Promise<OwnerResult> 
     return { ok: false, status: 403, error: "invalid username or owner token" };
   }
   return { ok: true, ctx: { username, user } };
+}
+
+export async function requireOwner(c: AppContext): Promise<OwnerCtx | Response> {
+  const owner = await verifyOwner(c.req.raw, c.env);
+  return owner.ok ? owner.ctx : c.json({ error: owner.error }, owner.status);
+}
+
+function getCookie(req: Request, name: string): string | null {
+  const header = req.headers.get("cookie");
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq !== -1 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return null;
+}
+
+// Returns the reader's access key, or the response to send instead: a matching
+// ?k logs the visitor in via cookie, then redirects to drop the key from the
+// URL; anything else gets the password prompt.
+export async function checkAccessKey(
+  req: Request,
+  env: Env,
+  gate: { keyHash: string; label: string; cookieName: string; cookiePath: string; limiterKey: string },
+): Promise<string | Response> {
+  const matches = async (key: string) => timingSafeEqual(await sha256Hex(key), gate.keyHash);
+  const cookie = getCookie(req, gate.cookieName);
+  if (cookie && await matches(cookie)) return cookie;
+
+  const url = new URL(req.url);
+  const k = url.searchParams.get("k");
+  const noindex = { "x-robots-tag": "noindex, nofollow" };
+  if (k && await matches(k)) {
+    url.searchParams.delete("k");
+    const res = new Response(null, { status: 302, headers: { ...noindex, location: url.pathname + url.search } });
+    res.headers.append("set-cookie", `${gate.cookieName}=${k}; Path=${gate.cookiePath}; Secure; HttpOnly; SameSite=Lax; Max-Age=${AUTH_COOKIE_MAX_AGE}`);
+    return res;
+  }
+  // Wrong key: throttle guessing before re-prompting. (The keyspace already
+  // makes brute force infeasible; this also caps the invocation cost.)
+  const limited = !!k && !(await env.ACCESS_LIMITER.limit({ key: `${clientIp(req)}:${gate.limiterKey}` })).success;
+  return new Response(interstitialHtml({ siteId: gate.label, apexHost: env.APEX_HOST, wrong: !!k }), {
+    status: limited ? 429 : 401,
+    headers: { ...noindex, "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
 }
 
 // Admin auth: verify the *signed* Access JWT (Cf-Access-Jwt-Assertion), not the

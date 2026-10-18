@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import LIVE_JS from "./client/gen/live";
-import { LIVE } from "./config";
+import LIVE_JS from "../src/client/gen/live";
+import { LIVE } from "../src/config";
 
 function browser(coordinate = true) {
   let now = 1_000_000;

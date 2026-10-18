@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { cacheKeyPath, versionTag, genResponse } from "./serve";
-import { liveScript } from "./templates";
-import LIVE_JS from "./client/gen/live";
-import { RENDER_VERSION, LIVE } from "./config";
+import { cacheKeyPath, versionTag, genResponse } from "../src/serve";
+import { liveScript } from "../src/templates";
+import LIVE_JS from "../src/client/gen/live";
+import { RENDER_VERSION, LIVE } from "../src/config";
 
 describe("edge cache key", () => {
   const md = { kind: "md" as const, relPath: "guide/intro.md" };

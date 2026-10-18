@@ -148,14 +148,22 @@ export const putDomain = (b: R2Bucket, host: string, rec: DomainRecord) => putJs
 export const getAssetMeta = (b: R2Bucket, u: string, id: string) => getJson<AssetMeta>(b, assetMetaKey(u, id));
 export const putAssetMeta = (b: R2Bucket, u: string, id: string, meta: AssetMeta) => putJson(b, assetMetaKey(u, id), meta);
 
-// R2's current API supports include, even though the pinned types predate it.
-export type MetadataListOptions = R2ListOptions & { include?: ("customMetadata" | "httpMetadata")[] };
-export async function* objectPages(b: R2Bucket, prefix: string, opts?: MetadataListOptions): AsyncGenerator<R2Objects> {
-  let cursor = opts?.cursor;
+export async function* objectPages(b: R2Bucket, prefix: string): AsyncGenerator<R2Objects> {
+  let cursor: string | undefined;
   do {
-    const page = await b.list({ ...opts, prefix, cursor, limit: opts?.limit ?? 1000 });
+    const page = await b.list({ prefix, cursor, limit: 1000 });
     yield page;
     cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+}
+
+// Every record of a paged listing, one page in memory at a time.
+export async function* paginate<T>(page: (cursor?: string) => Promise<RecordPage<T>>): AsyncGenerator<T> {
+  let cursor: string | undefined;
+  do {
+    const next = await page(cursor);
+    yield* next.items;
+    cursor = next.cursor;
   } while (cursor);
 }
 
@@ -182,15 +190,9 @@ export async function mapBounded<T, U>(items: T[], map: (item: T) => Promise<U>,
   return result;
 }
 
-// Follows pagination cursors to return every key under a prefix.
-export async function listAll(b: R2Bucket, prefix: string, opts?: MetadataListOptions): Promise<R2Object[]> {
+export async function listAll(b: R2Bucket, prefix: string): Promise<R2Object[]> {
   const out: R2Object[] = [];
-  let cursor: string | undefined;
-  do {
-    const res = await b.list({ ...opts, prefix, cursor, limit: 1000 });
-    out.push(...res.objects);
-    cursor = res.truncated ? res.cursor : undefined;
-  } while (cursor);
+  for await (const page of objectPages(b, prefix)) out.push(...page.objects);
   return out;
 }
 
@@ -198,7 +200,7 @@ export interface RecordPage<T> { items: T[]; cursor?: string }
 export interface SiteRecord { username: string; siteId: string; meta: SiteMeta }
 
 export async function listUsersPage(b: R2Bucket, cursor?: string): Promise<RecordPage<{ username: string; user: UserRecord }>> {
-  const page = await b.list({ prefix: "_users/", cursor, limit: 1000, include: ["customMetadata"] } as MetadataListOptions);
+  const page = await b.list({ prefix: "_users/", cursor, limit: 1000, include: ["customMetadata"] });
   const records = await mapBounded(page.objects, async obj => {
     const user = await indexedJson<UserRecord>(b, obj);
     return user ? { username: obj.key.slice("_users/".length), user } : null;
@@ -211,7 +213,8 @@ export async function listUsersPage(b: R2Bucket, cursor?: string): Promise<Recor
 // callers and validated before being passed to R2.
 function siteCursor(value?: string): { phase: "flat" | "legacy"; cursor?: string; offset: number } {
   if (!value) return { phase: "flat", offset: 0 };
-  const parsed = JSON.parse(atob(value)) as { phase: string; cursor?: string; offset: number };
+  let parsed: { phase: string; cursor?: string; offset: number };
+  try { parsed = JSON.parse(atob(value)); } catch { throw new Error("invalid cursor"); }
   if (!parsed || typeof parsed !== "object" || (parsed.phase !== "flat" && parsed.phase !== "legacy") || !Number.isSafeInteger(parsed.offset) || parsed.offset < 0 || (parsed.cursor !== undefined && typeof parsed.cursor !== "string")) throw new Error("invalid cursor");
   return parsed as { phase: "flat" | "legacy"; cursor?: string; offset: number };
 }
@@ -240,7 +243,7 @@ export async function listSitesPage(b: R2Bucket, username: string, user: UserRec
     return { items: records.filter((r): r is SiteRecord => r !== null), cursor: offset < user.legacySiteIds.length ? encodeSiteCursor("legacy", undefined, offset) : undefined };
   }
   const prefix = `_sites/${username}/`;
-  const page = await b.list({ prefix, cursor: state.cursor, limit: 1000, include: ["customMetadata"] } as MetadataListOptions);
+  const page = await b.list({ prefix, cursor: state.cursor, limit: 1000, include: ["customMetadata"] });
   const records = await mapBounded(page.objects.filter(obj => obj.key.slice(prefix.length) !== exceptSiteId), async obj => {
     const meta = await indexedJson<SiteMeta>(b, obj);
     return meta ? { username, siteId: obj.key.slice(prefix.length), meta } : null;
@@ -249,14 +252,8 @@ export async function listSitesPage(b: R2Bucket, username: string, user: UserRec
   return { items: records.filter((r): r is SiteRecord => r !== null), cursor: next };
 }
 
-export async function* siteRecords(b: R2Bucket, username: string, user: UserRecord, exceptSiteId?: string): AsyncGenerator<SiteRecord> {
-  let cursor: string | undefined;
-  do {
-    const page = await listSitesPage(b, username, user, cursor, exceptSiteId);
-    yield* page.items;
-    cursor = page.cursor;
-  } while (cursor);
-}
+export const siteRecords = (b: R2Bucket, username: string, user: UserRecord, exceptSiteId?: string) =>
+  paginate(cursor => listSitesPage(b, username, user, cursor, exceptSiteId));
 
 // R2 caps deletes at 1000 keys per call.
 export async function deleteKeys(b: R2Bucket, keys: string[]): Promise<void> {
@@ -282,29 +279,22 @@ export async function deleteSite(b: R2Bucket, username: string, siteId: string):
 }
 
 export async function listAssetsPage(b: R2Bucket, username?: string, cursor?: string): Promise<RecordPage<AssetMeta>> {
-  const page = await b.list({ prefix: username ? userAssetsPrefix(username) : "_assets/", cursor, limit: 1000, include: ["customMetadata"] } as MetadataListOptions);
+  const page = await b.list({ prefix: username ? userAssetsPrefix(username) : "_assets/", cursor, limit: 1000, include: ["customMetadata"] });
   const records = await mapBounded(page.objects.filter(obj => obj.key.endsWith("/_meta")), obj => indexedJson<AssetMeta>(b, obj));
   return { items: records.filter((r): r is AssetMeta => r !== null), cursor: page.truncated ? page.cursor : undefined };
 }
 
+// Without a username: every user's assets, in key order.
+export const assetRecords = (b: R2Bucket, username?: string) => paginate(cursor => listAssetsPage(b, username, cursor));
+
 export async function listAssetMetas(b: R2Bucket, username?: string): Promise<AssetMeta[]> {
-  const result: AssetMeta[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await listAssetsPage(b, username, cursor);
-    result.push(...page.items);
-    cursor = page.cursor;
-  } while (cursor);
-  return result;
+  const out: AssetMeta[] = [];
+  for await (const meta of assetRecords(b, username)) out.push(meta);
+  return out;
 }
 
 export async function assetUsage(b: R2Bucket, username: string): Promise<number> {
   let total = 0;
-  let cursor: string | undefined;
-  do {
-    const page = await listAssetsPage(b, username, cursor);
-    for (const meta of page.items) total += meta.bytes ?? 0;
-    cursor = page.cursor;
-  } while (cursor);
+  for await (const meta of assetRecords(b, username)) total += meta.bytes ?? 0;
   return total;
 }

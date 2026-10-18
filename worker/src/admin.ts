@@ -5,7 +5,7 @@
 
 import { Hono } from "hono";
 import type { Env } from "./env";
-import { verifyAdmin } from "./auth";
+import { verifyAdmin, type AppContext } from "./auth";
 import {
   listAll,
   listUsersPage,
@@ -26,7 +26,7 @@ import {
   mapBounded,
 } from "./storage";
 import { isValidUsername } from "./ids";
-import { customDomainSetup } from "./domains";
+import { customDomainHost, customDomainSetup } from "./domains";
 
 const api = new Hono<{ Bindings: Env }>();
 
@@ -55,7 +55,7 @@ api.get("/sites", async (c) => {
   let page;
   try { page = await listSitesPage(c.env.SITES, username, user, c.req.query("cursor")); }
   catch (error) {
-    if (error instanceof Error && (error.message === "invalid cursor" || error instanceof SyntaxError || error.name === "InvalidCharacterError")) return c.json({ error: "invalid cursor" }, 400);
+    if (error instanceof Error && error.message === "invalid cursor") return c.json({ error: "invalid cursor" }, 400);
     throw error;
   }
   const sites = page.items.map(({ siteId, meta: m }) => ({
@@ -95,8 +95,17 @@ api.delete("/asset", async (c) => {
   return c.json({ ok: true });
 });
 
+// The JSON body, if it's an object whose `fields` are all non-empty strings.
+async function readFields<K extends string>(c: AppContext, ...fields: K[]): Promise<(Record<K, string> & Record<string, unknown>) | null> {
+  const body = await c.req.json<Record<string, unknown> | null>().catch(() => null);
+  if (!body || typeof body !== "object" || fields.some(f => typeof body[f] !== "string" || body[f] === "")) return null;
+  return body as Record<K, string> & Record<string, unknown>;
+}
+
 api.post("/plan", async (c) => {
-  const { username, plan } = await c.req.json<{ username: string; plan: "free" | "paid" }>();
+  const body = await readFields(c, "username", "plan");
+  if (!body) return c.json({ error: "username and plan required" }, 400);
+  const { username, plan } = body;
   const user = await getUser(c.env.SITES, username);
   if (!user) return c.json({ error: "unknown username" }, 404);
   if (plan !== "free" && plan !== "paid") return c.json({ error: "bad plan" }, 400);
@@ -105,7 +114,9 @@ api.post("/plan", async (c) => {
 });
 
 api.post("/rename", async (c) => {
-  const { from, to } = await c.req.json<{ from: string; to: string }>();
+  const body = await readFields(c, "from", "to");
+  if (!body) return c.json({ error: "from and to required" }, 400);
+  const { from, to } = body;
   if (!isValidUsername(to)) return c.json({ error: "invalid target username" }, 400);
   if (await c.env.SITES.head(userKey(to))) return c.json({ error: "username taken" }, 409);
   const user = await getUser(c.env.SITES, from);
@@ -135,11 +146,10 @@ api.post("/rename", async (c) => {
 });
 
 api.post("/takedown", async (c) => {
-  const { username, siteId, tombstone = true } = await c.req.json<{
-    username: string;
-    siteId: string;
-    tombstone?: boolean;
-  }>();
+  const body = await readFields(c, "username", "siteId");
+  if (!body) return c.json({ error: "username and siteId required" }, 400);
+  const { username, siteId, tombstone = true } = body;
+  if (typeof tombstone !== "boolean") return c.json({ error: "tombstone must be a boolean" }, 400);
   const meta = await getMeta(c.env.SITES, username, siteId);
   if (!meta) return c.json({ error: "site not found" }, 404);
   meta.tombstone = tombstone;
@@ -148,8 +158,11 @@ api.post("/takedown", async (c) => {
 });
 
 api.post("/domain", async (c) => {
-  const { host, username, siteId } = await c.req.json<{ host: string; username: string; siteId: string }>();
-  if (!host || !username || !siteId) return c.json({ error: "host, username, siteId required" }, 400);
+  const body = await readFields(c, "host", "username", "siteId");
+  if (!body) return c.json({ error: "host, username, siteId required" }, 400);
+  const { username, siteId } = body;
+  const host = customDomainHost(body.host, c.env.APEX_HOST);
+  if (!host) return c.json({ error: `invalid custom domain: ${body.host}` }, 400);
   const user = await getUser(c.env.SITES, username);
   if (!user) return c.json({ error: "unknown username" }, 404);
 

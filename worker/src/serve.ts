@@ -3,22 +3,12 @@
 // R2 get / markdown render → Share-widget + live-reload injection → noindex.
 
 import type { Env } from "./env";
-import { AUTH_COOKIE_PREFIX, AUTH_COOKIE_MAX_AGE, RENDER_VERSION, LIVE } from "./config";
-import { sha256Hex, timingSafeEqual, contentTypeFor, shareUrl, clientIp } from "./ids";
-import { getMeta, getGen, siteFileKey, RESERVED_FILE, type SiteMeta } from "./storage";
-import { renderMarkdown, defaultMarkdownDoc, loadDocIndexCached, readMarkdownSource, type DocIndex } from "./markdown";
-import { interstitialHtml, shareWidget, liveScript, notFoundHtml, goneHtml } from "./templates";
-
-function getCookie(req: Request, name: string): string | null {
-  const header = req.headers.get("cookie");
-  if (!header) return null;
-  for (const part of header.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
-  }
-  return null;
-}
+import { AUTH_COOKIE_PREFIX, RENDER_VERSION, LIVE } from "./config";
+import { sha256Hex, contentTypeFor, shareUrl } from "./ids";
+import { checkAccessKey } from "./auth";
+import { getMeta, getGen, siteFileKey, RESERVED_FILE } from "./storage";
+import { renderDoc, homeDoc, loadDocIndexCached, readMarkdownSource, type DocIndex } from "./markdown";
+import { shareWidget, liveScript, notFoundHtml, goneHtml } from "./templates";
 
 // noindex on every hosted-site response — only the apex landing is indexable.
 function siteHeaders(extra?: Record<string, string>): Headers {
@@ -98,47 +88,6 @@ async function handleGen(
   return genResponse(await hit.text(), req.headers.get("if-none-match"));
 }
 
-interface AccessResult {
-  response?: Response; // interstitial or 302 (short-circuits serving)
-  key: string | null; // raw access key known at serve time (null = public)
-}
-
-// Private-by-default gate: a matching ?k logs the visitor in via cookie, then
-// redirects to drop the key from the URL; a bare visit gets the password prompt.
-async function checkAccess(req: Request, env: Env, url: URL, siteId: string, meta: SiteMeta): Promise<AccessResult> {
-  if (meta.public || !meta.keyHash) return { key: null };
-  const keyHash = meta.keyHash;
-  const cookieName = AUTH_COOKIE_PREFIX + siteId;
-
-  const cookieKey = getCookie(req, cookieName);
-  if (cookieKey && timingSafeEqual(await sha256Hex(cookieKey), keyHash)) {
-    return { key: cookieKey };
-  }
-
-  const k = url.searchParams.get("k");
-  if (k) {
-    if (timingSafeEqual(await sha256Hex(k), keyHash)) {
-      const clean = new URL(url);
-      clean.searchParams.delete("k");
-      const res = new Response(null, {
-        status: 302,
-        headers: siteHeaders({ location: clean.pathname + clean.search }),
-      });
-      res.headers.append(
-        "set-cookie",
-        `${cookieName}=${k}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${AUTH_COOKIE_MAX_AGE}`,
-      );
-      return { response: res, key: k };
-    }
-    // Wrong key: throttle guessing per IP+site before re-prompting. (The keyspace
-    // already makes brute force infeasible; this also caps the invocation cost.)
-    const status = (await env.ACCESS_LIMITER.limit({ key: `${clientIp(req)}:${siteId}` })).success ? 401 : 429;
-    return { response: htmlResponse(interstitialHtml({ siteId, apexHost: env.APEX_HOST, wrong: true }), status), key: null };
-  }
-
-  return { response: htmlResponse(interstitialHtml({ siteId, apexHost: env.APEX_HOST }), 401), key: null };
-}
-
 type TargetKind = "static" | "html" | "md";
 interface Target {
   key: string;
@@ -173,8 +122,8 @@ async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, user
   // Markdown-only site: `/` renders README.md / first SUMMARY entry.
   if (rest === "") {
     const index = await loadDocIndexCached(env, ctx, username, siteId, gen);
-    const md = await defaultMarkdownDoc(env, username, siteId, index);
-    if (md) return { ...classify(username, siteId, md.path), docIndex: md.index };
+    const home = homeDoc(index);
+    if (home) return { ...classify(username, siteId, home), docIndex: index };
   }
   return null;
 }
@@ -246,12 +195,18 @@ export async function handleSite(
   if (!meta) return htmlResponse(notFoundHtml(), 404);
   if (meta.tombstone) return htmlResponse(goneHtml(), 410);
 
-  const gate = await checkAccess(req, env, url, siteId, meta);
-  if (gate.response) return gate.response;
+  let key: string | null = null;
+  if (!meta.public && meta.keyHash) {
+    const gate = await checkAccessKey(req, env, {
+      keyHash: meta.keyHash, label: siteId, cookieName: AUTH_COOKIE_PREFIX + siteId, cookiePath: "/", limiterKey: siteId,
+    });
+    if (gate instanceof Response) return gate;
+    key = gate;
+  }
   const gen = meta.generation ?? await getGen(env.SITES, username, siteId);
 
   const raw = url.searchParams.has("raw");
-  const share = shareUrl(host, gate.key);
+  const share = shareUrl(host, key);
   const live = versionTag(gen);
 
   const target = await resolveTargetCached(env, ctx, username, siteId, rest, gen, req);
@@ -303,7 +258,7 @@ export async function handleSite(
       if (!obj || !("body" in obj)) return null;
       const source = await readMarkdownSource(obj as R2ObjectBody);
       const index = target.docIndex ?? await loadDocIndexCached(env, ctx, username, siteId, gen);
-      return renderMarkdown(env, username, siteId, target.relPath, source, index);
+      return renderDoc(siteId, target.relPath, source, index);
     });
   }
 

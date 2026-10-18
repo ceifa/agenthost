@@ -336,7 +336,7 @@ R2 operations. The serving regression tests enforce these storage-operation budg
 | Static asset revalidation / range | 4 | 2 |
 
 These are operation counts, not production latency measurements. Run
-`pnpm -C worker exec vitest run src/serve-performance.test.ts` to check the budgets,
+`pnpm -C worker exec vitest run test/serve-performance.test.ts` to check the budgets,
 generation invalidation, access changes, streaming, and conditional-cache delegation.
 
 **`noindex` on all hosted sites.** Every response served from a user subdomain or custom
@@ -608,7 +608,7 @@ Public-by-default publishing means day-one abuse risk. Controls, **no Durable Ob
 TypeScript · **Hono** in the Worker · **Astro** for the landing · **Svelte** for the admin ·
 **rolldown** to minify the browser scripts the Worker inlines · Wrangler to deploy. The landing and admin are each built to static output and copied into
 `public/`, which the Worker serves via Static Assets — so it's still **one `wrangler
-deploy`**. No test framework, linter, or formatter — kept deliberately lean.
+deploy`**. Vitest for the Worker's tests; no linter or formatter — kept deliberately lean.
 
 ```
 agenthost/
@@ -616,7 +616,7 @@ agenthost/
 ├─ pnpm-workspace.yaml
 ├─ turbo.json                   # build/deploy task graph across packages
 ├─ worker/                      # (2) THE BACKEND — the entire server (Hono on Workers)
-│  ├─ src/index.ts              # Hono app: apex→landing/publish/admin ; *→serve ; custom-domain→serve
+│  ├─ src/index.ts              # fetch entry: routes by Host ; apex→landing/publish/admin ; *→serve ; custom-domain→serve
 │  ├─ src/publish.ts            # streaming files → bounded R2 puts → delete orphans → merged metadata commit
 │  ├─ src/serve.ts              # host→username, fresh metadata, gen-keyed Cache API, R2 get, /_gen probe, widget + live-reload inject
 │  ├─ src/client/*.ts           # browser scripts (live reload, copy link, docs shell), readable TS with DOM types
@@ -643,7 +643,4 @@ agenthost/
 One deployable. The build copies `landing/dist` and `admin/dist` into `public/`; the Worker
 serves both via Static Assets and routes everything else by Host.
 
-**Contract & types:** the API is defined once as a shared zod schema (validation +
-inferred types + optional OpenAPI/MCP schema), and the Worker exports its Hono `AppType` so
-the admin consumes it via the typed `hc` client — no codegen, contract drift caught
-at build time. Dev runs local-first against Miniflare-simulated R2/Cache.
+Dev runs local-first against Miniflare-simulated R2/Cache.

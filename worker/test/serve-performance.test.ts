@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { handleSite, cacheKeyPath } from "./serve";
-import { sha256Hex } from "./ids";
-import type { Env } from "./env";
+import { handleSite, cacheKeyPath } from "../src/serve";
+import { sha256Hex } from "../src/ids";
+import type { Env } from "../src/env";
 
 const prefix = "sites/u/docs/";
 const controlKeys = ["_sites/u/docs"];

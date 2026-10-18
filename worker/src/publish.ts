@@ -377,10 +377,6 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
         // Never let a user file clobber the per-site control objects.
         if (RESERVED_FILE(path)) continue;
 
-        if (entry.size > limits.perFile) {
-          perr = fail(413, `file ${path} is ${entry.size} bytes; max is ${limits.perFile}`);
-          break;
-        }
         if (fileCount + 1 > limits.filesPerSite) {
           perr = fail(413, `too many files; max is ${limits.filesPerSite}`);
           break;
