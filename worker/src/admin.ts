@@ -94,7 +94,7 @@ api.delete("/asset", async (c) => {
   if (!username || !id) return c.json({ error: "username and id required" }, 400);
   const meta = await getAssetMeta(c.env.SITES, username, id);
   if (!meta) return c.json({ error: "asset not found" }, 404);
-  await Promise.all([c.env.SITES.delete(meta.objectKey), c.env.SITES.delete(assetMetaKey(username, id))]);
+  await c.env.SITES.delete([meta.objectKey, assetMetaKey(username, id)]);
   return c.json({ ok: true });
 });
 
