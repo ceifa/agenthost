@@ -75,7 +75,7 @@ export function sanitizeSiteId(raw: string | undefined | null): string | null {
 
 const ALPHANUM = "abcdefghijkmnpqrstuvwxyz23456789"; // no ambiguous 0/o/1/l
 
-// Random, unambiguous lowercase id. 32 symbols divide 256, so no modulo bias.
+// 32 symbols divide 256, so `% length` adds no bias.
 export function randomId(len: number): string {
   const buf = new Uint8Array(len);
   crypto.getRandomValues(buf);

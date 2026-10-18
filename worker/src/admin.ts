@@ -25,6 +25,7 @@ import {
   listAssetMetas,
   putAssetMeta,
   mapBounded,
+  removeAsset,
   InvalidCursorError,
 } from "./storage";
 import { isValidUsername } from "./ids";
@@ -94,7 +95,7 @@ api.delete("/asset", async (c) => {
   if (!username || !id) return c.json({ error: "username and id required" }, 400);
   const meta = await getAssetMeta(c.env.SITES, username, id);
   if (!meta) return c.json({ error: "asset not found" }, 404);
-  await c.env.SITES.delete([meta.objectKey, assetMetaKey(username, id)]);
+  await removeAsset(c.env.SITES, meta);
   return c.json({ ok: true });
 });
 
@@ -115,7 +116,6 @@ api.post("/rename", async (c) => {
   if (!user) return c.json({ error: "unknown username" }, 404);
 
   await putUser(c.env.SITES, to, user);
-  // Site files and their metadata records, each moved to the same place under `to`.
   const moves: [string, string][] = [];
   for (const [fromPrefix, toPrefix] of [
     [userSitesPrefix(from), userSitesPrefix(to)],

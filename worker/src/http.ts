@@ -1,5 +1,3 @@
-// Small response/request helpers shared by the apex, publish and site handlers.
-
 export function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,

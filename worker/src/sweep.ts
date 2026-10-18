@@ -3,7 +3,7 @@
 
 import type { Env } from "./env";
 import { LIMITS } from "./config";
-import { assetMetaKey, assetRecords, deleteSite, siteRecords, userRecords, type AssetMeta } from "./storage";
+import { assetRecords, deleteSite, removeAsset, siteRecords, userRecords, type AssetMeta } from "./storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -27,7 +27,7 @@ export async function runRetentionSweep(env: Env, now: number): Promise<SweepRes
     const expiredPending = asset.status === "pending" && now - asset.createdAt > DAY_MS;
     const expiredReady = days !== null && now - asset.lastDeployAt > days * DAY_MS;
     if (expiredPending || expiredReady) {
-      await env.SITES.delete([asset.objectKey, assetMetaKey(asset.username, asset.id)]);
+      await removeAsset(env.SITES, asset);
       recordDelete(`asset:${asset.username}/${asset.id}`);
     }
   };

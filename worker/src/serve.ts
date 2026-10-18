@@ -50,8 +50,6 @@ function decorate(html: BodyInit | null, d: Decoration, status: number): Respons
     .transform(input);
 }
 
-// ── live reload ──
-
 // What a reader's page compares against /_gen. Both halves matter: a site publish
 // bumps the generation; a Worker deploy that changes what we render bumps
 // RENDER_VERSION, and readers of a site that never republishes should see that too.
@@ -97,10 +95,6 @@ async function handleGen(
   return genResponse(await hit.text(), req.headers.get("if-none-match"));
 }
 
-// ── access ──
-
-// Private by default. Returns the reader's key (null on a public site), or the
-// response that stands in for the page: a login redirect or the password prompt.
 async function checkAccess(req: Request, env: Env, url: URL, siteId: string, meta: SiteMeta): Promise<{ key: string | null } | Response> {
   if (meta.public || !meta.keyHash) return { key: null };
   const gate = await checkAccessKey(req, url, {
@@ -116,8 +110,6 @@ async function checkAccess(req: Request, env: Env, url: URL, siteId: string, met
     case "denied": return htmlResponse(interstitialHtml({ siteId, apexHost: env.APEX_HOST, wrong: gate.wrongKey }), gate.status);
   }
 }
-
-// ── route resolution ──
 
 type TargetKind = "static" | "html" | "md";
 interface Target {
@@ -209,18 +201,15 @@ export function cacheKeyPath(
   return `${CACHE_HOST}/${username}/${siteId}/g${gen}${version}/${target.relPath}${raw ? "?raw" : ""}`;
 }
 
-// ── serving ──
-
 interface Serving {
   req: Request;
   env: Env;
   ctx: ExecutionContext;
-  username: string;
-  siteId: string;
   host: string;
   meta: SiteMeta;
   gen: number;
   target: Target;
+  raw: boolean;
   cacheReq: Request;
   decoration: Decoration;
 }
@@ -258,7 +247,7 @@ export async function handleSite(
   }
 
   const serving: Serving = {
-    req, env, ctx, username, siteId, host, meta, gen, target, decoration,
+    req, env, ctx, host, meta, gen, target, raw, decoration,
     cacheReq: new Request(cacheKeyPath(username, siteId, gen, target, raw)),
   };
 
@@ -279,7 +268,7 @@ export async function handleSite(
     });
   }
 
-  return serveStatic(serving, raw);
+  return serveStatic(serving);
 }
 
 // Pages get the Share widget and live-reload probe, so the cache holds the
@@ -320,9 +309,8 @@ async function serveHtml(s: Serving, produce: () => Promise<BodyInit | null>): P
 
 const CONDITIONAL_HEADERS = ["range", "if-none-match", "if-modified-since"] as const;
 
-// Published bytes (incl. ?raw markdown): streamed as-is, with native 304/206.
-async function serveStatic(s: Serving, raw: boolean): Promise<Response> {
-  const { req, env, ctx, target, cacheReq } = s;
+async function serveStatic(s: Serving): Promise<Response> {
+  const { req, env, ctx, target, raw, cacheReq } = s;
   const cache = caches.default;
   const conditional = CONDITIONAL_HEADERS.some(name => req.headers.has(name));
 

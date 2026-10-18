@@ -61,7 +61,6 @@ const userAssetsPrefix = (u: string) => `${ASSETS_PREFIX}${u}/`;
 // Control objects, never part of the served site.
 export const isReservedFile = (path: string) => path === "_gen" || path === "_meta";
 
-// ── layout hints ──
 // These bounded hints choose a storage key, never cache access decisions. Every
 // request still reads the current authoritative record. A legacy hint falls
 // through after a publish migrates that site.
@@ -102,7 +101,6 @@ export async function getGen(b: R2Bucket, u: string, s: string): Promise<number>
   return gen;
 }
 
-// ── JSON records ──
 // Small records ride in customMetadata.json (with an empty body), so a LIST
 // with include: ["customMetadata"] reads a whole page of them without a GET.
 
@@ -131,7 +129,6 @@ async function getJson<T>(b: R2Bucket, key: string): Promise<T | null> {
   }
 }
 
-// A listed object's record, without a GET when the listing carried it inline.
 async function listedJson<T>(b: R2Bucket, obj: R2Object): Promise<T | null> {
   return inlineJson<T>(obj) ?? getJson<T>(b, obj.key);
 }
@@ -174,12 +171,9 @@ export const putDomain = (b: R2Bucket, host: string, rec: DomainRecord) => putJs
 export const getAssetMeta = (b: R2Bucket, u: string, id: string) => getJson<AssetMeta>(b, assetMetaKey(u, id));
 export const putAssetMeta = (b: R2Bucket, u: string, id: string, meta: AssetMeta) => putJson(b, assetMetaKey(u, id), meta);
 
-// ── listing ──
-
 export interface RecordPage<T> { items: T[]; cursor?: string }
 export interface SiteRecord { username: string; siteId: string; meta: SiteMeta }
 
-// Walks a paged listing to the end, one page in memory at a time.
 async function* paginate<T>(page: (cursor?: string) => Promise<RecordPage<T>>): AsyncGenerator<T> {
   let cursor: string | undefined;
   do {
@@ -210,7 +204,6 @@ export async function mapBounded<T, U>(items: T[], map: (item: T) => Promise<U>,
   return result;
 }
 
-// One LIST page with inline metadata, each object mapped to a record (null drops it).
 async function recordPage<T>(
   b: R2Bucket,
   opts: R2ListOptions,
@@ -221,13 +214,11 @@ async function recordPage<T>(
   return { items: records.filter((r): r is T => r !== null), cursor: page.truncated ? page.cursor : undefined };
 }
 
-export async function* objectPages(b: R2Bucket, prefix: string): AsyncGenerator<R2Object[]> {
-  let cursor: string | undefined;
-  do {
+export function objectPages(b: R2Bucket, prefix: string): AsyncGenerator<R2Object[]> {
+  return paginate(async cursor => {
     const page = await b.list({ prefix, cursor, limit: 1000 });
-    yield page.objects;
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
+    return { items: [page.objects], cursor: page.truncated ? page.cursor : undefined };
+  });
 }
 
 export async function listAll(b: R2Bucket, prefix: string): Promise<R2Object[]> {
@@ -315,14 +306,13 @@ export function listAssetsPage(b: R2Bucket, username?: string, cursor?: string):
     obj.key.endsWith("/_meta") ? listedJson<AssetMeta>(b, obj) : null);
 }
 
-// Every asset of one user — or, without a username, of all users in key order.
+// Without a username: every user's assets, in key order (the sweep merges on it).
 export function assetRecords(b: R2Bucket, username?: string): AsyncGenerator<AssetMeta> {
   return paginate(cursor => listAssetsPage(b, username, cursor));
 }
 
 export const listAssetMetas = (b: R2Bucket, username: string) => collect(assetRecords(b, username));
 
-// ── usage & deletion ──
 // Usage is derived from each record's bytes — there is no mutable counter.
 
 export async function userUsage(b: R2Bucket, username: string, exceptSite?: string, account?: UserRecord): Promise<number> {
@@ -352,3 +342,5 @@ export async function deleteSite(b: R2Bucket, username: string, siteId: string):
   }
   await b.delete(metaKey(username, siteId));
 }
+
+export const removeAsset = (b: R2Bucket, asset: AssetMeta) => b.delete([asset.objectKey, assetMetaKey(asset.username, asset.id)]);
