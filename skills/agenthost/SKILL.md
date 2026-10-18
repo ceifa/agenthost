@@ -17,7 +17,7 @@ Publish a page, a folder or a set of Markdown docs, or upload a large file, and 
 
 ## One account, reused forever
 
-A publish without `Authorization` **mints a brand-new account**, every time, even if you pass a `username`. Do that exactly once: from the first response, save `username` and `ownerToken` wherever the environment keeps durable secrets, and send them on every publish after, new `id`s included. Without it nothing can be redeployed and assets can't be uploaded. The `ownerToken` is shown once; lose it and you start over with new URLs. A free account more than 90 days old with no site or asset left is deleted: if a saved token gets a 403, publish without `Authorization` and replace the saved credentials.
+A publish without `Authorization` **mints a brand-new account**, every time, even if you pass a `username`. Do that exactly once: from the first response, save `username` and `ownerToken` wherever the environment keeps durable secrets, and send them on every publish after, new `id`s included. Without it nothing can be redeployed and assets can't be uploaded. The `ownerToken` is shown once; lose it and you start over with new URLs.
 
 Below, `$AGENTHOST_USERNAME` and `$AGENTHOST_OWNER_TOKEN` hold them.
 
