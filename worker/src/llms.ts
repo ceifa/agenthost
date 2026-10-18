@@ -65,7 +65,7 @@ both absolute and relative asset paths work:
 ## Install as a skill (optional — persist this contract)
 This publish contract ships as an Agent Skill (SKILL.md + references), so you don't
 have to re-read this file on every run. Install it once and it's always in reach.
-- Any agent: fetch the skill from https://${apexHost} and load its SKILL.md.
+- Any agent: fetch https://${apexHost}/skill/SKILL.md and its references under /skill/.
 - From source: https://github.com/ceifa/agenthost/tree/main/skills/agenthost
 - OpenClaw: openclaw skills install @ceifa/agenthost
 - skills.sh: npx skills add ceifa/agenthost --skill agenthost

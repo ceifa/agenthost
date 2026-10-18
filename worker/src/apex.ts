@@ -1,5 +1,6 @@
-// Apex / control-plane app on agenthost.page: /publish, owner endpoints, and
-// /llms.txt. Anything else falls through to Static Assets (the landing page).
+// Apex / control-plane app on agenthost.page: /publish, owner endpoints,
+// /llms.txt and /skill/. Anything else falls through to Static Assets (the
+// landing page).
 
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -9,6 +10,7 @@ import { verifyOwner, type OwnerCtx } from "./auth";
 import { getMeta, putMeta, putUser, type SiteMeta } from "./storage";
 import { generateAccessKey, sha256Hex, sanitizeSiteId, siteHost, shareUrl } from "./ids";
 import { llmsTxt } from "./llms";
+import { skillFile } from "./skill";
 import { completeAsset, createAsset, deleteAsset, serveAsset } from "./assets";
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -88,6 +90,12 @@ app.post("/key/public", async (c) => {
 app.get("/llms.txt", (c) =>
   c.body(llmsTxt(c.env.APEX_HOST), 200, { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" }),
 );
+
+app.get("/skill/*", (c) => {
+  const body = skillFile(c.req.path.slice("/skill/".length), c.env.APEX_HOST);
+  if (body === null) return c.notFound();
+  return c.body(body, 200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "public, max-age=3600" });
+});
 
 // Unmatched paths → Static Assets (the landing page). Registered as the Hono
 // notFound handler so route handlers can return real 404s without being

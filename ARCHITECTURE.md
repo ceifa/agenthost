@@ -623,6 +623,7 @@ agenthost/
 │  ├─ src/client/gen/           # ↑ minified into `export default "<js>"` modules by scripts/build-client.mjs (gitignored)
 │  ├─ src/assets.ts             # asset metadata/access pages + direct upload completion
 │  ├─ src/r2-signed.ts          # short-lived exact-size R2 PUT and direct GET signing
+│  ├─ src/skill.ts              # /skill/* — skills/agenthost with agenthost.page → APEX_HOST
 │  ├─ src/admin.ts              # admin JSON routes (Hono sub-router, behind Cloudflare Access)
 │  ├─ src/ids.ts                # username gen, reserved-word denylist, content-type guess
 │  ├─ src/tar.ts                # streaming gzip+tar reader (no full buffering)
@@ -630,7 +631,7 @@ agenthost/
 │  └─ wrangler.jsonc            # r2=SITES; assets binding + run_worker_first; routes; cron
 ├─ landing/                     # (1) LANDING PAGE for agents — Astro, static build → landing/dist
 │  └─ src/pages/index.astro     #   the one-liner + curl contract
-├─ skills/agenthost/           # (3) THE SHAREABLE SKILL (Agent Skill layout)
+├─ skills/agenthost/           # (3) THE SHAREABLE SKILL (Agent Skill layout); also served at /skill/ for APEX_HOST
 │  ├─ SKILL.md                  #   agent-readable; name + description frontmatter
 │  └─ references/http-api.md    #   full HTTP publish contract
 ├─ admin/                       # (4) ADMIN UI — Svelte (Vite SPA), static build → admin/dist

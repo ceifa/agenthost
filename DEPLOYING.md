@@ -147,7 +147,8 @@ echo '<h1>hello</h1>' | curl -s --data-binary @- \
 
 The JSON response includes a `shareUrl` — open it and you should see the page over
 valid HTTPS on `{username}-test.example.com`. `https://example.com/llms.txt`
-should return the publish instructions with your domain baked in.
+should return the publish instructions with your domain baked in, and so should
+`https://example.com/skill/SKILL.md` for the agent skill.
 
 ## Local development
 

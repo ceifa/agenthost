@@ -49,6 +49,10 @@ so any skill installer can pick it up straight from this repo:
 
 Replace `<owner>/<repo>` with this repository (e.g. `you/agenthost`).
 
+Every instance also serves the skill at `https://<apex>/skill/SKILL.md` (and its
+references under `/skill/`), with `agenthost.page` replaced by that instance's
+`APEX_HOST`, so a self-hosted deployment hands out a skill that points at itself.
+
 ## How it works
 
 - **One Worker, one R2 bucket — nothing else.** R2's strong read-after-write
