@@ -6,13 +6,13 @@
   let cursor = $state(null);
   let loading = $state(true);
   let search = $state("");
-  let sites = $state("all");
+  let sharesOnly = $state(true);
   let searchBox;
   // The selection lives in the URL hash so a reload keeps the account open.
   let selected = $state(decodeURIComponent(location.hash.slice(1)));
 
   const target = $derived(parseHost(search.trim().toLowerCase()));
-  const filtered = $derived(sites === "all" ? users : users.filter((u) => u.hasSites === (sites === "with")));
+  const filtered = $derived(sharesOnly ? users.filter((u) => u.hasShares) : users);
   const shown = $derived.by(() => {
     const q = search.trim().toLowerCase();
     if (!q) return filtered;
@@ -20,7 +20,7 @@
     if (target?.host) return filtered.filter((u) => u.customDomain === target.host);
     return filtered.filter((u) => [u.username, u.email, u.customDomain].some((v) => v?.toLowerCase().includes(q)));
   });
-  const narrowed = $derived(!!search || sites !== "all");
+  const narrowed = $derived(!!search || sharesOnly);
   const user = $derived(users.find((u) => u.username === selected));
 
   async function loadUsers(more = false) {
@@ -78,9 +78,9 @@
         placeholder="Username, email or site URL" aria-label="Find an account" />
       <kbd>/</kbd>
     </div>
-    <div class="filter" role="group" aria-label="Filter by sites">
-      {#each [["all", "All"], ["with", "With sites"], ["without", "No sites"]] as [value, label]}
-        <button class:on={sites === value} aria-pressed={sites === value} onclick={() => (sites = value)}>{label}</button>
+    <div class="filter" role="group" aria-label="Accounts to show">
+      {#each [[true, "With shares"], [false, "All"]] as [value, label]}
+        <button class:on={sharesOnly === value} aria-pressed={sharesOnly === value} onclick={() => (sharesOnly = value)}>{label}</button>
       {/each}
     </div>
     <div class="count">
