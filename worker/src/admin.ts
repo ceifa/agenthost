@@ -5,7 +5,7 @@
 
 import { Hono } from "hono";
 import type { Env } from "./env";
-import { verifyAdmin } from "./auth";
+import { verifyAdmin, type AppContext } from "./auth";
 import {
   listAll,
   listUsersPage,
@@ -28,9 +28,27 @@ import {
   InvalidCursorError,
 } from "./storage";
 import { isValidUsername } from "./ids";
-import { customDomainSetup } from "./domains";
+import { customDomainSetup, normalizeHost } from "./domains";
 
 const api = new Hono<{ Bindings: Env }>();
+
+type Fields<K extends string> = Record<K, string> & Record<string, unknown>;
+
+// The JSON body, with each of `required` a non-empty string — or the 400 to return.
+async function readFields<K extends string>(c: AppContext, ...required: K[]): Promise<Fields<K> | Response> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "JSON body required" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({ error: "JSON object required" }, 400);
+  const fields = body as Record<string, unknown>;
+  if (required.some(k => typeof fields[k] !== "string" || fields[k] === "")) {
+    return c.json({ error: `${required.join(", ")} required` }, 400);
+  }
+  return fields as Fields<K>;
+}
 
 api.use("*", async (c, next) => {
   if (!(await verifyAdmin(c.req.raw, c.env))) return c.json({ error: "forbidden" }, 403);
@@ -99,7 +117,9 @@ api.delete("/asset", async (c) => {
 });
 
 api.post("/plan", async (c) => {
-  const { username, plan } = await c.req.json<{ username: string; plan: "free" | "paid" }>();
+  const body = await readFields(c, "username", "plan");
+  if (body instanceof Response) return body;
+  const { username, plan } = body;
   const user = await getUser(c.env.SITES, username);
   if (!user) return c.json({ error: "unknown username" }, 404);
   if (plan !== "free" && plan !== "paid") return c.json({ error: "bad plan" }, 400);
@@ -108,7 +128,9 @@ api.post("/plan", async (c) => {
 });
 
 api.post("/rename", async (c) => {
-  const { from, to } = await c.req.json<{ from: string; to: string }>();
+  const body = await readFields(c, "from", "to");
+  if (body instanceof Response) return body;
+  const { from, to } = body;
   if (!isValidUsername(to)) return c.json({ error: "invalid target username" }, 400);
   if (await c.env.SITES.head(userKey(to))) return c.json({ error: "username taken" }, 409);
   const user = await getUser(c.env.SITES, from);
@@ -143,11 +165,10 @@ api.post("/rename", async (c) => {
 });
 
 api.post("/takedown", async (c) => {
-  const { username, siteId, tombstone = true } = await c.req.json<{
-    username: string;
-    siteId: string;
-    tombstone?: boolean;
-  }>();
+  const body = await readFields(c, "username", "siteId");
+  if (body instanceof Response) return body;
+  const { username, siteId, tombstone = true } = body;
+  if (typeof tombstone !== "boolean") return c.json({ error: "tombstone must be a boolean" }, 400);
   const meta = await getMeta(c.env.SITES, username, siteId);
   if (!meta) return c.json({ error: "site not found" }, 404);
   meta.tombstone = tombstone;
@@ -156,8 +177,12 @@ api.post("/takedown", async (c) => {
 });
 
 api.post("/domain", async (c) => {
-  const { host, username, siteId } = await c.req.json<{ host: string; username: string; siteId: string }>();
-  if (!host || !username || !siteId) return c.json({ error: "host, username, siteId required" }, 400);
+  const body = await readFields(c, "host", "username", "siteId");
+  if (body instanceof Response) return body;
+  const { username, siteId } = body;
+  // Routing looks domains up by the lowercased Host header, so store them that way.
+  const host = normalizeHost(body.host, c.env.APEX_HOST);
+  if (!host) return c.json({ error: `invalid custom domain: ${body.host}` }, 400);
   const user = await getUser(c.env.SITES, username);
   if (!user) return c.json({ error: "unknown username" }, 404);
 
