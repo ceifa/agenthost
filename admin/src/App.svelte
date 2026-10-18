@@ -6,18 +6,21 @@
   let cursor = $state(null);
   let loading = $state(true);
   let search = $state("");
+  let sites = $state("all");
   let searchBox;
   // The selection lives in the URL hash so a reload keeps the account open.
   let selected = $state(decodeURIComponent(location.hash.slice(1)));
 
   const target = $derived(parseHost(search.trim().toLowerCase()));
+  const filtered = $derived(sites === "all" ? users : users.filter((u) => u.hasSites === (sites === "with")));
   const shown = $derived.by(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return users;
-    if (target?.username) return users.filter((u) => u.username === target.username);
-    if (target?.host) return users.filter((u) => u.customDomain === target.host);
-    return users.filter((u) => [u.username, u.email, u.customDomain].some((v) => v?.toLowerCase().includes(q)));
+    if (!q) return filtered;
+    if (target?.username) return filtered.filter((u) => u.username === target.username);
+    if (target?.host) return filtered.filter((u) => u.customDomain === target.host);
+    return filtered.filter((u) => [u.username, u.email, u.customDomain].some((v) => v?.toLowerCase().includes(q)));
   });
+  const narrowed = $derived(!!search || sites !== "all");
   const user = $derived(users.find((u) => u.username === selected));
 
   async function loadUsers(more = false) {
@@ -75,10 +78,15 @@
         placeholder="Username, email or site URL" aria-label="Find an account" />
       <kbd>/</kbd>
     </div>
+    <div class="filter" role="group" aria-label="Filter by sites">
+      {#each [["all", "All"], ["with", "With sites"], ["without", "No sites"]] as [value, label]}
+        <button class:on={sites === value} aria-pressed={sites === value} onclick={() => (sites = value)}>{label}</button>
+      {/each}
+    </div>
     <div class="count">
       {#if loading && !users.length}
         Loading accounts…
-      {:else if search}
+      {:else if narrowed}
         {shown.length} of {users.length}{cursor ? "+" : ""} accounts
       {:else}
         {users.length}{cursor ? "+" : ""} accounts
@@ -96,12 +104,12 @@
         </li>
       {/each}
     </ul>
-    {#if !loading && search && !shown.length}
+    {#if !loading && narrowed && !shown.length}
       <p class="none">No loaded account matches.</p>
     {/if}
     {#if cursor}
-      <button class="more" disabled={loading} onclick={() => (search ? loadAll() : loadUsers(true))}>
-        {search ? "Search all accounts" : "Load more accounts"}
+      <button class="more" disabled={loading} onclick={() => (narrowed ? loadAll() : loadUsers(true))}>
+        {narrowed ? "Search all accounts" : "Load more accounts"}
       </button>
     {/if}
   </aside>
@@ -136,6 +144,11 @@
   .search input { width: 100%; padding-right: 30px; }
   kbd { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font: 12px var(--mono); color: var(--dim); border: 1px solid var(--line); padding: 0 5px; pointer-events: none; }
   .search input:focus + kbd { display: none; }
+
+  .filter { display: flex; margin: 10px 20px 0; border: 1px solid var(--line); }
+  .filter button { flex: 1; border: 0; padding: 5px 0; font-size: 12.5px; color: var(--dim); }
+  .filter button:hover { color: var(--fg); }
+  .filter button.on { background: var(--fg); color: var(--bg); cursor: default; }
 
   .count { display: flex; justify-content: space-between; color: var(--dim); font-size: 12.5px; padding: 14px 20px 8px; font-variant-numeric: tabular-nums; }
   ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }

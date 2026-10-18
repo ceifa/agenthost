@@ -35,6 +35,20 @@ describe("admin request bodies", () => {
   });
 });
 
+describe("account list", () => {
+  it("flags which accounts on the page have sites, flat or legacy", async () => {
+    const f = testBucket(3);
+    for (const name of ["alice", "bob", "carol"]) f.json(`_users/${name}`, user, true);
+    // Owners outside the page and a second LIST page around it.
+    for (const name of ["aaron", "alice", "amy", "anna", "dave"]) f.records.set(`sites/${name}/docs/index.html`, { body: "x" });
+    f.json("_sites/alice/docs", { generation: 1 }, true);
+    f.records.set("sites/carol/old/_meta", { body: "{}" });
+    const res = await handleAdmin(new Request("https://admin.example.com/admin/api/users"), f.env);
+    const { users } = await res.json<{ users: { username: string; hasSites: boolean }[] }>();
+    expect(Object.fromEntries(users.map((u) => [u.username, u.hasSites]))).toEqual({ alice: true, bob: false, carol: true });
+  });
+});
+
 describe("custom domains", () => {
   it("stores the domain the way the Host router looks it up", async () => {
     const f = fixture();

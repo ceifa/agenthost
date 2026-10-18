@@ -24,6 +24,7 @@ import {
   listAssetMetas,
   putAssetMeta,
   mapBounded,
+  siteOwners,
 } from "./storage";
 import { isValidUsername } from "./ids";
 import { customDomainHost, customDomainSetup } from "./domains";
@@ -37,12 +38,14 @@ api.use("*", async (c, next) => {
 
 api.get("/users", async (c) => {
   const page = await listUsersPage(c.env.SITES, c.req.query("cursor"));
+  const owners = await siteOwners(c.env.SITES, page.items.map((i) => i.username));
   const users = page.items.map(({ username, user }) => ({
     username,
     plan: user.plan,
     email: user.email,
     customDomain: user.customDomain,
     createdAt: user.createdAt,
+    hasSites: owners.has(username),
   }));
   return c.json({ users, cursor: page.cursor ?? null });
 });
