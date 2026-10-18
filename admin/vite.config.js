@@ -11,6 +11,7 @@ const APEX_HOST = apexHost();
 export default defineConfig({
   plugins: [svelte()],
   base: "/",
+  define: { __APEX_HOST__: JSON.stringify(APEX_HOST) },
   build: { outDir: "dist", emptyOutDir: true },
   // Local interactive dev: proxy admin API to the running worker, adding the
   // ?__host override so it routes to the admin surface (DEV_MODE bypasses Access).
