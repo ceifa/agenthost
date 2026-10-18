@@ -23,12 +23,12 @@ tar cf - -C ./dist . | curl -s --data-binary @- \\
 
 ## Response (JSON)
 {
-  "shareUrl": "https://cleverotter4f2-myblog.${apexHost}/?k=<key>",  // hand THIS to a human; private + pre-authed
-  "url": "https://cleverotter4f2-myblog.${apexHost}/",              // bare URL (prompts for the key)
-  "accessKey": "<the site access key, also embedded in shareUrl>",
-  "username": "cleverotter4f2",                                          // your account name (auto-generated, no hyphens)
+  "url": "https://cleverotter4f2-myblog.${apexHost}/?k=<key>",  // hand THIS to a human; private + pre-authed
+  "username": "cleverotter4f2",                                     // your account name (auto-generated, no hyphens)
   "ownerToken": "<SAVE THIS to redeploy the same URL later>"
 }
+The key in url comes back only on a site's first publish; redeploys return the bare
+url, so keep the first one.
 
 ## Redeploy the SAME url (needs ownerToken)
 tar cf - -C ./dist . | curl --data-binary @- \\
@@ -39,10 +39,10 @@ tar cf - -C ./dist . | curl --data-binary @- \\
 Three calls, all with -H 'Authorization: Bearer <ownerToken>' except the PUT:
 1. POST https://${apexHost}/asset?username=<username> with JSON
    {"name":"demo.mp4","bytes":<exact size>,"contentType":"video/mp4"}
-   → uploadUrl, uploadHeaders, completeUrl, shareUrl (the shareUrl only comes back here)
+   → uploadUrl, uploadHeaders, completeUrl, url (the keyed url only comes back here)
 2. curl --upload-file demo.mp4 -H '<each uploadHeaders entry>' '<uploadUrl>'   (within 15 min)
 3. POST <completeUrl> → {"ok":true}
-The file goes straight from the client to R2. Opening the shareUrl shows a Download
+The file goes straight from the client to R2. Opening the url shows a Download
 button whose bytes also come directly from R2.
 Free max: ${mb(freeAssets.perAsset)} per asset. Paid max: 5 GB per asset.
 
@@ -57,7 +57,7 @@ both absolute and relative asset paths work:
   GitBook-style docs site (sidebar + README.md as home; optional SUMMARY.md for ordering and nesting).
 - No Content-Type needed: a tar body is a folder, anything else is one document. To publish a
   single file of any other type, add ?file=<name>.
-- Sites are PRIVATE by default. Share the shareUrl; visitors stay logged in via a cookie.
+- Sites are PRIVATE by default. Share the url; visitors stay logged in via a cookie.
   Every page has a "Share" button that copies a key-embedded link.
 - Limits (free): ${free.filesPerSite} files, ${mb(free.perFile)}/file, ${mb(free.perSite)}/site, ${mb(free.perUser)}/account. Hosted sites are noindex.
 - Free sites are deleted ${free.retentionDays} days after the last publish — redeploy to keep alive.

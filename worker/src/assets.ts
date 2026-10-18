@@ -142,9 +142,7 @@ export async function createAsset(c: AppContext): Promise<Response> {
     uploadHeaders: upload.headers,
     uploadExpiresIn: upload.expiresIn,
     completeUrl: `${url}/complete?username=${encodeURIComponent(owner.username)}`,
-    url,
-    shareUrl: `${url}?k=${accessKey}`,
-    accessKey,
+    url: `${url}?k=${accessKey}`,
   });
 }
 

@@ -115,13 +115,14 @@ describe("archive publishing", () => {
     expect(res.status).toBe(200);
     const body = await res.json<Record<string, string | number>>();
     const username = body.username as string;
-    expect(body).toMatchObject({ siteId: "docs", generation: 1, fileCount: 2, bytes: 12, url: `https://${username}-docs.example.com/` });
-    expect(body.shareUrl).toBe(`https://${username}-docs.example.com/?k=${body.accessKey}`);
+    const key = new URL(body.url as string).searchParams.get("k")!;
+    expect(Object.keys(body).sort()).toEqual(["bytes", "claimUrl", "fileCount", "ownerToken", "siteId", "url", "username"]);
+    expect(body).toMatchObject({ siteId: "docs", fileCount: 2, bytes: 12, url: `https://${username}-docs.example.com/?k=${key}` });
     expect(body.claimUrl).toBe(`https://example.com/claim?username=${username}`);
     const user = (await getUser(f.bucket, username))!;
     expect(user).toMatchObject({ plan: "free", legacySiteIds: [], tokenHash: await sha256Hex(body.ownerToken as string) });
     const meta = (await getMeta(f.bucket, username, "docs"))!;
-    expect(meta).toMatchObject({ generation: 1, bytes: 12, fileCount: 2, public: false, keyHash: await sha256Hex(body.accessKey as string) });
+    expect(meta).toMatchObject({ generation: 1, bytes: 12, fileCount: 2, public: false, keyHash: await sha256Hex(key) });
     expect(f.records.get(`sites/${username}/docs/css/app.css`)).toMatchObject({ body: "a{}", httpMetadata: { contentType: "text/css; charset=utf-8" } });
   });
 
@@ -129,13 +130,13 @@ describe("archive publishing", () => {
     const f = await archiveFixture();
     const first = await (await f.post(tar([{ name: "index.html", body: "one" }, { name: "old.css", body: "x" }]))).json<Record<string, unknown>>();
     const second = await (await f.post(await gzip(tar([{ name: "index.html", body: "two" }])))).json<Record<string, unknown>>();
-    expect(first.accessKey).toBeTypeOf("string");
-    expect(second).not.toHaveProperty("accessKey");
+    const key = new URL(first.url as string).searchParams.get("k")!;
+    expect(key).toBeTruthy();
     expect(second).not.toHaveProperty("ownerToken");
-    expect(second).toMatchObject({ generation: 2, fileCount: 1, shareUrl: "https://alice-docs.example.com/" });
+    expect(second).toMatchObject({ fileCount: 1, url: "https://alice-docs.example.com/" });
     expect(f.records.has("sites/alice/docs/old.css")).toBe(false);
     expect(f.records.get("sites/alice/docs/index.html")!.body).toBe("two");
-    expect((await getMeta(f.bucket, "alice", "docs"))!.keyHash).toBe(await sha256Hex(first.accessKey as string));
+    expect((await getMeta(f.bucket, "alice", "docs"))!).toMatchObject({ generation: 2, keyHash: await sha256Hex(key) });
   });
 
   it("skips Finder cruft, directories and control-object names", async () => {

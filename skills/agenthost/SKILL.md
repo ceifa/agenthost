@@ -45,7 +45,7 @@ Absolute (`/css/app.css`) and relative (`./css/app.css`) asset paths both resolv
 
 ## What to hand the human
 
-`shareUrl` carries the site's access key (`?k=…`) and logs the visitor in on first open. **The key is only returned on a site's first publish**: a redeploy returns a bare `shareUrl` that asks for a key. So record the link from the first publish of each `id` next to the deliverable, and give that same link again after redeploys. Pages already open in a browser reload themselves when you republish.
+`url` carries the site's access key (`?k=…`) and logs the visitor in on first open. **The key is only returned on a site's first publish**: a redeploy returns a bare `url` that asks for a key. So record the link from the first publish of each `id` next to the deliverable, and give that same link again after redeploys. Pages already open in a browser reload themselves when you republish.
 
 If the link is lost, `POST /key/rotate` mints a new one and kills the old ones. To remove the gate completely, make the site public (see the reference).
 
@@ -70,7 +70,7 @@ curl -s --upload-file demo.mp4 \
 curl -s -X POST -H "Authorization: Bearer $AGENTHOST_OWNER_TOKEN" '<completeUrl>'
 ```
 
-Hand over the `shareUrl` from **step 1**; completing doesn't repeat it.
+Hand over the `url` from **step 1**; completing returns it without the key.
 
 ## Limits
 

@@ -116,4 +116,23 @@ describe("asset creation", () => {
     expect(res.status).toBe(400);
     expect(f.put).not.toHaveBeenCalled();
   });
+
+  it("answers with a url that already carries the access key", async () => {
+    const f = testBucket();
+    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0, legacySiteIds: [] }, true);
+    const res = await apexApp.fetch(new Request("https://example.com/asset?username=alice", {
+      method: "POST",
+      body: JSON.stringify({ name: "demo.mp4", bytes: 10, contentType: "video/mp4" }),
+      headers: { authorization: "Bearer owner", "content-type": "application/json" },
+    }), { ...f.env, ...env } as Env);
+    expect(res.status).toBe(200);
+    const body = await res.json<Record<string, unknown>>();
+    expect(body).not.toHaveProperty("shareUrl");
+    expect(body).not.toHaveProperty("accessKey");
+    const url = new URL(body.url as string);
+    expect(url.searchParams.get("k")).toBeTruthy();
+    const open = await apexApp.fetch(new Request(url), { ...f.env, ...env } as Env);
+    expect(open.status).toBe(302);
+    expect(open.headers.get("set-cookie")).toContain("aa_auth_");
+  });
 });

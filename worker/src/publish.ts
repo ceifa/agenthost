@@ -11,7 +11,6 @@ import {
   sha256Hex,
   contentTypeFor,
   siteHost,
-  siteUrl,
   shareUrl,
   clientIp,
 } from "./ids";
@@ -467,18 +466,14 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
       legacySiteIds: otherSites.legacySiteIds,
     });
   }
-  const generation = meta.generation!;
 
   const host = siteHost(username, siteId, apex);
   return json({
-    url: siteUrl(host),
-    shareUrl: shareUrl(host, accessKey),
+    url: shareUrl(host, accessKey),
     username,
     siteId,
-    generation,
     fileCount,
     bytes: totalBytes,
-    ...(accessKey ? { accessKey } : {}),
     ...(ownerToken ? { ownerToken } : {}),
     ...(isNewUser ? { claimUrl: `https://${apex}/claim?username=${username}` } : {}),
   });

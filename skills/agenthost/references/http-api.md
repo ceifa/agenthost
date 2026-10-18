@@ -4,10 +4,10 @@ The publish contract. Base URL: `https://agenthost.page`. Plain `curl` throughou
 
 ## Authentication
 
-Two secrets, returned **once** by a site's first publish:
+Two secrets, returned **once**:
 
 - **`ownerToken`** — account credential. Sent as `Authorization: Bearer <token>` on redeploys and owner endpoints. Only its SHA-256 is stored; lose it and you can only publish a new URL.
-- **`accessKey`** — per-site password gating the private site. Embedded in `shareUrl` as `?k=<accessKey>`. Persists across redeploys.
+- **access key** — per-site password gating the private site, carried in `url` as `?k=<key>`. Persists across redeploys.
 
 Authenticated requests also need the account `username`, as `?username=<name>` or the `x-agenthost-user` header.
 
@@ -34,20 +34,17 @@ Single-file publish replaces the whole site with that one file. `id` defaults to
 
 ```jsonc
 {
-  "url":        "https://cleverotter4f2-myblog.agenthost.page/", // bare URL (prompts for the key)
-  "shareUrl":   "https://cleverotter4f2-myblog.agenthost.page/?k=<accessKey>", // give THIS to a human
+  "url":        "https://cleverotter4f2-myblog.agenthost.page/?k=<key>", // give THIS to a human
   "username":   "cleverotter4f2",      // account name (auto-generated, no hyphens)
   "siteId":     "myblog",
-  "generation": 2,                     // deploy counter (cache versioning)
   "fileCount":  12,
   "bytes":      48213,
-  "accessKey":  "<shown once — first publish only>",
   "ownerToken": "<shown once — SAVE to redeploy>",
   "claimUrl":   "https://agenthost.page/claim?username=cleverotter4f2" // new accounts only
 }
 ```
 
-`accessKey` and `ownerToken` are returned **only on a site's first publish**; redeploys preserve them silently, and their `shareUrl` comes back bare (no `?k=`), identical to `url`. `ownerToken` and `claimUrl` appear only when the publish minted a new account, which every publish without `Authorization` does.
+The `?k=` in `url` appears **only on a site's first publish**; redeploys keep the key silently and return the bare URL. `ownerToken` and `claimUrl` appear only when the publish minted a new account, which every publish without `Authorization` does.
 
 ## Direct asset upload
 
@@ -57,7 +54,7 @@ Large binary assets use a three-request control flow; the payload itself goes di
 2. **Upload** — `PUT` the file to the returned `uploadUrl`, sending every returned `uploadHeaders` value exactly. The hostname is `*.r2.cloudflarestorage.com`; the Worker never receives the body.
 3. **Complete** — `POST` the returned `completeUrl` with owner auth. Agenthost checks the R2 object size and marks the share page ready.
 
-The initiate response carries `assetId`, `uploadUrl`, `uploadHeaders` (`content-length`, `content-type`, `content-disposition`), `uploadExpiresIn`, `completeUrl`, `url`, `shareUrl` and `accessKey`. The asset's `shareUrl` and `accessKey` exist **only** in that response; complete returns `{ ok, url, name, bytes }`. Opening the `shareUrl` shows the file name, type, size, and a **Download** button. The button targets a short-lived presigned R2 GET, so downloads also bypass the Worker. The object stores `Content-Disposition: attachment`, making browsers download instead of trying to render it.
+The initiate response carries `assetId`, `uploadUrl`, `uploadHeaders` (`content-length`, `content-type`, `content-disposition`), `uploadExpiresIn`, `completeUrl` and `url`, which carries the key. That keyed `url` exists **only** in that response; complete returns `{ ok, url, name, bytes }` with the bare URL. Opening the keyed `url` shows the file name, type, size, and a **Download** button. The button targets a short-lived presigned R2 GET, so downloads also bypass the Worker. The object stores `Content-Disposition: attachment`, making browsers download instead of trying to render it.
 
 The upload URL expires after 15 minutes and is restricted by its signature to one object, exact byte length, content type, and download filename. The download URL expires after five minutes and is generated whenever the share page opens.
 
@@ -81,12 +78,12 @@ curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
 # → { "ok": true, "public": true }
 ```
 
-**`POST /key/rotate`** — new `accessKey`, **invalidates all existing share links**, flips back to private.
+**`POST /key/rotate`** — new access key, **invalidates all existing share links**, flips back to private.
 
 ```bash
 curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \
   'https://agenthost.page/key/rotate?username=<username>&id=myblog'
-# → { "ok": true, "accessKey": "<new key>", "public": false, "shareUrl": "…/?k=<new key>" }
+# → { "ok": true, "public": false, "url": "…/?k=<new key>" }
 ```
 
 **`POST /claim`** — attach an unverified recovery/abuse-contact email.
