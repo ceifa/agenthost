@@ -155,4 +155,20 @@ describe("admin and retention", () => {
     expect(f.get).not.toHaveBeenCalled();
     expect(f.put).not.toHaveBeenCalled();
   });
+
+  it("deletes free accounts left empty after 90 days and keeps paid, young or non-empty ones", async () => {
+    const f = testBucket(1);
+    const now = 91 * 86400000;
+    f.json("_users/empty", user, true);
+    f.json("_users/emptied", user, true);
+    f.json("_sites/emptied/old", meta, true);
+    f.json("_users/young", { ...user, createdAt: now - 89 * 86400000 }, true);
+    f.json("_users/paid", { ...user, plan: "paid" }, true);
+    f.json("_users/site", user, true);
+    f.json("_sites/site/fresh", { ...meta, lastDeployAt: now }, true);
+    f.json("_users/upload", user, true);
+    f.json("_assets/upload/fresh/_meta", { ...asset("upload", "fresh"), lastDeployAt: now }, true);
+    await runRetentionSweep(f.env, now);
+    expect([...f.records.keys()].filter(k => k.startsWith("_users/")).sort()).toEqual(["_users/paid", "_users/site", "_users/upload", "_users/young"]);
+  });
 });
