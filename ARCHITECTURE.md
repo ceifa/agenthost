@@ -239,17 +239,16 @@ tar cf - -C ./dist . | curl -s --data-binary @- \
 8. **Respond 200 JSON:**
 
    ```json
-   { "url": "https://cleverotter4f2-myblog.agenthost.page/",
-     "shareUrl": "https://cleverotter4f2-myblog.agenthost.page/?k=<access-key>",
+   { "url": "https://cleverotter4f2-myblog.agenthost.page/?k=<access-key>",
      "username": "cleverotter4f2",
      "siteId": "myblog",
-     "generation": 2,
-     "accessKey": "<shown once — sites are private; share via shareUrl>",
+     "fileCount": 12,
+     "bytes": 48213,
      "ownerToken": "<shown once — save to redeploy>" }
    ```
 
-   `shareUrl` is what the agent hands to a human — it logs them in on first visit. `url` is
-   the bare (gated) URL. On redeploys, `accessKey`/`ownerToken` aren't re-shown.
+   One link, nothing to choose: the access key exists only inside `url`, and only on the
+   publish that minted it. Redeploys return the bare URL; `ownerToken` isn't re-shown.
 
 **One site-publish path only.** Everything-in-one-POST remains the static-site contract. Large
 binary assets deliberately use the direct-R2 flow below because proxying those bytes through

@@ -63,8 +63,7 @@ app.post("/key/rotate", async (c) => {
   site.meta.keyHash = await sha256Hex(accessKey);
   site.meta.public = false;
   await putMeta(c.env.SITES, owner.username, site.siteId, site.meta);
-  const url = shareUrl(siteHost(owner.username, site.siteId, c.env.APEX_HOST), accessKey);
-  return c.json({ ok: true, accessKey, public: false, shareUrl: url });
+  return c.json({ ok: true, public: false, url: shareUrl(siteHost(owner.username, site.siteId, c.env.APEX_HOST), accessKey) });
 });
 
 app.post("/key/public", async (c) => {

@@ -119,7 +119,6 @@ export const siteHost = (username: string, siteId: string, apex: string) => `${u
 // share link with the access key embedded (?k=). `host` is the full site host.
 // Every surface that prints a link (publish response, key rotation, Share
 // widget) goes through these.
-export const siteUrl = (host: string) => `https://${host}/`;
 export const shareUrl = (host: string, key?: string | null) => `https://${host}/${key ? `?k=${key}` : ""}`;
 
 // Caller identity for the rate limiters. Falls back to a shared sentinel when the

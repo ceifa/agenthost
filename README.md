@@ -15,9 +15,9 @@ tar cf - -C ./dist . | curl -s --data-binary @- \
   'https://agenthost.page/publish?id=myblog'
 ```
 
-You get back a private `shareUrl` (hand it to a human — it logs them in on first
-open), the bare `url`, the `accessKey`, your auto-generated `username`, and an
-`ownerToken` to redeploy the same URL later.
+You get back a private `url` (hand it to a human — the access key rides in it and
+logs them in on first open), your auto-generated `username`, and an `ownerToken`
+to redeploy the same URL later.
 
 Sites are served at `https://{username}-{id}.agenthost.page/` — each site is the
 root of its own subdomain, so both absolute (`/css/app.css`) and relative
