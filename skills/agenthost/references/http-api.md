@@ -7,7 +7,7 @@ The publish contract. Base URL: `https://agenthost.page`. Plain `curl` throughou
 Two secrets, returned **once**:
 
 - **`ownerToken`** — account credential. Sent as `Authorization: Bearer <token>` on redeploys and owner endpoints. Only its SHA-256 is stored; lose it and you can only publish a new URL.
-- **access key** — per-site password gating the private site. It only ever comes back inside `url`, as `?k=<key>`, on the publish that minted it. Persists across redeploys.
+- **access key** — per-site password gating the private site, carried in `url` as `?k=<key>`. Persists across redeploys.
 
 Authenticated requests also need the account `username`, as `?username=<name>` or the `x-agenthost-user` header.
 
