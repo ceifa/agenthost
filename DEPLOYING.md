@@ -10,7 +10,7 @@ email, Access team, API tokens) is supplied by you through config and secrets.
 - A **Cloudflare account** (the free plan is enough to start).
 - A **domain managed by Cloudflare** (the zone must be active on your account).
   This guide calls it `example.com`; substitute yours everywhere.
-- **Node 20+** and **pnpm** (`corepack enable` then `pnpm --version`).
+- **Node 22.22+** and **pnpm** (`corepack enable` then `pnpm --version`).
 - **Wrangler** is installed as a dev dependency — you'll run it via `pnpm`.
 
 Log in once: `pnpm wrangler login`.
