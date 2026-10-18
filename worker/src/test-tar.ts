@@ -11,6 +11,10 @@ export function header(name: string, size: number, flag = "0"): Uint8Array {
   return h;
 }
 
+export async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
+}
+
 export function tar(entries: { name: string; body?: Uint8Array | string; flag?: string }[], end = true): Uint8Array {
   const parts: Uint8Array[] = [];
   for (const e of entries) {

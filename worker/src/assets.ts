@@ -6,8 +6,8 @@ import { requireOwner, type AppContext } from "./auth";
 import { checkAccessKey } from "./access";
 import { NOINDEX, clientIp } from "./http";
 import {
-  assetMetaKey,
   assetObjectKey,
+  removeAsset,
   assetUsage,
   getAssetMeta,
   putAssetMeta,
@@ -58,7 +58,6 @@ function assetUrl(apex: string, username: string, id: string): string {
   return `https://${apex}/a/${encodeURIComponent(username)}/${encodeURIComponent(id)}`;
 }
 
-// The caller's own asset named by the route, or the error response to return.
 async function ownedAsset(c: AppContext): Promise<{ username: string; id: string; meta: AssetMeta } | Response> {
   const owner = await requireOwner(c);
   if (owner instanceof Response) return owner;
@@ -169,7 +168,7 @@ export async function completeAsset(c: AppContext): Promise<Response> {
 export async function deleteAsset(c: AppContext): Promise<Response> {
   const owned = await ownedAsset(c);
   if (owned instanceof Response) return owned;
-  await c.env.SITES.delete([owned.meta.objectKey, assetMetaKey(owned.username, owned.id)]);
+  await removeAsset(c.env.SITES, owned.meta);
   return c.json({ ok: true });
 }
 

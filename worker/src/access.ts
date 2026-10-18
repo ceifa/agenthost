@@ -1,6 +1,4 @@
-// The access-key gate in front of private sites and private assets. A cookie
-// holding the key passes; a matching ?k= sets that cookie and redirects to drop
-// the key from the URL; anything else is shown the password prompt.
+// The access-key gate shared by private sites and private assets.
 
 import { AUTH_COOKIE_MAX_AGE } from "./config";
 import { sha256Hex, timingSafeEqual } from "./ids";

@@ -4,12 +4,9 @@ import { getMeta, getUser, userUsage } from "./storage";
 import { sha256Hex } from "./ids";
 import { LIMITS } from "./config";
 import { testBucket } from "./test-bucket";
-import { header, tar } from "./test-tar";
+import { gzip, header, tar } from "./test-tar";
 
 afterEach(() => vi.unstubAllGlobals());
-
-const gzip = async (bytes: Uint8Array) =>
-  new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
 
 async function fixture(legacy = false) {
   const f = testBucket();

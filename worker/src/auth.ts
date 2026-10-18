@@ -40,7 +40,6 @@ export async function verifyOwner(req: Request, env: Env): Promise<OwnerResult> 
 
 export type AppContext = Context<{ Bindings: Env }>;
 
-// verifyOwner for a Hono route: the owner, or the JSON error response to return.
 export async function requireOwner(c: AppContext): Promise<OwnerCtx | Response> {
   const owner = await verifyOwner(c.req.raw, c.env);
   return owner.ok ? owner.ctx : c.json({ error: owner.error }, owner.status);

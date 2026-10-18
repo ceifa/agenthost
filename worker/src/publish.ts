@@ -38,14 +38,11 @@ import {
   type UserRecord,
 } from "./storage";
 
-// A request we refuse, with the status to refuse it with.
 class PublishError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
   }
 }
-
-// ── reading the body ──
 
 // Returns a safe relative key, or null to skip the entry.
 function safePath(raw: string): string | null {
@@ -176,8 +173,6 @@ async function readBounded(body: ReadableStream<Uint8Array>, max: number): Promi
   return out;
 }
 
-// ── writing files ──
-
 // Caps in-flight R2 puts so a wide archive can't spawn hundreds at once.
 class PutGate {
   private inFlight = new Set<Promise<unknown>>();
@@ -243,7 +238,6 @@ interface Target {
   budgetError: () => PublishError;
 }
 
-// One raw document, written under a name that serves at `/`.
 async function writeDocument(
   t: Target,
   name: string,
@@ -277,7 +271,6 @@ async function writeDocument(
   return { keys: new Set([key]), bytes: bytes.byteLength, fileCount: 1 };
 }
 
-// A tar (optionally gzipped), each entry streamed into R2 as it arrives.
 async function writeArchive(t: Target, stream: ReadableStream<Uint8Array>): Promise<Written> {
   const gate = new PutGate(PUT_CONCURRENCY);
   const written: Written = { keys: new Set(), bytes: 0, fileCount: 0 };
@@ -328,27 +321,21 @@ function failureResponse(error: unknown): Response {
   return json({ error: `bad archive: ${message}` }, 400);
 }
 
-// ── the request ──
-
-interface Account {
-  username: string;
-  plan: "free" | "paid";
-  user?: UserRecord; // absent for an account this request is minting
-  ownerToken?: string; // only for a new account — returned once, never stored
-}
+// A minted account's token is returned once and never stored.
+type Account = { username: string; user: UserRecord } | { username: string; ownerToken: string };
 
 async function resolveAccount(req: Request, env: Env): Promise<Account | Response> {
   if (req.headers.has("authorization")) {
     const owner = await verifyOwner(req, env);
     if (!owner.ok) return json({ error: owner.error }, owner.status);
-    return { username: owner.ctx.username, plan: owner.ctx.user.plan, user: owner.ctx.user };
+    return { username: owner.ctx.username, user: owner.ctx.user };
   }
   // Anonymous → always a brand-new account (owned sites require the token).
   let username: string;
   do {
     username = generateUsername();
   } while (await env.SITES.head(userKey(username)));
-  return { username, plan: "free", ownerToken: generateOwnerToken() };
+  return { username, ownerToken: generateOwnerToken() };
 }
 
 // Bytes held by the account's other sites, and — while its inventory is still
@@ -377,7 +364,9 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const account = await resolveAccount(req, env);
   if (account instanceof Response) return account;
-  const { username, plan, user } = account;
+  const { username } = account;
+  const user = "user" in account ? account.user : undefined;
+  const plan = user?.plan ?? "free";
   const siteId = sanitizeSiteId(url.searchParams.get("id") ?? req.headers.get("x-agenthost-site")) ?? DEFAULT_SITE_ID;
 
   // Fail fast on over-quota: budget = min(per-site cap, account quota minus other sites).
@@ -418,7 +407,7 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
 
   // Delete files removed since the last deploy (keep the _gen/_meta control
   // objects). A brand-new username can't have prior objects — skip the list.
-  if (user) {
+  if ("user" in account) {
     const prefix = sitePrefix(username, siteId);
     const orphans = (await listAll(env.SITES, prefix))
       .map((o) => o.key)
@@ -426,7 +415,7 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
     await deleteKeys(env.SITES, orphans);
   } else {
     await putUser(env.SITES, username, {
-      tokenHash: await sha256Hex(account.ownerToken!),
+      tokenHash: await sha256Hex(account.ownerToken),
       legacySiteIds: [],
       plan: "free",
       createdAt: Date.now(),
@@ -479,6 +468,6 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
     fileCount: written.fileCount,
     bytes: written.bytes,
     ...(accessKey ? { accessKey } : {}),
-    ...(account.ownerToken ? { ownerToken: account.ownerToken, claimUrl: `https://${env.APEX_HOST}/claim?username=${username}` } : {}),
+    ...("ownerToken" in account ? { ownerToken: account.ownerToken, claimUrl: `https://${env.APEX_HOST}/claim?username=${username}` } : {}),
   });
 }

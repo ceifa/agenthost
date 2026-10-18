@@ -616,11 +616,11 @@ agenthost/
 ├─ pnpm-workspace.yaml
 ├─ turbo.json                   # build/deploy task graph across packages
 ├─ worker/                      # (2) THE BACKEND — the entire server (Hono on Workers)
-│  ├─ src/index.ts              # fetch entry: routes by Host (apex / admin / site subdomain / custom domain) + cron
+│  ├─ src/index.ts              # fetch entry: routes by Host, runs the cron
 │  ├─ src/apex.ts               # apex Hono app: /publish, owner key endpoints, /llms.txt, /skill/*, landing fallthrough
 │  ├─ src/publish.ts            # streaming files → bounded R2 puts → delete orphans → merged metadata commit
 │  ├─ src/serve.ts              # host→username, fresh metadata, gen-keyed Cache API, R2 get, /_gen probe, widget + live-reload inject
-│  ├─ src/access.ts             # access-key gate shared by private sites and assets (cookie, ?k login, throttled prompt)
+│  ├─ src/access.ts             # access-key gate shared by private sites and assets
 │  ├─ src/auth.ts               # owner-token check and Cloudflare Access JWT verification
 │  ├─ src/storage.ts            # R2 key layout, metadata records, paginated listings, usage
 │  ├─ src/markdown.ts           # markdown → docs shell (sidebar, TOC, pager); templates.ts holds the HTML

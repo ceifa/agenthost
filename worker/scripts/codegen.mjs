@@ -1,10 +1,5 @@
-// Generates the modules the Worker imports instead of loading files at runtime:
-// minified browser scripts and the agent skill, both as plain strings, so neither
-// wrangler, tsc nor vitest needs a loader rule. Runs before dev, deploy,
-// typecheck and test (see package.json).
-//
-// Every browser script in src/client/*.ts is bundled with rolldown and written to
-// src/client/gen/<name>.ts as `export default "<code>"`.
+// Browser scripts and the agent skill become plain-string modules, so wrangler,
+// tsc and vitest need no loader rule.
 
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
