@@ -35,6 +35,25 @@ describe("admin request bodies", () => {
   });
 });
 
+describe("account list", () => {
+  it("flags which accounts on the page share a site or a file", async () => {
+    const f = testBucket(3);
+    for (const name of ["alice", "bob", "carol", "dan"]) f.json(`_users/${name}`, user, true);
+    // Owners outside the page and a second LIST page around it.
+    for (const name of ["aaron", "alice", "amy", "anna", "dave"]) f.records.set(`sites/${name}/docs/index.html`, { body: "x" });
+    f.json("_sites/alice/docs", { generation: 1 }, true);
+    f.records.set("sites/carol/old/_meta", { body: "{}" });
+    f.json("_assets/dan/a1/_meta", { id: "a1" }, true);
+    const flags = async (cursor = "") => {
+      const res = await handleAdmin(new Request(`https://admin.example.com/admin/api/users${cursor && `?cursor=${cursor}`}`), f.env);
+      return res.json<{ users: { username: string; hasShares: boolean }[]; cursor: string | null }>();
+    };
+    const first = await flags();
+    const second = await flags(first.cursor!);
+    expect(Object.fromEntries([...first.users, ...second.users].map((u) => [u.username, u.hasShares]))).toEqual({ alice: true, bob: false, carol: true, dan: true });
+  });
+});
+
 describe("custom domains", () => {
   it("stores the domain the way the Host router looks it up", async () => {
     const f = fixture();

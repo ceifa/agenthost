@@ -208,6 +208,26 @@ export async function listUsersPage(b: R2Bucket, cursor?: string): Promise<Recor
   return { items: records.filter((r): r is { username: string; user: UserRecord } => r !== null), cursor: page.truncated ? page.cursor : undefined };
 }
 
+// Which of `usernames` (one users page, in key order) own anything under
+// `root` (`sites/`, `_assets/`). A delimited LIST names up to 1000 owners per
+// call, so a page costs one LIST per thousand owners instead of one per account.
+export async function owners(b: R2Bucket, root: string, usernames: string[]): Promise<Set<string>> {
+  const owners = new Set<string>();
+  const first = usernames[0], last = usernames.at(-1);
+  if (first === undefined || last === undefined) return owners;
+  let cursor: string | undefined;
+  do {
+    const page = await b.list({ prefix: root, delimiter: "/", limit: 1000, ...(cursor ? { cursor } : { startAfter: root + first }) });
+    for (const prefix of page.delimitedPrefixes) {
+      const owner = prefix.slice(root.length, -1);
+      if (owner > last) return owners;
+      owners.add(owner);
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return owners;
+}
+
 // Cursor phases let a mixed account enumerate flat records and its remaining
 // legacy IDs without repeatedly listing uploaded files. Cursors are opaque to
 // callers and validated before being passed to R2.

@@ -35,7 +35,8 @@ export function testBucket(pageSize = 1000) {
       const end = opts.delimiter ? k.indexOf(opts.delimiter, prefix.length) : -1;
       return end < 0 ? k : k.slice(0, end + opts.delimiter!.length);
     }))];
-    const remaining = entries.filter(k => !opts.cursor || k > opts.cursor);
+    const after = opts.cursor ?? opts.startAfter;
+    const remaining = entries.filter(k => !after || k > after);
     const selected = remaining.slice(0, Math.min(pageSize, opts.limit ?? 1000));
     const objects = selected.filter(k => records.has(k)).map(k => {
       const obj = object(k, records.get(k)!);
