@@ -55,7 +55,7 @@ api.get("/sites", async (c) => {
   let page;
   try { page = await listSitesPage(c.env.SITES, username, user, c.req.query("cursor")); }
   catch (error) {
-    if (error instanceof Error && (error.message === "invalid cursor" || error instanceof SyntaxError || error.name === "InvalidCharacterError")) return c.json({ error: "invalid cursor" }, 400);
+    if (error instanceof Error && error.message === "invalid cursor") return c.json({ error: "invalid cursor" }, 400);
     throw error;
   }
   const sites = page.items.map(({ siteId, meta: m }) => ({
