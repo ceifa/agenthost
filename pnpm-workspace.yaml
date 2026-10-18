@@ -3,9 +3,9 @@ packages:
   - landing
   - admin
 
-onlyBuiltDependencies:
-  - esbuild
-  - workerd
-  - sharp
-  - "@cloudflare/workerd-darwin-arm64"
-  - "@cloudflare/workerd-darwin-64"
+allowBuilds:
+  esbuild: true
+  workerd: true
+  sharp: true
+  "@cloudflare/workerd-darwin-arm64": true
+  "@cloudflare/workerd-darwin-64": true
