@@ -3,10 +3,11 @@
 // deployment, and limits are rendered from config so a quota bump can't silently
 // make this lie.
 
-import { ASSET_LIMITS, LIMITS, formatBytes } from "./config";
-import { credentialsCommand, credentialsFile, skillFiles, writeCredentialsCommand } from "./skill";
+import { ASSET_LIMITS, LIMITS, MB } from "./config";
 
 const free = LIMITS.free;
+const freeAssets = ASSET_LIMITS.free;
+const mb = (bytes: number) => `${Math.round(bytes / MB)} MB`;
 
 export const llmsTxt = (apexHost: string): string => `# agenthost — publish a static site or docs, get a private share link. No signup.
 
@@ -29,30 +30,21 @@ tar cf - -C ./dist . | curl -s --data-binary @- \\
   "ownerToken": "<SAVE THIS to redeploy the same URL later>"
 }
 
-## Keep the account (one per host, reused across sessions)
-Save username and ownerToken from the first response in the curl config ${credentialsFile(apexHost)},
-in your home directory and never in a project. Put them in place of OWNER_TOKEN and USERNAME,
-and don't echo the token:
-${writeCredentialsCommand(apexHost)}
-A human who already has an account runs this instead; it prompts for both, with the token hidden:
-${credentialsCommand(apexHost)}
-Check for it with \`test -f ${credentialsFile(apexHost)}\` before minting another account.
-
-## Redeploy the SAME url (needs the account)
-tar cf - -C ./dist . | curl -s -K ${credentialsFile(apexHost)} --data-binary @- \\
-  'https://${apexHost}/publish?id=myblog'
+## Redeploy the SAME url (needs ownerToken)
+tar cf - -C ./dist . | curl --data-binary @- \\
+  -H 'Authorization: Bearer <ownerToken>' \\
+  'https://${apexHost}/publish?id=myblog&username=<username>'
 
 ## Large downloadable assets (existing account required)
-Three calls, all with -K ${credentialsFile(apexHost)} except the PUT, which goes to R2
-and must not carry your token:
-1. POST https://${apexHost}/asset with JSON
+Three calls, all with -H 'Authorization: Bearer <ownerToken>' except the PUT:
+1. POST https://${apexHost}/asset?username=<username> with JSON
    {"name":"demo.mp4","bytes":<exact size>,"contentType":"video/mp4"}
    → uploadUrl, uploadHeaders, completeUrl, shareUrl (the shareUrl only comes back here)
 2. curl --upload-file demo.mp4 -H '<each uploadHeaders entry>' '<uploadUrl>'   (within 15 min)
 3. POST <completeUrl> → {"ok":true}
 The file goes straight from the client to R2. Opening the shareUrl shows a Download
 button whose bytes also come directly from R2.
-Free max: ${formatBytes(ASSET_LIMITS.free.perAsset)} per asset. Paid max: ${formatBytes(ASSET_LIMITS.paid.perAsset)} per asset.
+Free max: ${mb(freeAssets.perAsset)} per asset. Paid max: 5 GB per asset.
 
 ## Site asset paths
 Each site is the root of its own subdomain ({username}-{id}.${apexHost}), so
@@ -67,14 +59,15 @@ both absolute and relative asset paths work:
   single file of any other type, add ?file=<name>.
 - Sites are PRIVATE by default. Share the shareUrl; visitors stay logged in via a cookie.
   Every page has a "Share" button that copies a key-embedded link.
-- Limits (free): ${free.filesPerSite} files, ${formatBytes(free.perFile)}/file, ${formatBytes(free.perSite)}/site, ${formatBytes(free.perUser)}/account. Hosted sites are noindex.
+- Limits (free): ${free.filesPerSite} files, ${mb(free.perFile)}/file, ${mb(free.perSite)}/site, ${mb(free.perUser)}/account. Hosted sites are noindex.
 - Free sites are deleted ${free.retentionDays} days after the last publish — redeploy to keep alive.
 
 ## Install as a skill (optional — persist this contract)
-This publish contract ships as an Agent Skill rendered for ${apexHost}, so you don't
-have to re-read this file on every run. Install it once; rerun to update:
-curl -fsSL https://${apexHost}/skill/install.sh | sh
-An agent can instead save each of the skill's files into its own skills directory,
-in a folder named after the skill's \`name\`, keeping their paths:
-${Object.keys(skillFiles).map((file) => `- https://${apexHost}/skill/${file} → <name>/${file}`).join("\n")}
+This publish contract ships as an Agent Skill (SKILL.md + references), so you don't
+have to re-read this file on every run. Install it once and it's always in reach.
+- Any agent: fetch https://${apexHost}/skill/SKILL.md and its references under /skill/.
+- From source: https://github.com/ceifa/agenthost/tree/main/skills/agenthost
+- OpenClaw: openclaw skills install @ceifa/agenthost
+- skills.sh: npx skills add ceifa/agenthost --skill agenthost
+- Hermes: hermes skills tap add ceifa/agenthost
 `;

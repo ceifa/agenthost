@@ -147,7 +147,8 @@ echo '<h1>hello</h1>' | curl -s --data-binary @- \
 
 The JSON response includes a `shareUrl` — open it and you should see the page over
 valid HTTPS on `{username}-test.example.com`. `https://example.com/llms.txt`
-should return the publish instructions with your domain baked in.
+should return the publish instructions with your domain baked in, and so should
+`https://example.com/skill/SKILL.md` for the agent skill.
 
 ## Local development
 
@@ -179,7 +180,6 @@ publish → serve loop runs offline against a fixture directory.
 | `R2_BUCKET_NAME` | `deploy.env` | assets | Bucket for sites and direct asset uploads (default `agenthost-sites`). |
 | `R2_ACCESS_KEY_ID` | secret | assets | Bucket-scoped S3 access key used only to sign URLs. |
 | `R2_SECRET_ACCESS_KEY` | secret | assets | Bucket-scoped S3 secret used only to sign URLs. |
-| `SKILL_NAME` | `wrangler.jsonc` var | no | Name of the Agent Skill served under `/skill/`. Defaults to `APEX_HOST` with dots as dashes (`example-com`). An invalid name makes `/skill/*` return 500. |
 | `ALLOWED_ADMIN_EMAIL` | secret (`wrangler secret put`) | admin only | Email allowed into the admin. |
 | `ACCESS_TEAM_DOMAIN` | secret (`wrangler secret put`) | admin only | Zero Trust team name. |
 | `ACCESS_AUD` | secret (`wrangler secret put`) | admin only | Access Application AUD tag. |

@@ -1,3 +1,7 @@
+// Apex / control-plane app on agenthost.page: /publish, owner endpoints,
+// /llms.txt and /skill/. Anything else falls through to Static Assets (the
+// landing page).
+
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "./env";
@@ -6,7 +10,7 @@ import { verifyOwner, type OwnerCtx } from "./auth";
 import { getMeta, putMeta, putUser, type SiteMeta } from "./storage";
 import { generateAccessKey, sha256Hex, sanitizeSiteId, siteHost, shareUrl } from "./ids";
 import { llmsTxt } from "./llms";
-import { renderTemplate, skillName, skillRoutes, skillVars } from "./skill";
+import { skillFile } from "./skill";
 import { completeAsset, createAsset, deleteAsset, serveAsset } from "./assets";
 
 type Ctx = Context<{ Bindings: Env }>;
@@ -83,20 +87,15 @@ app.post("/key/public", async (c) => {
   return c.json({ ok: true, public: makePublic });
 });
 
-const DOC_CACHE = "public, max-age=3600";
-
 app.get("/llms.txt", (c) =>
-  c.body(llmsTxt(c.env.APEX_HOST), 200, { "content-type": "text/plain; charset=utf-8", "cache-control": DOC_CACHE }),
+  c.body(llmsTxt(c.env.APEX_HOST), 200, { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" }),
 );
 
-for (const [path, { template, contentType }] of Object.entries(skillRoutes)) {
-  app.get(path, (c) => {
-    const name = skillName(c.env);
-    if (!name.ok) return c.json({ error: name.error }, 500);
-    const body = renderTemplate(template, skillVars(c.env.APEX_HOST, name.name));
-    return c.body(body, 200, { "content-type": contentType, "cache-control": DOC_CACHE });
-  });
-}
+app.get("/skill/*", (c) => {
+  const body = skillFile(c.req.path.slice("/skill/".length), c.env.APEX_HOST);
+  if (body === null) return c.notFound();
+  return c.body(body, 200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "public, max-age=3600" });
+});
 
 // Unmatched paths → Static Assets (the landing page). Registered as the Hono
 // notFound handler so route handlers can return real 404s without being
