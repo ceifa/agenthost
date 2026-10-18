@@ -70,7 +70,7 @@ Pending uploads are deleted after one day. `DELETE /a/:username/:assetId?usernam
 
 All require `Authorization: Bearer <ownerToken>` + `username`, and (except `/claim`) the site `id`.
 
-**`POST /key/public`** — drop or restore the access gate.
+**`POST /key/public`** — drop or restore the access gate. `public=true|false` is required (query or JSON body); anything else is a 400.
 
 ```bash
 curl -s -X POST -H 'Authorization: Bearer <ownerToken>' \

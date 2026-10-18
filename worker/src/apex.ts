@@ -72,7 +72,11 @@ app.post("/key/public", async (c) => {
   const site = await requireSite(c, owner.username);
   if (site instanceof Response) return site;
 
-  const makePublic = ((await readBody(c)).public as boolean | undefined) ?? c.req.query("public") !== "false";
+  const value = (await readBody(c)).public ?? c.req.query("public");
+  if (![true, false, "true", "false"].includes(value as boolean | string)) {
+    return c.json({ error: "public=true|false required" }, 400);
+  }
+  const makePublic = value === true || value === "true";
   site.meta.public = makePublic;
   await putMeta(c.env.SITES, owner.username, site.siteId, site.meta);
   return c.json({ ok: true, public: makePublic });
