@@ -20,6 +20,31 @@ export interface Peeked {
   cancel: (reason?: unknown) => Promise<void>;
 }
 
+// What abandoning a request body may still read before cancelling it.
+export const ABANDON_LIMITS = { bytes: 1024 * 1024, ms: 250 };
+
+// workerd stalls the connection's next request when a request body is read
+// partway and then cancelled (an untouched one is fine, it drains that itself).
+// So read out what is already in flight first. A body still arriving past these
+// bounds is cut off: a client mid-upload is not worth waiting for.
+async function abandon(reader: ReadableStreamDefaultReader<Uint8Array>, reason: unknown): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<null>(resolve => (timer = setTimeout(() => resolve(null), ABANDON_LIMITS.ms)));
+  try {
+    for (let left = ABANDON_LIMITS.bytes; left > 0;) {
+      const next = await Promise.race([reader.read(), timeout]);
+      if (next === null) break;
+      if (next.done) return;
+      left -= next.value?.byteLength ?? 0;
+    }
+  } catch {
+    return; // the body errored: nothing left on the wire to drain
+  } finally {
+    clearTimeout(timer);
+  }
+  await reader.cancel(reason).catch(() => {});
+}
+
 // Reads up to `n` bytes *without* consuming them: the returned stream replays the
 // buffered head and then hands out the untouched rest, so both the single-file
 // reader and the tar parser still see a complete body.
@@ -71,12 +96,10 @@ export async function peek(input: ReadableStream<Uint8Array>, n = SNIFF_BYTES): 
         if (value?.byteLength) return controller.enqueue(value);
       }
     },
-    async cancel(reason) {
-      await reader.cancel(reason);
-    },
+    cancel: reason => abandon(reader, reason),
   });
 
-  return { head, stream, cancel: reason => reader.cancel(reason) };
+  return { head, stream, cancel: reason => abandon(reader, reason) };
 }
 
 /** gzip member header (RFC 1952): 1f 8b. */
