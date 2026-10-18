@@ -112,10 +112,13 @@ async function getJson<T>(b: R2Bucket, key: string): Promise<T | null> {
   }
 }
 
-async function putJson(b: R2Bucket, key: string, value: unknown): Promise<void> {
+const fitsInline = (encoded: string) => new TextEncoder().encode(encoded).byteLength <= 6000;
+
+async function putJson(b: R2Bucket, key: string, value: unknown, onlyIf?: R2Conditional): Promise<void> {
   const encoded = JSON.stringify(value);
-  const inline = new TextEncoder().encode(encoded).byteLength <= 6000;
+  const inline = fitsInline(encoded);
   await b.put(key, inline ? "" : encoded, {
+    onlyIf,
     httpMetadata: { contentType: "application/json" },
     // No extra object or PUT. Large legacy catalogs fall back to a body GET.
     customMetadata: inline ? { json: encoded } : {},
@@ -172,7 +175,11 @@ export async function indexedJson<T>(b: R2Bucket, obj: R2Object): Promise<T | nu
   if (json) {
     try { return JSON.parse(json) as T; } catch { /* old/corrupt index: read body */ }
   }
-  return getJson<T>(b, obj.key);
+  const value = await getJson<T>(b, obj.key);
+  // Records from before inline metadata cost this GET on every listing. Index
+  // each one once, unless it changed since it was listed.
+  if (value !== null && fitsInline(JSON.stringify(value))) await putJson(b, obj.key, value, { etagMatches: obj.etag });
+  return value;
 }
 
 // Bound fallback reads for pre-indexed objects; a wide account cannot open

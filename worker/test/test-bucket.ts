@@ -8,7 +8,7 @@ export function testBucket(pageSize = 1000) {
   const records = new Map<string, Stored>();
   const object = (key: string, value: Stored) => ({
     key, size: new TextEncoder().encode(value.body).length,
-    httpEtag: '"test-etag"', uploaded: new Date(0),
+    etag: JSON.stringify([value.body, value.customMetadata]), httpEtag: '"test-etag"', uploaded: new Date(0),
     customMetadata: value.customMetadata, httpMetadata: value.httpMetadata,
     writeHttpMetadata: (h: Headers) => { if (value.httpMetadata?.contentType) h.set("content-type", value.httpMetadata.contentType); },
   });
@@ -23,6 +23,9 @@ export function testBucket(pageSize = 1000) {
     return value ? object(key, value) : null;
   });
   const put = vi.fn(async (key: string, body: unknown, opts?: R2PutOptions) => {
+    const current = records.get(key);
+    const etagMatches = (opts?.onlyIf as R2Conditional | undefined)?.etagMatches;
+    if (etagMatches !== undefined && (!current || object(key, current).etag !== etagMatches)) return null;
     const bytes = body instanceof ReadableStream ? await new Response(body as ReadableStream<Uint8Array>).text()
       : typeof body === "string" ? body : new TextDecoder().decode(body as Uint8Array);
     records.set(key, { body: bytes, customMetadata: opts?.customMetadata, httpMetadata: opts?.httpMetadata as R2HTTPMetadata });

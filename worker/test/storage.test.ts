@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { assetUsage, getMeta, getGen, getUser, putMeta, putUser, listSitesPage, listUsersPage, userUsage, mapBounded } from "../src/storage";
+import { assetUsage, getMeta, getGen, getUser, indexedJson, putMeta, putUser, listSitesPage, listUsersPage, userUsage, mapBounded } from "../src/storage";
 import { handleAdmin } from "../src/admin";
 import { runRetentionSweep } from "../src/sweep";
 import { testBucket } from "./test-bucket";
@@ -73,6 +73,32 @@ describe("compact metadata and compatibility", () => {
     for (const bad of [btoa("null"), btoa('{"phase":"bad","offset":0}'), btoa('{"phase":"flat","offset":-1}')]) {
       await expect(listSitesPage(f.bucket, "u", mixed, bad)).rejects.toThrow("invalid cursor");
     }
+  });
+
+  it("indexes records stored before inline metadata so the next listing skips their GETs", async () => {
+    const f = testBucket();
+    f.json("_users/u", user);
+    f.json("_sites/u/docs", meta);
+    f.json("_assets/u/a/_meta", asset("u", "a"));
+    expect((await listUsersPage(f.bucket)).items[0]!.user).toEqual(user);
+    expect(await userUsage(f.bucket, "u", undefined, user)).toBe(10);
+    expect(await assetUsage(f.bucket, "u")).toBe(20);
+    expect(f.get).toHaveBeenCalledTimes(3);
+    vi.clearAllMocks();
+    expect((await listUsersPage(f.bucket)).items[0]!.user).toEqual(user);
+    expect(await userUsage(f.bucket, "u", undefined, user)).toBe(10);
+    expect(await assetUsage(f.bucket, "u")).toBe(20);
+    expect(f.get).not.toHaveBeenCalled();
+  });
+
+  it("leaves a record alone when it changed after being listed", async () => {
+    const f = testBucket();
+    f.json("_users/u", user);
+    const [listed] = (await f.bucket.list({ prefix: "_users/" })).objects;
+    f.json("_users/u", { ...user, plan: "paid" });
+    const before = f.records.get("_users/u");
+    await indexedJson(f.bucket, listed!);
+    expect(f.records.get("_users/u")).toBe(before);
   });
 
   it("discovers committed flat records even if legacy catalog migration was interrupted", async () => {
