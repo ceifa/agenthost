@@ -47,6 +47,7 @@ function fixture(files: Record<string, string>) {
       return content === undefined ? null : { key, size: content.length, httpEtag: '"fixture-etag"', uploaded: new Date("2026-01-01T00:00:00Z"), writeHttpMetadata: (headers: Headers) => headers.set("content-type", "text/plain") };
     }),
     list: vi.fn(async () => ({ objects: [...objects].map(([key, body]) => ({ key, size: body.length })), truncated: false })),
+    put: vi.fn(async () => ({})),
   };
   vi.stubGlobal("caches", { default: cache });
   // HTML rewriting is exercised by the workerd smoke check; this fixture tests
@@ -90,7 +91,8 @@ describe("serving I/O budgets", () => {
     expect(unchanged.status).toBe(304);
     expect(await unchanged.text()).toBe("");
     expect(f.bucket.get.mock.calls.map(([key]) => key)).toEqual(controlKeys);
-    expect(f.cache.match).toHaveBeenCalledOnce(); // route only; no body lookup
+    // Route only; no body lookup. (The visit marker is bookkeeping, not serving.)
+    expect(f.cache.match.mock.calls.filter(([req]) => !(req as Request).url.startsWith("https://as-visits.internal/"))).toHaveLength(1);
     f.meta.public = false;
     f.meta.accessKey = "secret";
     expect((await f.request("/", { "if-none-match": etag })).status).toBe(401);
@@ -377,5 +379,30 @@ describe("shares without a page of their own", () => {
     expect((await f.request("/?k=legacy")).status).toBe(302);
     expect((await f.request("/", { cookie: "as_auth_docs=legacy" })).status).toBe(200);
     await f.settle();
+  });
+});
+
+describe("visits", () => {
+  it("records a served visit once a day, and never a denied or missing one", async () => {
+    // A fresh module: the isolate's memory of today's visits is per process.
+    vi.resetModules();
+    const { handleSite: serve } = await import("../src/serve");
+    const f = fixture({ "index.html": "<body>Home</body>" });
+    f.meta.public = false;
+    f.meta.accessKey = "key";
+    const pending: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => pending.push(p) } as unknown as ExecutionContext;
+    const env = { SITES: f.bucket, APEX_HOST: "example.com" } as unknown as Env;
+    const request = async (path: string, headers?: HeadersInit) => {
+      await (await serve(new Request("https://u-docs.example.com" + path, { headers }), env, ctx, "u", "docs", "u-docs.example.com")).text();
+      await Promise.all(pending.splice(0));
+    };
+    await request("/");
+    await request("/missing.css", { cookie: "as_auth_docs=key" });
+    expect(f.bucket.put).not.toHaveBeenCalled();
+    await request("/", { cookie: "as_auth_docs=key" });
+    expect(f.bucket.put).toHaveBeenCalledWith("_visits/u/docs", "");
+    await request("/", { cookie: "as_auth_docs=key" });
+    expect(f.bucket.put).toHaveBeenCalledOnce();
   });
 });

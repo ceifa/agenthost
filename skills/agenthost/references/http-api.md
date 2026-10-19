@@ -78,7 +78,7 @@ JSON `{ "error": "<message>" }`:
 | | Free | Paid |
 |---|---|---|
 | Storage, across all shares | 500 MB | unlimited |
-| Retention | 15 days after the last change | forever |
+| Retention | 15 days without a visit or a change | forever |
 
 Any plan: up to 1000 files per share and 5 GB per file. A single file sent without `Content-Length` is capped at 32 MB.
 

@@ -1,11 +1,11 @@
-// Nightly retention sweep. Delete shares whose last publish is older than their
+// Nightly retention sweep. Delete shares neither changed nor visited within their
 // plan's retention window (retentionDays: null = infinite, never swept), drop
 // uploads never completed, then free accounts left with nothing once they are
 // old enough.
 
 import type { Env } from "./env";
 import { LIMITS } from "./config";
-import { deleteSite, listUsersPage, paginate, putMeta, siteFileKey, siteRecords, userKey } from "./storage";
+import { deleteSite, lastVisits, listUsersPage, paginate, putMeta, siteFileKey, siteRecords, userKey } from "./storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Long enough that an account mid-first-publish is never mistaken for an empty one.
@@ -28,10 +28,12 @@ export async function runRetentionSweep(env: Env, now: number): Promise<SweepRes
   };
   for await (const { username, user } of paginate(cursor => listUsersPage(env.SITES, cursor))) {
     const days = LIMITS[user.plan].retentionDays;
+    const visits = days === null ? new Map<string, number>() : await lastVisits(env.SITES, username);
     let kept = 0;
     for await (const { siteId, meta } of siteRecords(env.SITES, username)) {
       checked++;
-      if (days !== null && now - meta.lastDeployAt > days * DAY_MS) {
+      const lastActive = Math.max(meta.lastDeployAt, visits.get(siteId) ?? 0);
+      if (days !== null && now - lastActive > days * DAY_MS) {
         await deleteSite(env.SITES, username, siteId);
         recordDelete(`${username}/${siteId}`);
         continue;

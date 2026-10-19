@@ -38,6 +38,9 @@ export const sitePrefix = (u: string, s: string) => `sites/${u}/${s}/`;
 export const userSitesPrefix = (u: string) => `sites/${u}/`;
 export const metaKey = (u: string, s: string) => `_sites/${u}/${s}`;
 export const userKey = (u: string) => `_users/${u}`;
+// An empty object whose upload time is the share's last visit. Kept apart from
+// the share record so a visit never races a publish's read-modify-write.
+export const visitKey = (u: string, s: string) => `_visits/${u}/${s}`;
 export const domainKey = (host: string) => `_domains/${host}`;
 
 // The live-reload probe answers /_gen, so a published file there could never be served.
@@ -188,5 +191,11 @@ export async function deleteSite(b: R2Bucket, username: string, siteId: string):
   for await (const page of objectPages(b, sitePrefix(username, siteId))) {
     await deleteKeys(b, page.objects.map(o => o.key));
   }
-  await b.delete(metaKey(username, siteId));
+  await b.delete([metaKey(username, siteId), visitKey(username, siteId)]);
+}
+
+// When each of a user's shares was last visited, by share id.
+export async function lastVisits(b: R2Bucket, username: string): Promise<Map<string, number>> {
+  const prefix = `_visits/${username}/`;
+  return new Map((await listAll(b, prefix)).map(o => [o.key.slice(prefix.length), o.uploaded.getTime()]));
 }
