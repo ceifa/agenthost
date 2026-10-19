@@ -117,6 +117,7 @@ author meant.
 ```
 sites/{username}/{siteId}/{path}        # a share's files, OVERWRITTEN IN PLACE (no history)
 _sites/{username}/{siteId}             # { generation, createdAt, lastDeployAt, bytes, fileCount, accessKey, public, tombstone?, pending? }
+_visits/{username}/{siteId}            # empty; its upload time is the last visit (§9)
 _users/{username}                       # JSON, see below
 _domains/{host}                         # JSON: { username, siteId }  (paid custom domains)
 ```
@@ -546,7 +547,7 @@ Three tiers, friction-zero default, founder-gated upgrades:
 | URL | `{auto}-{id}.agenthost.page` | + **custom username** |
 | Custom domain | — | `status.acme.com` (admin-registered) |
 | Publish / serve | full | full (identical) |
-| Retention | 15 days since last change | infinite |
+| Retention | 15 days without a visit or change | infinite |
 | Storage | 500 MB/account | ~unlimited |
 
 - **Anonymous (default).** The first `PUT` returns `ownerToken` once (only the secret's
@@ -590,7 +591,7 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
 | Limit | Free | Paid |
 |---|---|---|
 | **Storage per account** | **500 MB** | effectively unlimited |
-| **Retention** | **15 days** since last change | **infinite** |
+| **Retention** | **15 days** without a visit or change | **infinite** |
 
 Plans differ only in what costs us money: storage and how long it's kept. Per-file and
 per-share byte caps went away — with an account quota they only decided how the owner may
@@ -610,9 +611,20 @@ both until it completes: briefly conservative, never under.
 
 ### Retention sweep (cron)
 
-A **Cron Trigger** on the same Worker runs nightly and deletes free-tier shares whose
-`lastDeployAt` is older than 15 days — keeping R2 from bloating with abandoned shares.
-Any write resets the clock. **Paid users (`plan === "paid"`) are skipped — infinite
+A **Cron Trigger** on the same Worker runs nightly and deletes free-tier shares neither
+written nor visited in 15 days — keeping R2 from bloating with abandoned shares, while a
+link people still open stays up. The last write is `lastDeployAt`; the last visit is the
+upload time of `_visits/{user}/{id}`, one LIST per user.
+
+A visit is an authorized request that resolves to content: a denied key, a 404 or a
+`/_gen` poll doesn't count, so neither a bot hitting the prompt nor a forgotten open tab
+keeps a share alive. A link preview that follows the `?k` redirect does count, once.
+Visits live in their own empty object rather than the share record because updating the
+record from the serve path would race a publish's read-modify-write and could roll back
+its generation. Writes are throttled to one per share, per colo, per day: an in-isolate
+set plus a day-keyed Cache API marker, both off the response path in `waitUntil`.
+Keeping a free share alive forever by curling it from a cron is possible, but so was
+republishing it; the account quota is what bounds storage. **Paid users (`plan === "paid"`) are skipped — infinite
 retention.** Deleting a share = `R2.list` its prefix + delete all keys and its record.
 Uploads reserved more than a day ago and never completed are deleted, with whatever
 landed at their path, on every plan. A free account whose `createdAt` is older than 90 days

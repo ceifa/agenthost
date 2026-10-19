@@ -63,12 +63,14 @@ describe("admin and retention", () => {
     f.json("_users/alice", user);
     f.json("_sites/alice/docs", meta);
     f.records.set("sites/alice/docs/index.html", { body: "<body>Home</body>" });
+    f.records.set("_visits/alice/docs", { body: "" });
     const res = await handleAdmin(new Request("https://admin.example.com/admin/api/rename", { method: "POST", body: JSON.stringify({ from: "alice", to: "bob" }), headers: { "content-type": "application/json" } }), f.env);
     expect(res.status).toBe(200);
     expect(await getMeta(f.bucket, "bob", "docs")).toEqual(meta);
     expect(await getUser(f.bucket, "bob")).toEqual(user);
     expect(f.records.get("sites/bob/docs/index.html")!.body).toBe("<body>Home</body>");
-    expect([...f.records.keys()].some(k => k.startsWith("_sites/alice/") || k.startsWith("sites/alice/"))).toBe(false);
+    expect(f.records.has("_visits/bob/docs")).toBe(true);
+    expect([...f.records.keys()].some(k => k.includes("/alice/"))).toBe(false);
   });
 
   it("sweeps multiple pages with correct free/paid policies and no profile GETs", async () => {
@@ -87,6 +89,22 @@ describe("admin and retention", () => {
     expect(f.records.has("_sites/d/old")).toBe(true);
     expect(f.get).not.toHaveBeenCalled();
     expect(f.put).not.toHaveBeenCalled();
+  });
+
+  it("keeps a free share visited within the window, however old its last publish", async () => {
+    const f = testBucket(1);
+    const day = 86400000, now = 100 * day;
+    f.json("_users/u", user);
+    for (const id of ["read", "stale", "never"]) {
+      f.json(`_sites/u/${id}`, meta);
+      f.records.set(`sites/u/${id}/index.html`, { body: "x" });
+    }
+    f.records.set("_visits/u/read", { body: "", uploaded: new Date(now - 3 * day) });
+    f.records.set("_visits/u/stale", { body: "", uploaded: new Date(now - 20 * day) });
+    await runRetentionSweep(f.env, now);
+    expect([...f.records.keys()].filter(k => k.startsWith("_sites/"))).toEqual(["_sites/u/read"]);
+    // A deleted share takes its visit record with it.
+    expect([...f.records.keys()].filter(k => k.startsWith("_visits/"))).toEqual(["_visits/u/read"]);
   });
 
   it("deletes free accounts left empty after 90 days and keeps paid, young or non-empty ones", async () => {
