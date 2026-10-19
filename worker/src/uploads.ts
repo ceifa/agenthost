@@ -2,7 +2,7 @@
 // exact-size PUT to the file's final key; the bytes travel client → R2 and never
 // cross the Worker. Completing checks the object and commits a new generation.
 
-import { LIMITS, UPLOAD_EXPIRY_MS, UPLOAD_URL_TTL_SECONDS } from "./config";
+import { LIMITS, MAX_FILE_BYTES, MAX_FILES, UPLOAD_EXPIRY_MS, UPLOAD_URL_TTL_SECONDS } from "./config";
 import { ownedShare, readJson, requireOwner, type AppContext } from "./auth";
 import { committedFiles, getMeta, listAll, putMeta, shareUsage, siteFileKey, sitePrefix, userUsage, RESERVED_FILE, type SiteMeta } from "./storage";
 import { clientIp, contentTypeFor, generateAccessKey, metaUrl, sanitizeSiteId, siteHost } from "./ids";
@@ -40,9 +40,7 @@ export async function createUpload(c: AppContext): Promise<Response> {
   }
 
   const limits = LIMITS[owner.user.plan];
-  if (bytes > limits.perFile) {
-    return c.json({ error: `file is ${bytes} bytes; plan ${owner.user.plan} allows ${limits.perFile}` }, 413);
-  }
+  if (bytes > MAX_FILE_BYTES) return c.json({ error: `file is ${bytes} bytes; max is ${MAX_FILE_BYTES}` }, 413);
   const key = siteFileKey(owner.username, id, path);
   const [otherUsage, existing, current] = await Promise.all([
     userUsage(c.env.SITES, owner.username, id),
@@ -60,9 +58,9 @@ export async function createUpload(c: AppContext): Promise<Response> {
   delete pending[path];
   const shareBytes = shareUsage({ ...meta, pending }) - (replacesFile ? current.size : 0) + bytes;
   const files = meta.fileCount + Object.keys(pending).length + (replacesFile ? 0 : 1);
-  if (files > limits.filesPerSite) return c.json({ error: `too many files; max is ${limits.filesPerSite}` }, 413);
-  if (shareBytes > Math.min(limits.perSite, limits.perUser - otherUsage)) {
-    return c.json({ error: `share exceeds size budget (plan ${owner.user.plan})` }, 413);
+  if (files > MAX_FILES) return c.json({ error: `too many files; max is ${MAX_FILES}` }, 413);
+  if (shareBytes > limits.perUser - otherUsage) {
+    return c.json({ error: `account storage exceeded (plan ${owner.user.plan})` }, 413);
   }
 
   let upload;

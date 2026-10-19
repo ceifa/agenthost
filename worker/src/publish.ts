@@ -2,7 +2,7 @@
 // merging) → commit generation and access metadata together.
 
 import type { Env } from "./env";
-import { LIMITS, PUT_CONCURRENCY } from "./config";
+import { LIMITS, MAX_BUFFERED_BYTES, MAX_FILE_BYTES, MAX_FILES, PUT_CONCURRENCY } from "./config";
 import {
   generateUsername,
   generateOwnerToken,
@@ -193,8 +193,8 @@ function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
   return { kind: "file", name: kind === "html" ? "index.html" : "README.md" };
 }
 
-// Reads a request body fully into memory, aborting past `max` bytes. Only the
-// single-file path uses this (archives stream); the per-file cap keeps it small.
+// Reads a request body fully into memory, aborting past `max` bytes. Only a
+// single file sent without Content-Length lands here (archives stream).
 async function readBounded(body: ReadableStream<Uint8Array>, max: number): Promise<Uint8Array> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
@@ -205,7 +205,7 @@ async function readBounded(body: ReadableStream<Uint8Array>, max: number): Promi
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
-      if (total > max) throw new TarLimitError(`file is ${total}+ bytes; max is ${max}`);
+      if (total > max) throw new TarLimitError(`a body over ${max} bytes needs a Content-Length header`);
       chunks.push(value);
     }
   } catch (error) {
@@ -264,8 +264,8 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
     isNewUser = true;
   }
 
-  // Fail fast on over-quota: the share may hold min(per-share cap, account
-  // quota minus other shares), less what its own pending uploads reserve.
+  // Fail fast on over-quota: the share may hold what the account has left
+  // after other shares and its own pending uploads.
   const limits = LIMITS[plan];
   const [otherUsage, existingMeta, listed] = isNewUser
     ? [0, null, []]
@@ -275,7 +275,7 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
         listAll(env.SITES, sitePrefix(username, siteId)),
       ]);
   const reserved = existingMeta ? shareUsage(existingMeta) - existingMeta.bytes : 0;
-  const totalBudget = Math.max(0, Math.min(limits.perSite, limits.perUser - otherUsage) - reserved);
+  const totalBudget = Math.max(0, limits.perUser - otherUsage - reserved);
   // Uploads still in flight are neither counted here nor orphaned below.
   const existing = new Map(committedFiles(listed, username, siteId, existingMeta).map(o => [o.key, o.size]));
 
@@ -291,8 +291,8 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
     const replaced = merge && !writtenKeys.has(key) ? existing.get(key) : undefined;
     const bytes = totalBytes - (replaced ?? 0) + size;
     const files = fileCount + (replaced === undefined ? 1 : 0);
-    if (files > limits.filesPerSite) return fail(413, `too many files; max is ${limits.filesPerSite}`);
-    if (bytes > totalBudget) return fail(413, `share exceeds size budget of ${totalBudget} bytes (plan ${plan})`);
+    if (files > MAX_FILES) return fail(413, `too many files; max is ${MAX_FILES}`);
+    if (bytes > totalBudget) return fail(413, `account storage exceeded: ${totalBudget} bytes left (plan ${plan})`);
     totalBytes = bytes;
     fileCount = files;
     writtenKeys.add(key);
@@ -321,8 +321,8 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
       else {
         const lengthHeader = req.headers.get("content-length");
         const declared = lengthHeader !== null && /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : null;
-        if (declared !== null && (!Number.isSafeInteger(declared) || declared > limits.perFile)) {
-          throw new TarLimitError(`file is ${declared} bytes; max is ${limits.perFile}`);
+        if (declared !== null && !Number.isSafeInteger(declared)) {
+          throw new TarLimitError(`file is ${declared} bytes; max is ${MAX_FILE_BYTES}`);
         }
         if (declared === 0) {
           void cancelBody().catch(() => {});
@@ -342,7 +342,7 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
             await Promise.all([body.pipeTo(writable, { signal: abort.signal }), stored]);
           }
         } else {
-          const bytes = await readBounded(body, limits.perFile);
+          const bytes = await readBounded(body, MAX_BUFFERED_BYTES);
           if (bytes.byteLength === 0) perr = fail(400, "empty file");
           else perr = admit(key, bytes.byteLength);
           if (!perr) await env.SITES.put(key, bytes, { httpMetadata: { contentType: contentTypeFor(name) } });
@@ -351,9 +351,8 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
     } else {
       // Bare tars are accepted too — only gzipped bodies go through the inflater.
       const stream = mode.gzipped ? gunzipStream(body) : body;
-      // Hard cap at the per-file limit so an inflated header size can't force the
-      // parser to buffer a giant entry before publish's own check runs.
-      for await (const entry of parseTar(stream, { maxEntrySize: limits.perFile })) {
+      // A header declaring more than the account has left fails before its bytes are read.
+      for await (const entry of parseTar(stream, { maxEntrySize: Math.min(MAX_FILE_BYTES, totalBudget) })) {
         if (entry.type === "symlink" || entry.type === "hardlink") {
           perr = fail(400, `links are not allowed (${entry.path})`);
           break;

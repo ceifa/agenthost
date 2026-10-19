@@ -3,33 +3,24 @@
 export const MB = 1024 * 1024;
 export const GB = 1024 * MB;
 
+// Plans differ only in storage and retention; how it's split across shares
+// and files is the account's business.
 export interface PlanLimits {
-  perFile: number;
-  filesPerSite: number;
-  perSite: number;
   perUser: number;
   retentionDays: number | null; // days since last deploy before the sweep deletes; null = infinite
 }
 
-// One table whichever way a file arrives. Paid perFile is R2's single-PUT
-// maximum; a body over ~100 MB can't cross the Worker anyway, so those go
-// through a presigned upload.
 export const LIMITS: Record<"free" | "paid", PlanLimits> = {
-  free: {
-    perFile: 100 * MB,
-    filesPerSite: 50,
-    perSite: 250 * MB,
-    perUser: 500 * MB,
-    retentionDays: 15,
-  },
-  paid: {
-    perFile: 5 * GB,
-    filesPerSite: 1000,
-    perSite: Number.MAX_SAFE_INTEGER,
-    perUser: Number.MAX_SAFE_INTEGER,
-    retentionDays: null,
-  },
+  free: { perUser: 500 * MB, retentionDays: 15 },
+  paid: { perUser: Number.MAX_SAFE_INTEGER, retentionDays: null },
 };
+
+// Same for every plan. Listing, docs navigation, the file index and orphan
+// deletes all scale with the file count; R2 takes at most 5 GB in one PUT.
+export const MAX_FILES = 1000;
+export const MAX_FILE_BYTES = 5 * GB;
+// A single-file body without Content-Length has to be buffered to learn its size.
+export const MAX_BUFFERED_BYTES = 32 * MB;
 
 // Past UPLOAD_EXPIRY_MS the sweep deletes a reservation and whatever landed at its path.
 export const UPLOAD_URL_TTL_SECONDS = 15 * 60;
@@ -40,7 +31,7 @@ export const CACHE_MAX_BYTES = 512 * MB;
 
 // In-flight R2 puts during untar. Entries stream into R2 one at a time, so this
 // only overlaps a put's commit with reading the next entry; no put holds a
-// buffered file, and perFile no longer bounds memory.
+// buffered file.
 export const PUT_CONCURRENCY = 3;
 export const AUTH_COOKIE_PREFIX = "as_auth_";
 export const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // ~1 year, seconds

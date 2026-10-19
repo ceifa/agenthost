@@ -3,7 +3,7 @@
 // deployment, and limits are rendered from config so a quota bump can't silently
 // make this lie.
 
-import { LIMITS } from "./config";
+import { LIMITS, MAX_FILE_BYTES, MAX_FILES } from "./config";
 import { formatBytes as size } from "./templates";
 
 const free = LIMITS.free;
@@ -49,7 +49,7 @@ Steps 1 and 3 take the Authorization header. The file joins the share at /demo.m
 
 ## Notes
 - Shares are PRIVATE by default. Visitors of the url stay logged in via a cookie.
-- Limits (free): ${free.filesPerSite} files and ${size(free.perSite)} per share, ${size(free.perFile)} per file, ${size(free.perUser)} per account.
+- Free accounts store ${size(free.perUser)} across all shares. Any share: up to ${MAX_FILES} files, ${size(MAX_FILE_BYTES)} per file.
 - Free shares are deleted ${free.retentionDays} days after the last change. Hosted pages are noindex.
 - Visibility, key rotation, deletes: https://${apexHost}/skill/references/http-api.md
 

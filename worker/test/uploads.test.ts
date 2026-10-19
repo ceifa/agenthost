@@ -3,7 +3,7 @@ import { apexApp } from "../src/apex";
 import { sha256Hex } from "../src/ids";
 import { getMeta } from "../src/storage";
 import { runRetentionSweep } from "../src/sweep";
-import { LIMITS } from "../src/config";
+import { LIMITS, MAX_FILE_BYTES } from "../src/config";
 import { signDirectUpload } from "../src/r2-signed";
 import { testBucket } from "./test-bucket";
 import type { Env } from "../src/env";
@@ -86,7 +86,13 @@ describe("uploads into a share", () => {
     expect((await f.call("POST", "/shares/demo/uploads", { path: "a.bin", bytes: 10 })).status).toBe(200);
     // That reservation now holds the rest of the account.
     expect((await f.call("POST", "/shares/demo/uploads", { path: "b.bin", bytes: 1 })).status).toBe(413);
-    expect((await f.call("POST", "/shares/demo/uploads", { path: "big.bin", bytes: LIMITS.free.perFile + 1 })).status).toBe(413);
+    expect((await f.call("POST", "/shares/demo/uploads", { path: "big.bin", bytes: MAX_FILE_BYTES + 1 })).status).toBe(413);
+  });
+
+  it("lets one file take the whole account: plans cap storage, not shares or files", async () => {
+    const f = await fixture();
+    expect((await f.call("POST", "/shares/demo/uploads", { path: "all.bin", bytes: LIMITS.free.perUser })).status).toBe(200);
+    expect((await f.call("POST", "/shares/other/uploads", { path: "one.bin", bytes: 1 })).status).toBe(413);
   });
 
   it.each([

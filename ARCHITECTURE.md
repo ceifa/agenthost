@@ -162,8 +162,8 @@ entries — globally, with no purge API. See §6.
 custom domains) store their JSON once in R2 `customMetadata.json` with an empty body.
 `R2.list({ include: ["customMetadata"] })` returns these records without per-object GETs.
 Every record must fit R2's metadata limit; the free-form fields are the email (≤ 254
-characters) and pending upload paths (≤ 512 characters, at most one per file the plan
-allows). The same PUT maintains the object and its index; there is no
+characters) and pending upload paths (≤ 512 characters, at most one per file a share
+may hold). The same PUT maintains the object and its index; there is no
 second index object or paid database.
 
 Older layouts (nested `sites/{u}/{s}/_meta` + `_gen`, JSON bodies, `legacySiteIds`) were
@@ -547,7 +547,7 @@ Three tiers, friction-zero default, founder-gated upgrades:
 | Custom domain | — | `status.acme.com` (admin-registered) |
 | Publish / serve | full | full (identical) |
 | Retention | 15 days since last change | infinite |
-| Quota | 100 MB/file, 250 MB/share, 500 MB/account | 5 GB/file, otherwise ~unlimited |
+| Storage | 500 MB/account | ~unlimited |
 
 - **Anonymous (default).** The first `PUT` returns `ownerToken` once (only the secret's
   hash is stored). Every later call sends `Authorization: Bearer <ownerToken>`. Token loss
@@ -589,15 +589,21 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
 
 | Limit | Free | Paid |
 |---|---|---|
-| Per file | 100 MB | 5 GB |
-| Files per share | 50 | 1000 |
-| Size per share | 250 MB | effectively unlimited |
-| **Total per user** | **500 MB** | effectively unlimited |
+| **Storage per account** | **500 MB** | effectively unlimited |
 | **Retention** | **15 days** since last change | **infinite** |
 
-One table whichever way a file arrives — the agent never has to know which door a 30 MB
-file takes. A free 100 MB file was already possible as an asset, so unifying added no abuse
-surface. Caps are enforced **during the untar stream** (fail fast, §5 step 4) and at upload
+Plans differ only in what costs us money: storage and how long it's kept. Per-file and
+per-share byte caps went away — with an account quota they only decided how the owner may
+split their own storage. What remains is technical and the same for everyone:
+
+- **1000 files per share.** Listing, docs navigation, the file index and orphan deletes
+  scale with file count, which is CPU, not storage.
+- **5 GB per file**, R2's single-PUT limit. Bodies through the Worker stop at ~100 MB (the
+  zone), which only decides the door, not the allowance.
+- **32 MB for a single file sent without `Content-Length`**, since it must be buffered to
+  learn its size. curl always sends the length.
+
+Caps are enforced **during the untar stream** (fail fast, §5 step 4) and at upload
 reservation (§5.5). The per-user total is derived from the share records — `bytes` plus
 pending reservations — with no mutable counter. A reservation that replaces a file counts
 both until it completes: briefly conservative, never under.

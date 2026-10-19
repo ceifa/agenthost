@@ -66,6 +66,6 @@ Every response carries `url`, already holding the access key (`?k=…`), which l
 
 ## Limits
 
-Free: 100 MB per file, 50 files and 250 MB per share, 500 MB per account. A free share is deleted 15 days after its last change; any write resets the clock.
+Free accounts store 500 MB across all their shares. Any share holds up to 1000 files of up to 5 GB each. A free share is deleted 15 days after its last change; any write resets the clock.
 
 Visibility, key rotation, deleting files or shares, recovery email, every field and error: [references/http-api.md](references/http-api.md).

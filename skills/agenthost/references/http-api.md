@@ -70,17 +70,16 @@ JSON `{ "error": "<message>" }`:
 | 403 | Wrong owner token. |
 | 404 | No such share, file or pending upload. |
 | 409 | Completing an upload whose file never arrived. |
-| 413 | Over a per-file, file-count or size limit. |
+| 413 | Out of account storage, over 1000 files, or a file over 5 GB. |
 | 429 | Rate limited. Back off and retry. |
 
 ## Limits
 
 | | Free | Paid |
 |---|---|---|
-| Per file | 100 MB | 5 GB |
-| Files per share | 50 | 1000 |
-| Per share | 250 MB | — |
-| Per account | 500 MB | — |
+| Storage, across all shares | 500 MB | unlimited |
 | Retention | 15 days after the last change | forever |
+
+Any plan: up to 1000 files per share and 5 GB per file. A single file sent without `Content-Length` is capped at 32 MB.
 
 Paid plans, custom usernames and custom domains are enabled by the operator, not self-serve.

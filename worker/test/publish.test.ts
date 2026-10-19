@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { handlePublish } from "../src/publish";
 import { getMeta, getUser, userUsage } from "../src/storage";
 import { sha256Hex } from "../src/ids";
-import { LIMITS } from "../src/config";
+import { LIMITS, MAX_FILES } from "../src/config";
 import { testBucket } from "./test-bucket";
 import { gzip, header, tar } from "./test-tar";
 
@@ -140,8 +140,8 @@ describe("archive publishing", () => {
     { name: "a symlink", body: () => tar([{ name: "link", flag: "2" }]), status: 400, error: "links are not allowed (link)" },
     { name: "a parent path", body: () => tar([{ name: "../evil.html", body: "x" }]), status: 400, error: "unsafe path rejected: ../evil.html" },
     { name: "no files", body: () => tar([{ name: "dir/", flag: "5" }]), status: 400, error: "archive contained no files" },
-    { name: "too many files", body: () => tar(Array.from({ length: LIMITS.free.filesPerSite + 1 }, (_, i) => ({ name: `${i}.txt`, body: "x" }))), status: 413, error: `too many files; max is ${LIMITS.free.filesPerSite}` },
-    { name: "an oversized entry", body: () => header("big.bin", LIMITS.free.perFile + 1), status: 413, error: `entry big.bin declares ${LIMITS.free.perFile + 1} bytes; max is ${LIMITS.free.perFile}` },
+    { name: "too many files", body: () => tar(Array.from({ length: MAX_FILES + 1 }, (_, i) => ({ name: `${i}.txt`, body: "x" }))), status: 413, error: `too many files; max is ${MAX_FILES}` },
+    { name: "an entry bigger than the account", body: () => header("big.bin", LIMITS.free.perUser + 1), status: 413, error: `entry big.bin declares ${LIMITS.free.perUser + 1} bytes; max is ${LIMITS.free.perUser}` },
     { name: "a zip", body: () => new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0]), status: 400, error: "zip is not supported — send a tar (tar cf - -C ./dist .)" },
     { name: "binary garbage", body: () => new Uint8Array([0, 1, 2, 3]), status: 400, error: "unrecognized body — send a tar, a .md/.html document, or name it with ?file=<name>" },
     { name: "garbage labelled as a tarball", body: () => new TextEncoder().encode("not gzip"), headers: { "content-type": "application/gzip" }, status: 400, error: /^bad archive: / },
@@ -161,7 +161,7 @@ describe("archive publishing", () => {
     const f = await archiveFixture();
     f.json("_sites/alice/other", { generation: 1, bytes: LIMITS.free.perUser - 4 });
     const res = await f.error(await f.post(tar([{ name: "a.txt", body: "abc" }, { name: "b.txt", body: "de" }])));
-    expect(res).toEqual({ status: 413, error: "share exceeds size budget of 4 bytes (plan free)" });
+    expect(res).toEqual({ status: 413, error: "account storage exceeded: 4 bytes left (plan free)" });
     expect(f.records.has("_sites/alice/docs")).toBe(false);
   });
 

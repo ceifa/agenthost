@@ -186,7 +186,7 @@ publish → serve loop runs offline against a fixture directory.
 
 Custom domains need no config or secrets — see §5 (dashboard-only setup).
 
-Tunable limits/quotas (per-file size, files per share, retention, etc.) live in
+Tunable limits/quotas (account storage, retention, files per share, etc.) live in
 `worker/src/config.ts`.
 
 ## Control records
