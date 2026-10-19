@@ -3,12 +3,12 @@
 import { vi } from "vitest";
 import type { Env } from "../src/env";
 
-interface Stored { body: string; customMetadata?: Record<string, string>; httpMetadata?: R2HTTPMetadata }
+interface Stored { body: string; customMetadata?: Record<string, string>; httpMetadata?: R2HTTPMetadata; uploaded?: Date }
 export function testBucket(pageSize = 1000) {
   const records = new Map<string, Stored>();
   const object = (key: string, value: Stored) => ({
     key, size: new TextEncoder().encode(value.body).length,
-    httpEtag: '"test-etag"', uploaded: new Date(0),
+    httpEtag: '"test-etag"', uploaded: value.uploaded ?? new Date(0),
     customMetadata: value.customMetadata, httpMetadata: value.httpMetadata,
     writeHttpMetadata: (h: Headers) => { if (value.httpMetadata?.contentType) h.set("content-type", value.httpMetadata.contentType); },
   });

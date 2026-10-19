@@ -7,7 +7,7 @@ export const GB = 1024 * MB;
 // and files is the account's business.
 export interface PlanLimits {
   perUser: number;
-  retentionDays: number; // days since last deploy before the sweep deletes
+  retentionDays: number; // days without a deploy or visit before the sweep deletes
 }
 
 export const LIMITS: Record<"free" | "paid", PlanLimits> = {
