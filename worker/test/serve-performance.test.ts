@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleSite, cacheKeyPath } from "../src/serve";
 import { sha256Hex } from "../src/ids";
+import { CACHE_MAX_BYTES } from "../src/config";
 import type { Env } from "../src/env";
+import type { SiteMeta } from "../src/storage";
 
 const prefix = "sites/u/docs/";
 const controlKeys = ["_sites/u/docs"];
 
 function fixture(files: Record<string, string>) {
-  const meta = { generation: 1, lastDeployAt: 1, public: true, keyHash: null as string | null, tombstone: false };
+  const meta: Omit<SiteMeta, "bytes" | "fileCount" | "createdAt"> = { generation: 1, lastDeployAt: 1, public: true, tombstone: false };
   const objects = new Map(Object.entries(files).map(([path, body]) => [prefix + path, body]));
   const cacheEntries = new Map<string, Response>();
   const pending: Promise<unknown>[] = [];
@@ -44,7 +46,7 @@ function fixture(files: Record<string, string>) {
       const content = objects.get(key);
       return content === undefined ? null : { key, size: content.length, httpEtag: '"fixture-etag"', uploaded: new Date("2026-01-01T00:00:00Z"), writeHttpMetadata: (headers: Headers) => headers.set("content-type", "text/plain") };
     }),
-    list: vi.fn(async () => ({ objects: [...objects.keys()].map((key) => ({ key })), truncated: false })),
+    list: vi.fn(async () => ({ objects: [...objects].map(([key, body]) => ({ key, size: body.length })), truncated: false })),
   };
   vi.stubGlobal("caches", { default: cache });
   // HTML rewriting is exercised by the workerd smoke check; this fixture tests
@@ -90,7 +92,7 @@ describe("serving I/O budgets", () => {
     expect(f.bucket.get.mock.calls.map(([key]) => key)).toEqual(controlKeys);
     expect(f.cache.match).toHaveBeenCalledOnce(); // route only; no body lookup
     f.meta.public = false;
-    f.meta.keyHash = await sha256Hex("secret");
+    f.meta.accessKey = "secret";
     expect((await f.request("/", { "if-none-match": etag })).status).toBe(401);
     const authorized = await f.request("/", { "if-none-match": etag, cookie: "as_auth_docs=secret" });
     expect(authorized.status).toBe(200);
@@ -189,7 +191,7 @@ describe("serving I/O budgets", () => {
     const f = fixture({ "index.html": "<body>Secret</body>" });
     await f.warm();
     f.meta.public = false;
-    f.meta.keyHash = await sha256Hex("new-key");
+    f.meta.accessKey = "new-key";
     expect((await f.request()).status).toBe(401);
     expect(f.cache.match).not.toHaveBeenCalled();
     f.meta.tombstone = true;
@@ -200,10 +202,10 @@ describe("serving I/O budgets", () => {
   it("checks rotated keys on warm routes without caching reader credentials", async () => {
     const f = fixture({ "index.html": "<body>Secret</body>" });
     f.meta.public = false;
-    f.meta.keyHash = await sha256Hex("old-key");
+    f.meta.accessKey = "old-key";
     expect((await f.request("/", { cookie: "as_auth_docs=old-key" })).status).toBe(200);
     await f.settle();
-    f.meta.keyHash = await sha256Hex("new-key");
+    f.meta.accessKey = "new-key";
     expect((await f.request("/", { cookie: "as_auth_docs=old-key" })).status).toBe(401);
     expect((await f.request("/", { cookie: "as_auth_docs=new-key" })).status).toBe(200);
     const login = await f.request("/?k=new-key");
@@ -308,6 +310,72 @@ describe("static conditional cache requests", () => {
     cached.headers.delete(missing);
     await (await f.request("/app.css", { [header]: value })).text();
     expect(f.bucket.get.mock.calls.some(([key]) => key === prefix + "app.css")).toBe(true);
+    await f.settle();
+  });
+});
+
+describe("shares without a page of their own", () => {
+  it("previews a single file at / and lists several", async () => {
+    const f = fixture({ "demo.mp4": "data" });
+    const single = await (await f.request()).text();
+    expect(single).toContain('<video class="preview" src="/demo.mp4"');
+    expect(single).toContain('href="/demo.mp4?download"');
+    await f.settle();
+
+    const g = fixture({ "a b.csv": "1,2", "data/b.csv": "3,4", "late.bin": "x" });
+    g.meta.pending = { "late.bin": { bytes: 1, expiresAt: 0 } };
+    const list = await (await g.request()).text();
+    expect(list).toContain('href="/a%20b.csv"');
+    expect(list).toContain('href="/data/b.csv?download"');
+    // An upload not yet completed isn't part of the share.
+    expect(list).not.toContain("late.bin");
+    await g.settle();
+  });
+
+  it("lists files on a site that only lacks an index.html", async () => {
+    const f = fixture({ "about.html": "<p>about</p>", "app.css": "body{}" });
+    const res = await f.request();
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('href="/about.html"');
+    await f.settle();
+  });
+
+  it("hands over the file itself on ?download, HTML and Markdown included", async () => {
+    const f = fixture({ "dir/Relatório final.pdf": "%PDF", "index.html": "<body>Home</body>", "README.md": "# Hi" });
+    const pdf = await f.request("/dir/Relat%C3%B3rio%20final.pdf?download");
+    expect(pdf.headers.get("content-disposition")).toBe(`attachment; filename="Relatorio final.pdf"; filename*=UTF-8''Relat%C3%B3rio%20final.pdf`);
+    expect(await pdf.text()).toBe("%PDF");
+    const html = await f.request("/index.html?download");
+    expect(html.headers.get("content-disposition")).toContain('filename="index.html"');
+    expect(await html.text()).toBe("<body>Home</body>");
+    const md = await f.request("/README.md?download");
+    expect(await md.text()).toBe("# Hi");
+    await f.settle();
+    // The cached copy carries no per-request disposition.
+    const cached = await f.request("/dir/Relat%C3%B3rio%20final.pdf");
+    expect(cached.headers.get("content-disposition")).toBeNull();
+    await f.settle();
+  });
+
+  it("streams files too large for the Cache API without storing them", async () => {
+    const f = fixture({ "big.bin": "x" });
+    const original = f.bucket.get.getMockImplementation()!;
+    f.bucket.get.mockImplementation(async (key, opts) => {
+      const obj = await original(key, opts);
+      return key === prefix + "big.bin" && obj ? { ...obj, size: CACHE_MAX_BYTES + 1 } : obj;
+    });
+    expect(await (await f.request("/big.bin")).text()).toBe("x");
+    await f.settle();
+    expect(f.cache.put.mock.calls.map(([req]) => (req as Request).url).filter(u => u.includes("as-cache"))).toEqual([]);
+  });
+
+  it("still admits readers holding a key minted before keys were stored", async () => {
+    const f = fixture({ "index.html": "<body>Old link</body>" });
+    f.meta.public = false;
+    f.meta.keyHash = await sha256Hex("legacy");
+    expect((await f.request()).status).toBe(401);
+    expect((await f.request("/?k=legacy")).status).toBe(302);
+    expect((await f.request("/", { cookie: "as_auth_docs=legacy" })).status).toBe(200);
     await f.settle();
   });
 });

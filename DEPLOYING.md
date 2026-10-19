@@ -64,16 +64,16 @@ pnpm wrangler r2 bucket create agenthost-sites
 
 Use the same name as `R2_BUCKET_NAME` (default `agenthost-sites`).
 
-### Direct-asset S3 credentials
+### Direct-upload S3 credentials
 
-Direct uploads/downloads need object-scoped presigned URLs. In **R2 → Manage R2 API Tokens**, create a token with **Object Read & Write** restricted to this bucket. Put its S3 credentials into Worker secrets:
+Large-file uploads need object-scoped presigned URLs. In **R2 → Manage R2 API Tokens**, create a token with **Object Read & Write** restricted to this bucket. Put its S3 credentials into Worker secrets:
 
 ```bash
 pnpm wrangler secret put R2_ACCESS_KEY_ID
 pnpm wrangler secret put R2_SECRET_ACCESS_KEY
 ```
 
-`R2_ACCOUNT_ID` and `R2_BUCKET_NAME` follow `CLOUDFLARE_ACCOUNT_ID` and the bucket from step 1. Account ID and bucket name are public identifiers; only the access key and secret are sensitive. The Worker uses them to sign URLs but never proxies asset bodies. No public-bucket setting is required.
+`R2_ACCOUNT_ID` and `R2_BUCKET_NAME` follow `CLOUDFLARE_ACCOUNT_ID` and the bucket from step 1. Account ID and bucket name are public identifiers; only the access key and secret are sensitive. The Worker uses them to sign upload URLs but never receives those bodies. No public-bucket setting is required.
 
 ## 4. Admin auth (Cloudflare Access)
 
@@ -141,11 +141,10 @@ both static bundles.
 
 ```bash
 # publish a one-file site
-echo '<h1>hello</h1>' | curl -s --data-binary @- \
-  -H 'Content-Type: text/html' 'https://example.com/publish?id=test'
+echo '<h1>hello</h1>' | curl -s -X PUT --data-binary @- https://example.com/shares/test
 ```
 
-The JSON response includes a `shareUrl` — open it and you should see the page over
+The JSON response includes a `url` — open it and you should see the page over
 valid HTTPS on `{username}-test.example.com`. `https://example.com/llms.txt`
 should return the publish instructions with your domain baked in, and so should
 `https://example.com/skill/SKILL.md` for the agent skill.
@@ -176,10 +175,10 @@ publish → serve loop runs offline against a fixture directory.
 | `CLOUDFLARE_ACCOUNT_ID` | `deploy.env` | yes | Account the Worker deploys to. |
 | `APEX_HOST` | `deploy.env` | yes | Your apex/control-plane domain; routes are derived from it. |
 | `ZONE_NAME` | `deploy.env` | no | Zone holding `APEX_HOST`, when it is not the apex itself. |
-| `R2_ACCOUNT_ID` | from `CLOUDFLARE_ACCOUNT_ID` | assets | Public account identifier used in the R2 S3 endpoint. |
-| `R2_BUCKET_NAME` | `deploy.env` | assets | Bucket for sites and direct asset uploads (default `agenthost-sites`). |
-| `R2_ACCESS_KEY_ID` | secret | assets | Bucket-scoped S3 access key used only to sign URLs. |
-| `R2_SECRET_ACCESS_KEY` | secret | assets | Bucket-scoped S3 secret used only to sign URLs. |
+| `R2_ACCOUNT_ID` | from `CLOUDFLARE_ACCOUNT_ID` | uploads | Public account identifier used in the R2 S3 endpoint. |
+| `R2_BUCKET_NAME` | `deploy.env` | uploads | Bucket holding every share (default `agenthost-sites`). |
+| `R2_ACCESS_KEY_ID` | secret | uploads | Bucket-scoped S3 access key used only to sign URLs. |
+| `R2_SECRET_ACCESS_KEY` | secret | uploads | Bucket-scoped S3 secret used only to sign URLs. |
 | `ALLOWED_ADMIN_EMAIL` | secret (`wrangler secret put`) | admin only | Email allowed into the admin. |
 | `ACCESS_TEAM_DOMAIN` | secret (`wrangler secret put`) | admin only | Zero Trust team name. |
 | `ACCESS_AUD` | secret (`wrangler secret put`) | admin only | Access Application AUD tag. |
@@ -187,12 +186,16 @@ publish → serve loop runs offline against a fixture directory.
 
 Custom domains need no config or secrets — see §5 (dashboard-only setup).
 
-Tunable limits/quotas (per-file size, files per site, retention, etc.) live in
+Tunable limits/quotas (account storage, retention, files per share, etc.) live in
 `worker/src/config.ts`.
 
 ## Control records
 
-Small JSON control records (`_users/`, `_sites/`, `_assets/…/_meta`, `_domains/`) live in
+Small JSON control records (`_users/`, `_sites/`, `_domains/`) live in
 R2 `customMetadata.json` with empty bodies; inspection tools must read custom metadata,
 not the body. The Worker no longer reads the older layouts, so a bucket from before
 2026-10-18 needs its legacy records migrated before this Worker serves it.
+
+The shares API replaced `/publish` and the separate asset uploads. Objects under
+`assets/` and `_assets/` are no longer read and can be deleted. An owner token issued
+before it keeps working as `{username}.{token}`.

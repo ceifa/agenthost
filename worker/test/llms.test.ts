@@ -7,6 +7,6 @@ describe("llms.txt", () => {
     const opened = section.split("{").length - 1;
     expect(section.split("}").length - 1).toBe(opened);
     const example = section.slice(section.indexOf("{"), section.indexOf("\n}") + 2).replace(/\s+\/\/.*$/gm, "");
-    expect(Object.keys(JSON.parse(example))).toEqual(["url", "username", "ownerToken"]);
+    expect(Object.keys(JSON.parse(example))).toEqual(["url", "id", "username", "fileCount", "bytes", "ownerToken"]);
   });
 });

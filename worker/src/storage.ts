@@ -2,15 +2,22 @@
 // store; read-after-write is strongly consistent per object, which is what lets
 // the publish→serve loop work without any other coordination primitive.
 
+// A share: one tree of files on its own subdomain. The access key is stored as
+// is: it is meant to travel in URLs, and anyone who can read this record can
+// read the files it guards.
 export interface SiteMeta {
   generation: number;
   createdAt: number;
   lastDeployAt: number;
   bytes: number;
   fileCount: number;
-  keyHash: string | null; // sha256(accessKey); null only mid-first-publish
+  accessKey?: string;
+  keyHash?: string; // sha256 of a key minted before keys were stored; gone on rotate
   public: boolean;
   tombstone?: boolean; // takedown marker → serve 410
+  // Presigned uploads not yet completed, by path. Their bytes count against
+  // the quota until completed or swept.
+  pending?: Record<string, { bytes: number; expiresAt: number }>;
 }
 
 export interface UserRecord {
@@ -26,30 +33,12 @@ export interface DomainRecord {
   siteId: string;
 }
 
-export interface AssetMeta {
-  id: string;
-  username: string;
-  name: string;
-  contentType: string;
-  bytes: number;
-  objectKey: string;
-  keyHash: string;
-  public: boolean;
-  status: "pending" | "ready";
-  createdAt: number;
-  lastDeployAt: number;
-  readyAt?: number;
-}
-
 export const siteFileKey = (u: string, s: string, path: string) => `sites/${u}/${s}/${path}`;
 export const sitePrefix = (u: string, s: string) => `sites/${u}/${s}/`;
 export const userSitesPrefix = (u: string) => `sites/${u}/`;
 export const metaKey = (u: string, s: string) => `_sites/${u}/${s}`;
 export const userKey = (u: string) => `_users/${u}`;
 export const domainKey = (host: string) => `_domains/${host}`;
-export const assetObjectKey = (u: string, id: string) => `assets/${u}/${id}/blob`;
-export const assetMetaKey = (u: string, id: string) => `_assets/${u}/${id}/_meta`;
-export const userAssetsPrefix = (u: string) => `_assets/${u}/`;
 
 // The live-reload probe answers /_gen, so a published file there could never be served.
 export const RESERVED_FILE = (path: string) => path === "_gen";
@@ -77,8 +66,6 @@ export const getUser = (b: R2Bucket, u: string) => getJson<UserRecord>(b, userKe
 export const putUser = (b: R2Bucket, u: string, rec: UserRecord) => putJson(b, userKey(u), rec);
 export const getDomain = (b: R2Bucket, host: string) => getJson<DomainRecord>(b, domainKey(host));
 export const putDomain = (b: R2Bucket, host: string, rec: DomainRecord) => putJson(b, domainKey(host), rec);
-export const getAssetMeta = (b: R2Bucket, u: string, id: string) => getJson<AssetMeta>(b, assetMetaKey(u, id));
-export const putAssetMeta = (b: R2Bucket, u: string, id: string, meta: AssetMeta) => putJson(b, assetMetaKey(u, id), meta);
 
 export async function* objectPages(b: R2Bucket, prefix: string): AsyncGenerator<R2Objects> {
   let cursor: string | undefined;
@@ -140,10 +127,10 @@ export const listUsersPage = (b: R2Bucket, cursor?: string) => recordPage(b, "_u
   return user && { username: obj.key.slice("_users/".length), user };
 });
 
-// Which of `usernames` (one users page, in key order) own anything under
-// `root` (`sites/`, `_assets/`). A delimited LIST names up to 1000 owners per
+// Which of `usernames` (one users page, in key order) own any share files. A delimited LIST names up to 1000 owners per
 // call, so a page costs one LIST per thousand owners instead of one per account.
-export async function owners(b: R2Bucket, root: string, usernames: string[]): Promise<Set<string>> {
+export async function owners(b: R2Bucket, usernames: string[]): Promise<Set<string>> {
+  const root = "sites/";
   const owners = new Set<string>();
   const first = usernames[0], last = usernames.at(-1);
   if (first === undefined || last === undefined) return owners;
@@ -176,10 +163,24 @@ export async function deleteKeys(b: R2Bucket, keys: string[]): Promise<void> {
   }
 }
 
-// Derived from each site's _meta.bytes — there is no mutable usage counter.
+// A share's committed files out of a LIST of its prefix: uploads still in flight
+// land on their final key before they're completed, and don't count yet.
+export function committedFiles(objects: R2Object[], username: string, siteId: string, meta: SiteMeta | null): R2Object[] {
+  const pending = new Set(Object.keys(meta?.pending ?? {}).map(p => siteFileKey(username, siteId, p)));
+  return objects.filter(o => !pending.has(o.key));
+}
+
+// Stored bytes plus uploads still reserved.
+export function shareUsage(meta: SiteMeta): number {
+  let total = meta.bytes ?? 0;
+  for (const { bytes } of Object.values(meta.pending ?? {})) total += bytes;
+  return total;
+}
+
+// Derived from each share's record — there is no mutable usage counter.
 export async function userUsage(b: R2Bucket, username: string, exceptSite?: string): Promise<number> {
   let total = 0;
-  for await (const { meta } of siteRecords(b, username, exceptSite)) total += meta.bytes ?? 0;
+  for await (const { meta } of siteRecords(b, username, exceptSite)) total += shareUsage(meta);
   return total;
 }
 
@@ -188,22 +189,4 @@ export async function deleteSite(b: R2Bucket, username: string, siteId: string):
     await deleteKeys(b, page.objects.map(o => o.key));
   }
   await b.delete(metaKey(username, siteId));
-}
-
-export const listAssetsPage = (b: R2Bucket, username?: string, cursor?: string) =>
-  recordPage(b, username ? userAssetsPrefix(username) : "_assets/", cursor, obj => obj.key.endsWith("/_meta") ? listed<AssetMeta>(obj) : null);
-
-// Without a username: every user's assets, in key order.
-export const assetRecords = (b: R2Bucket, username?: string) => paginate(cursor => listAssetsPage(b, username, cursor));
-
-export async function listAssetMetas(b: R2Bucket, username?: string): Promise<AssetMeta[]> {
-  const out: AssetMeta[] = [];
-  for await (const meta of assetRecords(b, username)) out.push(meta);
-  return out;
-}
-
-export async function assetUsage(b: R2Bucket, username: string): Promise<number> {
-  let total = 0;
-  for await (const meta of assetRecords(b, username)) total += meta.bytes ?? 0;
-  return total;
 }

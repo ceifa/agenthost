@@ -10,7 +10,6 @@ import {
   listAll,
   listUsersPage,
   listSitesPage,
-  listAssetsPage,
   deleteKeys,
   getUser,
   putUser,
@@ -19,10 +18,6 @@ import {
   putDomain,
   userSitesPrefix,
   userKey,
-  assetMetaKey,
-  getAssetMeta,
-  listAssetMetas,
-  putAssetMeta,
   mapBounded,
   owners,
 } from "./storage";
@@ -39,14 +34,14 @@ api.use("*", async (c, next) => {
 api.get("/users", async (c) => {
   const page = await listUsersPage(c.env.SITES, c.req.query("cursor"));
   const usernames = page.items.map((i) => i.username);
-  const [siteOwners, assetOwners] = await Promise.all([owners(c.env.SITES, "sites/", usernames), owners(c.env.SITES, "_assets/", usernames)]);
+  const shareOwners = await owners(c.env.SITES, usernames);
   const users = page.items.map(({ username, user }) => ({
     username,
     plan: user.plan,
     email: user.email,
     customDomain: user.customDomain,
     createdAt: user.createdAt,
-    hasShares: siteOwners.has(username) || assetOwners.has(username),
+    hasShares: shareOwners.has(username),
   }));
   return c.json({ users, cursor: page.cursor ?? null });
 });
@@ -67,31 +62,6 @@ api.get("/sites", async (c) => {
     tombstone: m.tombstone ?? false,
   }));
   return c.json({ username, sites, cursor: page.cursor ?? null });
-});
-
-api.get("/assets", async (c) => {
-  const username = c.req.query("username");
-  if (!username) return c.json({ error: "username required" }, 400);
-  const page = await listAssetsPage(c.env.SITES, username, c.req.query("cursor"));
-  const assets = page.items.map((m) => ({
-    id: m.id,
-    name: m.name,
-    bytes: m.bytes,
-    contentType: m.contentType,
-    status: m.status,
-    createdAt: m.createdAt,
-  }));
-  return c.json({ username, assets, cursor: page.cursor ?? null });
-});
-
-api.delete("/asset", async (c) => {
-  const username = c.req.query("username");
-  const id = c.req.query("id");
-  if (!username || !id) return c.json({ error: "username and id required" }, 400);
-  const meta = await getAssetMeta(c.env.SITES, username, id);
-  if (!meta) return c.json({ error: "asset not found" }, 404);
-  await Promise.all([c.env.SITES.delete(meta.objectKey), c.env.SITES.delete(assetMetaKey(username, id))]);
-  return c.json({ ok: true });
 });
 
 // The JSON body, if it's an object whose `fields` are all non-empty strings.
@@ -132,14 +102,6 @@ api.post("/rename", async (c) => {
     await c.env.SITES.put(newKey, body.body, { httpMetadata: body.httpMetadata, customMetadata: body.customMetadata });
   });
   await deleteKeys(c.env.SITES, [...objs, ...flat].map((o) => o.key));
-
-  // Asset payloads stay at their immutable R2 keys; only their tiny metadata
-  // moves to the renamed account, avoiding a multi-gigabyte copy through Worker.
-  const assets = await listAssetMetas(c.env.SITES, from);
-  await mapBounded(assets, async (asset) => {
-    await putAssetMeta(c.env.SITES, to, asset.id, { ...asset, username: to });
-    await c.env.SITES.delete(assetMetaKey(from, asset.id));
-  });
   await c.env.SITES.delete(userKey(from));
   return c.json({ ok: true, from, to });
 });

@@ -1,7 +1,7 @@
 ---
 name: agenthost
-version: 0.3.0
-description: "Publishes a page, docs or file behind a private share link. Use when a deliverable reads better as a page than as chat, or is too big to send."
+version: 0.4.0
+description: "Publishes a page, docs or files behind a private share link. Use when a deliverable reads better as a page than as chat, or is too big to send."
 metadata:
   homepage: https://agenthost.page
   hermes:
@@ -13,68 +13,59 @@ metadata:
       bins: [curl, tar]
 ---
 
-Publish a page, a folder or a set of Markdown docs, or upload a large file, and get back a **private link** a human opens in one click. It's plain `curl` and `tar` against `https://agenthost.page` (or the user's self-hosted domain), no install needed.
+Publish a page, a folder, Markdown docs or any files as a **share** and get back a private link a human opens in one click. Plain `curl` and `tar` against `https://agenthost.page` (or the user's self-hosted domain).
 
 ## One account, reused forever
 
-A publish without `Authorization` **mints a brand-new account**, every time, even if you pass a `username`. Do that exactly once: from the first response, save `username` and `ownerToken` wherever the environment keeps durable secrets, and send them on every publish after, new `id`s included. Without it nothing can be redeployed and assets can't be uploaded. The `ownerToken` is shown once; lose it and you start over with new URLs.
-
-Below, `$AGENTHOST_USERNAME` and `$AGENTHOST_OWNER_TOKEN` hold them.
+A `PUT` without `Authorization` **creates a new account** every time. Do it once: save the `ownerToken` from that first response wherever the environment keeps durable secrets, and send it on every call after, new shares included. It is shown once; lose it and you start over with new URLs. Below, `$AGENTHOST_TOKEN` holds it.
 
 ## Publish
 
-`id` becomes the subdomain: `{username}-{id}.agenthost.page`. Same account + same `id` → same URL, content replaced. Leaving out `id` publishes to `site`, overwriting it.
+`PUT /shares/{id}`. The `id` becomes the address `{username}-{id}.agenthost.page`; the same `id` again replaces the content at the same URL.
 
 ```bash
-# first publish ever: mints the account
-curl -s --data-binary @report.md 'https://agenthost.page/publish?id=report'
+# first call ever: creates the account
+curl -s -X PUT --data-binary @report.md https://agenthost.page/shares/report
 
-# every publish after
-curl -s --data-binary @report.md \
-  -H "Authorization: Bearer $AGENTHOST_OWNER_TOKEN" \
-  "https://agenthost.page/publish?id=report&username=$AGENTHOST_USERNAME"
+# every call after
+curl -s -X PUT --data-binary @report.md -H "Authorization: Bearer $AGENTHOST_TOKEN" \
+  https://agenthost.page/shares/report
+
+# a folder: pipe a tar (zip is rejected)
+tar cf - -C ./dist . | curl -s -X PUT --data-binary @- -H "Authorization: Bearer $AGENTHOST_TOKEN" \
+  https://agenthost.page/shares/myblog
 ```
 
-What the body can be:
+- One `.md` or `.html` serves at `/`. Any other single file needs `?file=<name>`.
+- A `PUT` **replaces every file** in the share. Add `?mode=merge` to keep the files the body doesn't carry, e.g. to update a page without re-sending its video.
+- A folder of `.md` becomes a docs site: `README.md` is the home, `SUMMARY.md` sets order and nesting.
+- With no `index.html` and no Markdown, `/` previews the file (video, image, audio and PDF play inline) or lists the files with download links.
 
-- **One `.md` or `.html`**: served at `/`, Markdown rendered. The type is sniffed from the bytes, so no `Content-Type` is needed.
-- **A folder**: pipe a tar, `tar cf - -C ./dist . | curl -s --data-binary @- …`. Zip is rejected. A folder of `.md` becomes a docs site (sidebar, `README.md` as home, `SUMMARY.md` for order and nesting, GFM, mermaid, highlighted code).
-- **Any other single file**: add `&file=<name>`; the extension sets the served type. It replaces the whole site.
+## Large files
 
-Absolute (`/css/app.css`) and relative (`./css/app.css`) asset paths both resolve, since each site is its own subdomain root.
+Over ~100 MB, a `PUT` body is refused; upload those straight to storage instead. Three calls; the file lands at `path` inside the share (created if new) and joins whatever is already there:
+
+```bash
+# 1. reserve; bytes must be the exact file size
+curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
+  --data '{"path":"demo.mp4","bytes":757603783}' https://agenthost.page/shares/demo/uploads
+
+# 2. within 15 min: PUT the file to uploadUrl with every uploadHeaders entry, verbatim
+curl -s -X PUT --upload-file demo.mp4 -H 'content-length: <…>' -H 'content-type: <…>' '<uploadUrl>'
+
+# 3. complete
+curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
+  --data '{"path":"demo.mp4"}' https://agenthost.page/shares/demo/uploads/complete
+```
+
+An upload not completed within a day is discarded.
 
 ## What to hand the human
 
-`url` carries the site's access key (`?k=…`) and logs the visitor in on first open. **The key is only returned on a site's first publish**: a redeploy returns a bare `url` that asks for a key. So record the link from the first publish of each `id` next to the deliverable, and give that same link again after redeploys. Pages already open in a browser reload themselves when you republish.
-
-If the link is lost, `POST /key/rotate` mints a new one and kills the old ones. To remove the gate completely, make the site public (see the reference).
-
-## Upload a downloadable asset
-
-Use this for files that aren't a site (video, archive, dataset): up to 100 MB on free, 5 GB on paid. It needs the account. The bytes go straight to R2, never through agenthost.
-
-```bash
-# 1. initiate; bytes must be the exact file size
-curl -s -X POST -H "Authorization: Bearer $AGENTHOST_OWNER_TOKEN" \
-  -H 'Content-Type: application/json' \
-  --data '{"name":"demo.mp4","bytes":757603783,"contentType":"video/mp4"}' \
-  "https://agenthost.page/asset?username=$AGENTHOST_USERNAME"
-
-# 2. within 15 min: PUT to uploadUrl with every uploadHeaders value verbatim
-curl -s --upload-file demo.mp4 \
-  -H 'content-type: <uploadHeaders.content-type>' \
-  -H 'content-disposition: <uploadHeaders.content-disposition>' \
-  '<uploadUrl>'
-
-# 3. complete; expect {"ok":true}
-curl -s -X POST -H "Authorization: Bearer $AGENTHOST_OWNER_TOKEN" '<completeUrl>'
-```
-
-Hand over the `url` from **step 1**; completing returns it without the key.
+Every response carries `url`, already holding the access key (`?k=…`), which logs the visitor in on first open. Hand over exactly that. `GET /shares/{id}` returns it again any time. Pages open in a browser reload themselves when the share changes. Appending `?download` to a file's URL saves it instead of opening it.
 
 ## Limits
 
-- Free: 50 files, 5 MB per file, 250 MB per site, 500 MB per account (sites and assets combined). Free sites are deleted 15 days after their last publish, so republish to keep one alive.
-- `_gen` is a reserved filename.
+Free accounts store 500 MB across all their shares. Any share holds up to 1000 files of up to 5 GB each. A free share is deleted 15 days after its last change; any write resets the clock.
 
-Public sites, key rotation, recovery email, deleting assets, every response field and error code: [references/http-api.md](references/http-api.md).
+Visibility, key rotation, deleting files or shares, recovery email, every field and error: [references/http-api.md](references/http-api.md).

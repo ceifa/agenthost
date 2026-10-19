@@ -121,6 +121,13 @@ export const siteHost = (username: string, siteId: string, apex: string) => `${u
 // widget) goes through these.
 export const shareUrl = (host: string, key?: string | null) => `https://${host}/${key ? `?k=${key}` : ""}`;
 
+// Share files are stored under decoded paths; every URL to one re-encodes each segment.
+export const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+
+// The link to hand a human: keyed unless the share is public.
+export const metaUrl = (host: string, meta: { public: boolean; accessKey?: string }) =>
+  shareUrl(host, meta.public ? null : meta.accessKey);
+
 // Caller identity for the rate limiters. Falls back to a shared sentinel when the
 // header is absent (e.g. local dev) so the limiter key stays well-formed.
 export const clientIp = (req: Request): string => req.headers.get("cf-connecting-ip") ?? "unknown";

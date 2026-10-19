@@ -4,7 +4,7 @@
 # production (it is intentionally absent from wrangler.jsonc).
 DEV_MODE=1
 
-# Required only for exercising direct asset transfers against a real R2 bucket.
+# Required only for exercising presigned uploads against a real R2 bucket.
 # Use bucket-scoped Object Read & Write credentials; never commit .dev.vars.
 R2_ACCOUNT_ID=
 R2_BUCKET_NAME=agenthost-sites
