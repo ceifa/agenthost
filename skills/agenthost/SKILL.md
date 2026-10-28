@@ -13,21 +13,16 @@ metadata:
       bins: [curl, tar]
 ---
 
-Publish a page, a folder, Markdown docs or any files as a **share** and get back a private link a human opens in one click. Plain `curl` and `tar` against `https://agenthost.page`.
+Plain `curl` and `tar` against `https://agenthost.page`. A share is one tree of files served at `https://{username}-{id}.agenthost.page`.
 
 ## One account, reused forever
 
-A `PUT` without `Authorization` **creates a new account** every time. Do it once: save the `ownerToken` from that first response wherever the environment keeps durable secrets, and send it on every call after, new shares included. It is shown once; lose it and you start over with new URLs. Below, `$AGENTHOST_TOKEN` holds it.
+A `PUT` without `Authorization` **creates a new account** every time. Make that call once, save the `ownerToken` it returns wherever the environment keeps durable secrets (it is shown once), and send it on every later call. Lose it and you start over with new URLs. Below, `$AGENTHOST_TOKEN` holds it.
 
 ## Publish
 
-`PUT /shares/{id}`. The `id` becomes the address `{username}-{id}.agenthost.page`; the same `id` again replaces the content at the same URL.
-
 ```bash
-# first call ever: creates the account
-curl -s -X PUT --data-binary @report.md https://agenthost.page/shares/report
-
-# every call after
+# one .md or .html, served at / (first call ever: drop the -H to create the account)
 curl -s -X PUT --data-binary @report.md -H "Authorization: Bearer $AGENTHOST_TOKEN" \
   https://agenthost.page/shares/report
 
@@ -35,42 +30,38 @@ curl -s -X PUT --data-binary @report.md -H "Authorization: Bearer $AGENTHOST_TOK
 tar cf - -C ./dist . | curl -s -X PUT --data-binary @- -H "Authorization: Bearer $AGENTHOST_TOKEN" \
   https://agenthost.page/shares/myblog
 
-# one file at a path, keeping the rest of the share
+# any one file at a path, keeping the rest of the share
 curl -s -X PUT --data-binary @chart.png -H "Authorization: Bearer $AGENTHOST_TOKEN" \
   https://agenthost.page/shares/myblog/files/img/chart.png
 ```
 
-- A file is always named in the URL path (percent-encode spaces and accents).
-- One `.md` or `.html` sent to `/shares/{id}` serves at `/`. Any other single file goes to `/shares/{id}/files/{path}`.
-- A `PUT /shares/{id}` **replaces every file** in the share. Add `?mode=merge` to keep the files the body doesn't carry, e.g. to update a page without re-sending its video.
-- A folder of `.md` becomes a docs site: `README.md` is the home, `SUMMARY.md` sets order and nesting.
-- With no `index.html` and no Markdown, `/` previews the file (video, image, audio and PDF play inline) or lists the files with download links.
+- `PUT /shares/{id}` **replaces every file**; `?mode=merge` keeps the ones the body doesn't carry. The same `id` keeps the same URL.
+- A file is named only by its URL path. Percent-encode spaces and accents.
+- `.md` files make a docs site: `README.md` is the home, `SUMMARY.md` sets the order. With no `index.html` or Markdown, `/` previews the single file or lists them all.
 
 ## Large files
 
-Over ~100 MB, a `PUT` body is refused; upload those straight to storage instead. Three calls with the same path; the file lands there inside the share (created if new) and joins whatever is already there:
+Bodies over ~100 MB are refused. Upload straight to storage, with the same path in all three calls:
 
 ```bash
-# 1. reserve; bytes must be the exact file size
-curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
-  --data '{"bytes":757603783}' https://agenthost.page/shares/demo/uploads/prepare/demo.mp4
+# 1. reserve the exact size in bytes
+curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" --data '{"bytes":757603783}' \
+  https://agenthost.page/shares/demo/uploads/prepare/demo.mp4
 
-# 2. within 15 min; use content-type from uploadHeaders
+# 2. within 15 min, with content-type from uploadHeaders
 curl -s --upload-file demo.mp4 -H 'content-type: <…>' '<uploadUrl>'
 
-# 3. complete
+# 3. commit; without it the file is discarded after a day
 curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
   https://agenthost.page/shares/demo/uploads/complete/demo.mp4
 ```
 
-An upload not completed within a day is discarded.
-
 ## What to hand the human
 
-Every response carries `url`, already holding the access key (`?k=…`), which logs the visitor in on first open. Hand over exactly that. `GET /shares/{id}` returns it again any time. Pages open in a browser reload themselves when the share changes. Appending `?download` to a file's URL saves it instead of opening it.
+The `url` in the response, exactly as returned: it carries the access key (`?k=…`) and logs the visitor in. `GET /shares/{id}` returns it again. `?download` on a file's URL saves it instead of opening it.
 
 ## Limits
 
-Free accounts store 500 MB across all their shares. Any share holds up to 1000 files of up to 5 GB each. A free share is deleted 15 days after its last change; any write resets the clock.
+Free accounts store 500 MB across all shares, and a free share is deleted 15 days after its last write. Any plan: 1000 files per share, 5 GB per file.
 
-Visibility, key rotation, deleting files or shares, recovery email, every field and error: [references/http-api.md](references/http-api.md).
+Visibility, key rotation, deletes, recovery email, every field and error: [references/http-api.md](references/http-api.md).
