@@ -14,6 +14,7 @@ Paths are relative to `https://agenthost.page/` (so `PUT https://agenthost.page/
 | `DELETE /shares/{id}` | Delete the share and all its files. |
 | `DELETE /shares/{id}/files/{path}` | Delete one file (percent-encode the path). |
 | `POST /shares/{id}/uploads` | Reserve a large-file upload. |
+| `POST /shares/{id}/uploads/complete` | Commit it. |
 | `PATCH /account` | `{"email": "you@example.com"}` sets a recovery/abuse contact. |
 
 `id` is lowercased and reduced to `[a-z0-9._-]`, at most 32 characters.
@@ -46,9 +47,9 @@ Response:
 
 1. `POST /shares/{id}/uploads` with `{"path": "media/demo.mp4", "bytes": <exact size>, "contentType": "video/mp4"}` (`contentType` optional; guessed from the extension). Returns `uploadUrl`, `uploadHeaders`, `uploadExpiresIn` and the share's `url`.
 2. `PUT` the file to `uploadUrl` within `uploadExpiresIn` seconds, sending every `uploadHeaders` entry as is. Anything else fails the signature.
-No completion call. The next share access, owner read or write, or nightly sweep recognizes uploaded files automatically. Reservations count against quota immediately; replacing a file reserves only the extra space and never releases its old space before the upload arrives. Unused reservations expire after a day without deleting existing files. A `PUT` that replaces the share leaves uploads in flight alone.
+3. `POST /shares/{id}/uploads/complete` with `{"path": "media/demo.mp4"}`. Returns `{ url, id, path, bytes, fileCount }`.
 
-The signed headers include `content-length`, `content-type` and `if-match` (replacement) or `if-none-match` (new file). Curl sets the length from the file; copy the other headers from `uploadHeaders`. R2 rejects a write if the target changed since reservation. A second reservation or Worker write to a path still awaiting its upload returns 409.
+The reserved bytes count against the account until completed. A size mismatch deletes the upload; one never completed is discarded after a day. A `PUT` that replaces the share leaves uploads in flight alone.
 
 ## Reading a share
 
@@ -67,8 +68,8 @@ JSON `{ "error": "<message>" }`:
 | 400 | Empty or unrecognized body, unsafe path, link in the tar, bad `id`, `mode` or JSON. |
 | 401 | Missing or malformed `Authorization`. |
 | 403 | Wrong owner token. |
-| 404 | No such share or file. |
-| 409 | An upload is already pending at that path. |
+| 404 | No such share, file or pending upload. |
+| 409 | Completing an upload whose file never arrived. |
 | 413 | Out of account storage, over 1000 files, or a file over 5 GB. |
 | 429 | Rate limited. Back off and retry. |
 

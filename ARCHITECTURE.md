@@ -129,8 +129,9 @@ The only real difference was how the bytes arrive, so that is all that stayed di
 copy that buys nothing.
 
 The share record is the per-share bookkeeping the **retention sweep** and **per-user quota**
-read (§9). User usage is *derived* by summing each share's `bytes` plus the extra space
-reserved by its `pending` uploads. There is no mutable usage counter (we have no Durable Object for atomic increments, so summing the source of
+read (§9). User usage is *derived* by summing each share's `bytes` plus its `pending` upload
+reservations — there is no mutable
+usage counter (we have no Durable Object for atomic increments, so summing the source of
 truth avoids a race; a small over-shoot from concurrent deploys is acceptable and
 self-corrects next publish).
 
@@ -193,7 +194,7 @@ Both write files into the same tree and commit the same record.
 
 | | Body through the Worker | Presigned upload |
 |---|---|---|
-| Call | `PUT /shares/{id}` | `POST /shares/{id}/uploads` → R2 PUT |
+| Call | `PUT /shares/{id}` | `POST /shares/{id}/uploads` → R2 PUT → `…/uploads/complete` |
 | Carries | a tar, or one file | one file at a path |
 | Semantics | `replace` (default, deletes orphans) or `?mode=merge` | always merges |
 
@@ -220,8 +221,8 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
    account (usernames never contain a dot), so no call needs a separate `?username=`.
 2. **Resolve the share id** from the path; it's sanitized and required.
 3. **Compute the effective size budget.** Read the user's `plan`, sum the other shares'
-   `bytes` and pending reservations from one `_sites/{username}/` LIST (reconciling expired
-   reservations), and list this share's files. Budget = `userQuota − otherShares − ownPending`. A merge
+   `bytes` and pending reservations from one `_sites/{username}/` LIST, and list this
+   share's files. Budget = `min(perShareCap, userQuota − otherShares) − ownPending`. A merge
    starts its tally from the files already there and subtracts a file it overwrites, so
    the count is exact rather than conservative. This makes the quotas fail *fast* during
    the stream rather than after.
@@ -257,27 +258,24 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
 
 ### 5.5 Presigned uploads
 
-1. `POST /shares/{id}/uploads` sends `{path, bytes, contentType?}`. The Worker reserves quota
-   on the share (creating it if new) and returns a 15-minute presigned PUT for the final key.
-   A replacement records the previous R2 version and size. Only its extra bytes are reserved;
-   a smaller replacement does not release the old file's space before it arrives.
+1. `POST /shares/{id}/uploads` sends only `{path, bytes, contentType?}`. The Worker checks the
+   per-file cap and the share/account budget — a file already at `path` is replaced, so its
+   size is credited back — records `pending[path] = {bytes, expiresAt}` on the share record
+   (creating the share if new), and returns a 15-minute presigned PUT for the file's final
+   key with exact signed `Content-Length` and `Content-Type`.
 2. The caller PUTs the payload **directly to `<account>.r2.cloudflarestorage.com`**. No bytes
-   cross the Worker. Signed `Content-Length` enforces the declared size. `Content-Type` and
-   `If-Match` (replacement) or `If-None-Match: *` (new file) are signed too. The conditional
-   write prevents the URL from overwriting a changed object after reconciliation.
+   cross the Worker. The signed length keeps the URL from exceeding the reservation; the URL
+   is scoped to one key.
+3. `POST /shares/{id}/uploads/complete` `R2.head`s the object, checks its size (a mismatch
+   deletes it), recounts the tree from one LIST, drops the reservation and bumps the
+   generation.
 
-There is no completion call or queue. The next authorized share request, live-reload probe,
-owner read/write, or nightly sweep lists the tree when reservations exist. A new R2 version
-at a reserved path confirms arrival, including same-size replacements. The Worker recounts
-usage, clears arrived or expired reservations and bumps the generation. Reservations still
-waiting keep their quota; expiration never deletes a successfully stored or previous file.
-Two reservations, or a Worker publish and a reservation, cannot write the same pending path.
-
-While any upload is pending, route, body and Markdown-index caches are bypassed, as are
-rendered HTML validators. Otherwise a request before the direct PUT finishes could freeze
-old content under the new generation. Once reconciled, ordinary generation caching resumes.
-The PUT writes the live key; staging and copying would double the writes of a 5 GB object.
-Presigning needs a bucket-scoped R2 S3 key as Worker secrets. R2 caps a single PUT at 5 GB.
+The PUT lands on the live key, before completion. A reader who misses the cache in that
+window gets the new file a little early — the same non-atomic window publish already
+accepts; staging plus a server-side copy would double the writes of a 5 GB file to close
+it. An upload never completed is deleted by the sweep, with its reservation, after a day.
+Presigning needs a bucket-scoped R2 S3 key as Worker secrets. R2 caps a single PUT at 5 GB,
+which is the paid per-file cap.
 
 ### 5.6 The rest of the API
 
@@ -607,8 +605,8 @@ split their own storage. What remains is technical and the same for everyone:
 
 Caps are enforced **during the untar stream** (fail fast, §5 step 4) and at upload
 reservation (§5.5). The per-user total is derived from the share records — `bytes` plus
-the extra bytes reserved for pending uploads, with no mutable counter. Replacements count
-at least the old file's bytes until the new version is observed.
+pending reservations — with no mutable counter. A reservation that replaces a file counts
+both until it completes: briefly conservative, never under.
 
 ### Retention sweep (cron)
 
@@ -616,8 +614,8 @@ A **Cron Trigger** on the same Worker runs nightly and deletes free-tier shares 
 `lastDeployAt` is older than 15 days — keeping R2 from bloating with abandoned shares.
 Any write resets the clock. **Paid users (`plan === "paid"`) are skipped — infinite
 retention.** Deleting a share = `R2.list` its prefix + delete all keys and its record.
-Direct uploads are reconciled before retention checks on every plan. Successful files stay;
-unused reservations older than a day release quota without deleting files. A free account whose `createdAt` is older than 90 days
+Uploads reserved more than a day ago and never completed are deleted, with whatever
+landed at their path, on every plan. A free account whose `createdAt` is older than 90 days
 and has no share left after the pass loses its `_users/{username}` record too; its owner
 token then gets a 403 and the agent starts a new account. The 90-day floor keeps a
 brand-new account mid-first-publish safe. Users and shares are processed one cursor page
@@ -655,7 +653,7 @@ agenthost/
 │  ├─ src/index.ts              # fetch entry: routes by Host ; apex→landing/API ; admin ; *→serve ; custom-domain→serve
 │  ├─ src/apex.ts               # the /shares REST API, /account, /llms.txt, /skill/
 │  ├─ src/publish.ts            # PUT /shares/{id}: streaming files → bounded R2 puts → orphans → metadata commit
-│  ├─ src/uploads.ts            # presigned uploads: quota reservation, exact-size conditional signing
+│  ├─ src/uploads.ts            # presigned uploads: quota reservation, exact-size signing, completion
 │  ├─ src/serve.ts              # host→username, fresh metadata, gen-keyed Cache API, R2 get, file index, /_gen probe, widget + live-reload inject
 │  ├─ src/client/*.ts           # browser scripts (live reload, copy link, docs shell), readable TS with DOM types
 │  ├─ src/client/gen/           # ↑ minified into `export default "<js>"` modules by scripts/build-client.mjs (gitignored)

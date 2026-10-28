@@ -9,7 +9,7 @@ const prefix = "sites/u/docs/";
 const controlKeys = ["_sites/u/docs"];
 
 function fixture(files: Record<string, string>) {
-  const meta: SiteMeta = { generation: 1, lastDeployAt: 1, createdAt: 1, bytes: Object.values(files).reduce((n, body) => n + body.length, 0), fileCount: Object.keys(files).length, public: true, tombstone: false };
+  const meta: Omit<SiteMeta, "bytes" | "fileCount" | "createdAt"> = { generation: 1, lastDeployAt: 1, public: true, tombstone: false };
   const objects = new Map(Object.entries(files).map(([path, body]) => [prefix + path, body]));
   const cacheEntries = new Map<string, Response>();
   const pending: Promise<unknown>[] = [];
@@ -46,11 +46,7 @@ function fixture(files: Record<string, string>) {
       const content = objects.get(key);
       return content === undefined ? null : { key, size: content.length, httpEtag: '"fixture-etag"', uploaded: new Date("2026-01-01T00:00:00Z"), writeHttpMetadata: (headers: Headers) => headers.set("content-type", "text/plain") };
     }),
-    list: vi.fn(async () => ({ objects: [...objects].map(([key, body]) => ({ key, version: body, size: body.length })), truncated: false })),
-    put: vi.fn(async (_key: string, _body: unknown, opts: R2PutOptions) => {
-      delete meta.pending;
-      Object.assign(meta, JSON.parse(opts.customMetadata!.json!));
-    }),
+    list: vi.fn(async () => ({ objects: [...objects].map(([key, body]) => ({ key, size: body.length })), truncated: false })),
   };
   vi.stubGlobal("caches", { default: cache });
   // HTML rewriting is exercised by the workerd smoke check; this fixture tests
@@ -222,55 +218,6 @@ describe("serving I/O budgets", () => {
   });
 });
 
-describe("lazy upload recognition", () => {
-  it.each<{ files: Record<string, string>; path: string; file: string; body: string }>([
-    { files: { "index.html": "<body>Old home</body>" }, path: "/", file: "index.html", body: "<body>New home</body>" },
-    { files: { "app.css": "old{}" }, path: "/app.css", file: "app.css", body: "new{}" },
-    { files: { "README.md": "# Old home" }, path: "/", file: "README.md", body: "# New home" },
-  ])("does not freeze $file in cache when a reader arrives before the upload", async ({ files, path, file, body }) => {
-    const f = fixture(files);
-    await f.warm(path);
-    const old = f.objects.get(prefix + file)!;
-    f.meta.pending = { [file]: { bytes: body.length, expiresAt: Date.now() + 86400000, previous: { version: old, bytes: old.length } } };
-    const before = await f.request(path);
-    const etag = before.headers.get("etag");
-    await before.text();
-    await f.settle();
-    expect(f.cache.put).not.toHaveBeenCalled();
-    const conditional = await f.request(path, etag ? { "if-none-match": etag } : undefined);
-    expect(conditional.status).toBe(200);
-    await conditional.text();
-    await f.settle();
-    f.objects.set(prefix + file, body);
-    const after = await f.request(path);
-    expect(await after.text()).toContain(file === "app.css" ? body : "New home");
-    expect(f.meta.pending).toBeUndefined();
-    expect(f.meta.generation).toBe(2);
-    await f.settle();
-  });
-
-  it("rebuilds the file index when a new upload lands", async () => {
-    const f = fixture({ "a.csv": "1,2" });
-    await f.warm();
-    f.meta.pending = { "b.csv": { bytes: 3, expiresAt: Date.now() + 86400000 } };
-    await (await f.request()).text();
-    await f.settle();
-    f.objects.set(prefix + "b.csv", "3,4");
-    expect(await (await f.request()).text()).toContain('href="/b.csv"');
-    expect(f.meta).toMatchObject({ bytes: 6, fileCount: 2, generation: 2 });
-    await f.settle();
-  });
-
-  it("recognizes an upload from the live-reload probe", async () => {
-    const f = fixture({ "index.html": "<body>Old home</body>" });
-    f.meta.pending = { "new.csv": { bytes: 3, expiresAt: Date.now() + 86400000 } };
-    f.objects.set(prefix + "new.csv", "1,2");
-    expect(await (await f.request("/_gen")).text()).toMatch(/^g2-/);
-    expect(f.meta.pending).toBeUndefined();
-    await f.settle();
-  });
-});
-
 describe("streamed HTML", () => {
   it.each([false, true])("returns HTML before its source closes (cached: %s)", async (cached) => {
     const f = fixture({ "index.html": "<body>Home</body>" });
@@ -376,7 +323,7 @@ describe("shares without a page of their own", () => {
     await f.settle();
 
     const g = fixture({ "a b.csv": "1,2", "data/b.csv": "3,4", "late.bin": "x" });
-    g.meta.pending = { "late.bin": { bytes: 1, expiresAt: Date.now() + 86400000, previous: { version: "x", bytes: 1 } } };
+    g.meta.pending = { "late.bin": { bytes: 1, expiresAt: 0 } };
     const list = await (await g.request()).text();
     expect(list).toContain('href="/a%20b.csv"');
     expect(list).toContain('href="/data/b.csv?download"');

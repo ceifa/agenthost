@@ -117,29 +117,13 @@ describe("archive publishing", () => {
 
   it("leaves an upload in flight alone when replacing the tree", async () => {
     const f = await archiveFixture();
+    f.json("_sites/alice/docs", { generation: 1, bytes: 1, fileCount: 1, accessKey: "key", public: false, createdAt: 0, lastDeployAt: 0, pending: { "big.mp4": { bytes: 4, expiresAt: 1e15 } } });
     f.records.set("sites/alice/docs/big.mp4", { body: "data" });
-    const previous = (await f.head("sites/alice/docs/big.mp4"))!;
-    f.json("_sites/alice/docs", { generation: 1, bytes: 5, fileCount: 2, accessKey: "key", public: false, createdAt: 0, lastDeployAt: 0, pending: { "big.mp4": { bytes: 8, expiresAt: 1e15, previous: { version: previous.version, bytes: 4 } } } });
     f.records.set("sites/alice/docs/old.html", { body: "x" });
     expect((await f.post(tar([{ name: "index.html", body: "hi" }]))).status).toBe(200);
     expect(f.records.has("sites/alice/docs/big.mp4")).toBe(true);
     expect(f.records.has("sites/alice/docs/old.html")).toBe(false);
-    expect((await getMeta(f.bucket, "alice", "docs"))!).toMatchObject({ fileCount: 2, bytes: 6, pending: { "big.mp4": { bytes: 8 } } });
-    expect(await userUsage(f.bucket, "alice")).toBe(10);
-  });
-
-  it("does not write over an upload still in flight", async () => {
-    const f = await archiveFixture();
-    f.json("_sites/alice/docs", { generation: 1, bytes: 0, fileCount: 0, public: false, createdAt: 0, lastDeployAt: 0, pending: { "big.mp4": { bytes: 4, expiresAt: 1e15 } } });
-    expect((await f.post(tar([{ name: "big.mp4", body: "data" }]))).status).toBe(409);
-    expect(f.records.has("sites/alice/docs/big.mp4")).toBe(false);
-  });
-
-  it("includes pending uploads in the file count limit", async () => {
-    const f = await archiveFixture();
-    f.json("_sites/alice/docs", { generation: 1, bytes: 0, fileCount: 0, public: false, createdAt: 0, lastDeployAt: 0,
-      pending: Object.fromEntries(Array.from({ length: MAX_FILES }, (_, i) => [`${i}.bin`, { bytes: 1, expiresAt: 1e15 }])) });
-    expect((await f.post(tar([{ name: "index.html", body: "hi" }]))).status).toBe(413);
+    expect((await getMeta(f.bucket, "alice", "docs"))!).toMatchObject({ fileCount: 1, bytes: 2, pending: { "big.mp4": { bytes: 4 } } });
   });
 
   it("skips Finder cruft, directories and the live-reload probe path", async () => {

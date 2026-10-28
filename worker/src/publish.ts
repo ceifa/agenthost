@@ -22,7 +22,7 @@ import {
   putUser,
   getMeta,
   putMeta,
-  reconcileUploads,
+  shareUsage,
   userUsage,
   listAll,
   committedFiles,
@@ -267,19 +267,14 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
   // Fail fast on over-quota: the share may hold what the account has left
   // after other shares and its own pending uploads.
   const limits = LIMITS[plan];
-  const [otherUsage, record, listed] = isNewUser
+  const [otherUsage, existingMeta, listed] = isNewUser
     ? [0, null, []]
     : await Promise.all([
         userUsage(env.SITES, username, siteId),
         getMeta(env.SITES, username, siteId),
         listAll(env.SITES, sitePrefix(username, siteId)),
       ]);
-  const existingMeta = record ? await reconcileUploads(env.SITES, username, siteId, record, Date.now(), listed) : null;
-  const pending = existingMeta?.pending ?? {};
-  const reservations = Object.values(pending);
-  const reserved = reservations.reduce((sum, p) => sum + Math.max(p.bytes, p.previous?.bytes ?? 0), 0);
-  const previousBytes = reservations.reduce((sum, p) => sum + (p.previous?.bytes ?? 0), 0);
-  const previousFiles = reservations.filter(p => p.previous).length;
+  const reserved = existingMeta ? shareUsage(existingMeta) - existingMeta.bytes : 0;
   const totalBudget = Math.max(0, limits.perUser - otherUsage - reserved);
   // Uploads still in flight are neither counted here nor orphaned below.
   const existing = new Map(committedFiles(listed, username, siteId, existingMeta).map(o => [o.key, o.size]));
@@ -293,12 +288,10 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
 
   // Account for a file about to be written at `key`, or say why it can't be.
   const admit = (key: string, size: number): PublishError | null => {
-    const path = key.slice(sitePrefix(username, siteId).length);
-    if (pending[path]) return fail(409, `an upload is already pending at ${path}`);
     const replaced = merge && !writtenKeys.has(key) ? existing.get(key) : undefined;
     const bytes = totalBytes - (replaced ?? 0) + size;
     const files = fileCount + (replaced === undefined ? 1 : 0);
-    if (files + reservations.length > MAX_FILES) return fail(413, `too many files; max is ${MAX_FILES}`);
+    if (files > MAX_FILES) return fail(413, `too many files; max is ${MAX_FILES}`);
     if (bytes > totalBudget) return fail(413, `account storage exceeded: ${totalBudget} bytes left (plan ${plan})`);
     totalBytes = bytes;
     fileCount = files;
@@ -417,8 +410,8 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
     generation: (existingMeta?.generation ?? 0) + 1,
     createdAt: existingMeta?.createdAt ?? Date.now(),
     lastDeployAt: Date.now(),
-    bytes: totalBytes + previousBytes,
-    fileCount: fileCount + previousFiles,
+    bytes: totalBytes,
+    fileCount,
     public: existingMeta?.public ?? false,
   };
   await putMeta(env.SITES, username, siteId, meta);
@@ -427,8 +420,8 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
     url: metaUrl(siteHost(username, siteId, env.APEX_HOST), meta),
     id: siteId,
     username,
-    fileCount: meta.fileCount,
-    bytes: meta.bytes,
+    fileCount,
+    bytes: totalBytes,
     ...(secret ? { ownerToken: `${username}.${secret}` } : {}),
   });
 }
