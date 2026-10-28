@@ -50,8 +50,8 @@ Over ~100 MB, a `PUT` body is refused; upload those straight to storage instead.
 curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
   --data '{"path":"demo.mp4","bytes":757603783}' https://agenthost.page/shares/demo/uploads
 
-# 2. within 15 min: PUT the file to uploadUrl with every uploadHeaders entry, verbatim
-curl -s -X PUT --upload-file demo.mp4 -H 'content-length: <…>' -H 'content-type: <…>' '<uploadUrl>'
+# 2. within 15 min; use content-type from uploadHeaders
+curl -s --upload-file demo.mp4 -H 'content-type: <…>' '<uploadUrl>'
 
 # 3. complete
 curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
