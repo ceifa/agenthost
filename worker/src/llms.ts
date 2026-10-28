@@ -17,6 +17,9 @@ curl -s -X PUT --data-binary @report.md https://${apexHost}/shares/report
 # A whole folder — pipe a tar of it:
 tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://${apexHost}/shares/myblog
 
+# Any one file, at a path inside the share (keeps the other files):
+curl -s -X PUT --data-binary @chart.png https://${apexHost}/shares/myblog/files/img/chart.png
+
 ## Response (JSON)
 {
   "url": "https://cleverotter4f2-myblog.${apexHost}/?k=<key>",  // hand THIS to a human; private + pre-authed
@@ -31,14 +34,15 @@ A PUT without Authorization creates a new account. Save ownerToken once and send
 ## Republish the SAME url
 tar cf - -C ./dist . | curl -s -X PUT --data-binary @- \\
   -H 'Authorization: Bearer <ownerToken>' https://${apexHost}/shares/myblog
-A PUT replaces every file; add ?mode=merge to keep files the body doesn't carry.
+PUT /shares/<id> replaces every file; add ?mode=merge to keep files the body doesn't carry.
+A file is always named in the URL path, percent-encoded.
 GET /shares/myblog returns the url again at any time.
 
 ## Large files (over ~100 MB, or any file you'd rather not stream through agenthost)
-1. POST https://${apexHost}/shares/<id>/uploads  {"path":"demo.mp4","bytes":<exact size>}
+1. POST https://${apexHost}/shares/<id>/uploads/prepare/demo.mp4  {"bytes":<exact size>}
    → uploadUrl, uploadHeaders, url
 2. curl -X PUT --upload-file demo.mp4 -H '<each uploadHeaders entry>' '<uploadUrl>'   (within 15 min)
-3. POST https://${apexHost}/shares/<id>/uploads/complete  {"path":"demo.mp4"}
+3. POST https://${apexHost}/shares/<id>/uploads/complete/demo.mp4  (no body)
 Steps 1 and 3 take the Authorization header. The file joins the share at /demo.mp4.
 
 ## What a share shows

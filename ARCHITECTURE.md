@@ -194,9 +194,13 @@ Both write files into the same tree and commit the same record.
 
 | | Body through the Worker | Presigned upload |
 |---|---|---|
-| Call | `PUT /shares/{id}` | `POST /shares/{id}/uploads` → R2 PUT → `…/uploads/complete` |
-| Carries | a tar, or one file | one file at a path |
-| Semantics | `replace` (default, deletes orphans) or `?mode=merge` | always merges |
+| Call | `PUT /shares/{id}` or `PUT /shares/{id}/files/{path}` | `POST …/uploads/prepare/{path}` → R2 PUT → `POST …/uploads/complete/{path}` |
+| Carries | a tar or one document; or one file at a path | one file at a path |
+| Semantics | `replace` (default, deletes orphans) or `?mode=merge`; `/files/` always merges | always merges |
+
+A file is always named by the URL path, never by a query (`?file=`), a body field or
+`Content-Disposition`. Each of those once existed somewhere; one rule leaves an agent
+nothing to guess. Bodies carry data, the query carries options (`mode`, `cursor`).
 
 **Canonical, zero-install command an agent runs:**
 
@@ -212,9 +216,10 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
    single document, front matter → markdown and a doctype/markup opener → html. The
    `Content-Type` header is only a tiebreaker — clients send nothing, `octet-stream`, or
    curl's `x-www-form-urlencoded` far more often than the truth, and trusting it used to
-   push a perfectly good `.md` down the untar path to die as "bad archive". An explicit
-   `?file=<name>` still wins outright, and non-archive *binary* is rejected up front rather
-   than published as a document.
+   push a perfectly good `.md` down the untar path to die as "bad archive". A path from
+   `PUT /shares/{id}/files/{path}` wins outright (a tar there is stored as a file), and on
+   `/shares/{id}` non-archive *binary* is rejected up front rather than published as a
+   document.
 1. **Resolve account.** No `Authorization` → generate a memorable `username`; create
    `_users/{username}` and mint a secret (random 32 bytes; store only its `sha256`). The
    agent gets `ownerToken = "{username}.{secret}"`: one string both names and proves the
@@ -258,7 +263,7 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
 
 ### 5.5 Presigned uploads
 
-1. `POST /shares/{id}/uploads` sends only `{path, bytes, contentType?}`. The Worker checks the
+1. `POST /shares/{id}/uploads/prepare/{path}` sends only `{bytes, contentType?}`. The Worker checks the
    per-file cap and the share/account budget — a file already at `path` is replaced, so its
    size is credited back — records `pending[path] = {bytes, expiresAt}` on the share record
    (creating the share if new), and returns a 15-minute presigned PUT for the file's final
@@ -266,7 +271,7 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
 2. The caller PUTs the payload **directly to `<account>.r2.cloudflarestorage.com`**. No bytes
    cross the Worker. The signed length keeps the URL from exceeding the reservation; the URL
    is scoped to one key.
-3. `POST /shares/{id}/uploads/complete` `R2.head`s the object, checks its size (a mismatch
+3. `POST /shares/{id}/uploads/complete/{path}` (no body) `R2.head`s the object, checks its size (a mismatch
    deletes it), recounts the tree from one LIST, drops the reservation and bumps the
    generation.
 
@@ -280,7 +285,7 @@ which is the paid per-file cap.
 ### 5.6 The rest of the API
 
 `GET /shares`, `GET|PATCH|DELETE /shares/{id}`, `POST /shares/{id}/key` (rotate),
-`DELETE /shares/{id}/files/{path}`, `PATCH /account`. REST over the old query-string
+`PUT|DELETE /shares/{id}/files/{path}`, `PATCH /account`. REST over the old query-string
 endpoints was chosen alongside the hard cut to shares: with every client breaking anyway,
 the churn cost nothing.
 

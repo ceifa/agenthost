@@ -6,7 +6,7 @@ import { LIMITS, MAX_FILE_BYTES, MAX_FILES, UPLOAD_EXPIRY_MS, UPLOAD_URL_TTL_SEC
 import { ownedShare, readJson, requireOwner, type AppContext } from "./auth";
 import { committedFiles, getMeta, listAll, putMeta, shareUsage, siteFileKey, sitePrefix, userUsage, RESERVED_FILE, type SiteMeta } from "./storage";
 import { clientIp, contentTypeFor, generateAccessKey, metaUrl, sanitizeSiteId, siteHost } from "./ids";
-import { safePath } from "./publish";
+import { routeFilePath, safePath } from "./publish";
 import { signDirectUpload } from "./r2-signed";
 
 function safeContentType(raw: unknown, path: string): string {
@@ -16,8 +16,10 @@ function safeContentType(raw: unknown, path: string): string {
   return contentTypeFor(path);
 }
 
-function uploadPath(raw: unknown): string | null {
-  if (typeof raw !== "string" || raw.length > 512) return null;
+// The file path after /shares/{id}/uploads/{prepare|complete}/.
+function uploadPath(c: AppContext): string | null {
+  const raw = routeFilePath(c.req.url, 4);
+  if (raw === null || raw.length > 512) return null;
   const path = safePath(raw);
   return path && !RESERVED_FILE(path) ? path : null;
 }
@@ -30,10 +32,10 @@ export async function createUpload(c: AppContext): Promise<Response> {
   if (owner instanceof Response) return owner;
   const id = sanitizeSiteId(c.req.param("id"));
   if (!id) return c.json({ error: "invalid share id" }, 400);
+  const path = uploadPath(c);
+  if (!path) return c.json({ error: "valid file path required" }, 400);
   const body = await readJson(c);
   if (!body) return c.json({ error: "JSON body required" }, 400);
-  const path = uploadPath(body.path);
-  if (!path) return c.json({ error: "valid path required" }, 400);
   const bytes = body.bytes;
   if (typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes <= 0) {
     return c.json({ error: "bytes must be a positive integer" }, 400);
@@ -83,7 +85,7 @@ export async function completeUpload(c: AppContext): Promise<Response> {
   const share = await ownedShare(c);
   if (share instanceof Response) return share;
   const { owner, id, meta } = share;
-  const path = uploadPath((await readJson(c))?.path);
+  const path = uploadPath(c);
   const reserved = path ? meta.pending?.[path] : undefined;
   if (!path || !reserved) return c.json({ error: "no pending upload at that path" }, 404);
 

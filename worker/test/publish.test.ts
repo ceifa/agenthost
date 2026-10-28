@@ -143,10 +143,8 @@ describe("archive publishing", () => {
     { name: "too many files", body: () => tar(Array.from({ length: MAX_FILES + 1 }, (_, i) => ({ name: `${i}.txt`, body: "x" }))), status: 413, error: `too many files; max is ${MAX_FILES}` },
     { name: "an entry bigger than the account", body: () => header("big.bin", LIMITS.free.perUser + 1), status: 413, error: `entry big.bin declares ${LIMITS.free.perUser + 1} bytes; max is ${LIMITS.free.perUser}` },
     { name: "a zip", body: () => new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0]), status: 400, error: "zip is not supported — send a tar (tar cf - -C ./dist .)" },
-    { name: "binary garbage", body: () => new Uint8Array([0, 1, 2, 3]), status: 400, error: "unrecognized body — send a tar, a .md/.html document, or name it with ?file=<name>" },
+    { name: "binary garbage", body: () => new Uint8Array([0, 1, 2, 3]), status: 400, error: "unrecognized body — send a tar, a .md/.html document, or PUT it to /shares/{id}/files/{path}" },
     { name: "garbage labelled as a tarball", body: () => new TextEncoder().encode("not gzip"), headers: { "content-type": "application/gzip" }, status: 400, error: /^bad archive: / },
-    { name: "an unsafe ?file= name", body: () => new TextEncoder().encode("x"), query: "file=../x", status: 400, error: "invalid file name: ../x" },
-    { name: "a control ?file= name", body: () => new TextEncoder().encode("x"), query: "file=_gen", status: 400, error: "reserved filename: _gen" },
     { name: "an unknown mode", body: () => tar([{ name: "a.txt", body: "a" }]), query: "mode=append", status: 400, error: "mode must be replace or merge" },
   ])("rejects $name without committing", async ({ body, query, headers, status, error }) => {
     const f = await archiveFixture();

@@ -2,19 +2,22 @@
 
 Paths are relative to `https://agenthost.page/` (so `PUT https://agenthost.page/shares/report`). Every call except the first `PUT` sends `Authorization: Bearer <ownerToken>`. JSON bodies need no `Content-Type`.
 
+A file is always named by `{path}` in the URL, percent-encoded (`a%20b.png`), never by a query or body field. Bodies carry data; the query carries options.
+
 ## Shares
 
 | Call | Does |
 |---|---|
-| `PUT /shares/{id}` | Publish a tar or one file. No `Authorization` creates an account. |
+| `PUT /shares/{id}` | Publish a tar or one `.md`/`.html` as the whole share. No `Authorization` creates an account. |
+| `PUT /shares/{id}/files/{path}` | Write the body as one file at `path`, keeping the other files. Also creates the account if unauthenticated. |
 | `GET /shares` | List your shares (`?cursor=` pages past 1000). |
 | `GET /shares/{id}` | One share, including its `url`. |
 | `PATCH /shares/{id}` | `{"public": true}` drops the access gate; `false` restores it. |
 | `POST /shares/{id}/key` | New access key. **Every link handed out before stops working**; the share turns private. |
 | `DELETE /shares/{id}` | Delete the share and all its files. |
 | `DELETE /shares/{id}/files/{path}` | Delete one file (percent-encode the path). |
-| `POST /shares/{id}/uploads` | Reserve a large-file upload. |
-| `POST /shares/{id}/uploads/complete` | Commit it. |
+| `POST /shares/{id}/uploads/prepare/{path}` | Reserve a large-file upload. |
+| `POST /shares/{id}/uploads/complete/{path}` | Commit it. |
 | `PATCH /account` | `{"email": "you@example.com"}` sets a recovery/abuse contact. |
 
 `id` is lowercased and reduced to `[a-z0-9._-]`, at most 32 characters.
@@ -24,9 +27,8 @@ Paths are relative to `https://agenthost.page/` (so `PUT https://agenthost.page/
 | Query | Notes |
 |---|---|
 | `mode=merge` | Keep files the body doesn't carry. Default `replace` deletes them. |
-| `file=<name>` | Publish the body as this one file; its extension sets the served type. |
 
-A tar (gzipped or not) is a folder. Anything else is one document: Markdown is stored as `README.md`, HTML as `index.html`. A body that is neither text nor a tar needs `file=`. `.DS_Store`, `._*` and directory entries are skipped; `_gen` is reserved.
+A tar (gzipped or not) is a folder. Anything else is one document: Markdown is stored as `README.md`, HTML as `index.html`. A body that is neither goes to `/shares/{id}/files/{path}` instead, where it is stored as is (a tar too) and the extension sets the served type. `.DS_Store`, `._*` and directory entries are skipped; `_gen` is reserved.
 
 Response:
 
@@ -45,9 +47,9 @@ Response:
 
 ### Uploads
 
-1. `POST /shares/{id}/uploads` with `{"path": "media/demo.mp4", "bytes": <exact size>, "contentType": "video/mp4"}` (`contentType` optional; guessed from the extension). Returns `uploadUrl`, `uploadHeaders`, `uploadExpiresIn` and the share's `url`.
+1. `POST /shares/{id}/uploads/prepare/media/demo.mp4` with `{"bytes": <exact size>, "contentType": "video/mp4"}` (`contentType` optional; guessed from the extension). Returns `uploadUrl`, `uploadHeaders`, `uploadExpiresIn` and the share's `url`.
 2. `PUT` the file to `uploadUrl` within `uploadExpiresIn` seconds, sending every `uploadHeaders` entry as is. Anything else fails the signature.
-3. `POST /shares/{id}/uploads/complete` with `{"path": "media/demo.mp4"}`. Returns `{ url, id, path, bytes, fileCount }`.
+3. `POST /shares/{id}/uploads/complete/media/demo.mp4`, no body. Returns `{ url, id, path, bytes, fileCount }`.
 
 The reserved bytes count against the account until completed. A size mismatch deletes the upload; one never completed is discarded after a day. A `PUT` that replaces the share leaves uploads in flight alone.
 

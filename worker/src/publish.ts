@@ -104,6 +104,16 @@ export function safePath(raw: string): string | null {
   return p;
 }
 
+// The percent-decoded file path after a route's first `segments` path segments,
+// or null when it isn't valid percent-encoding.
+export function routeFilePath(url: string, segments: number): string | null {
+  try {
+    return decodeURIComponent(new URL(url).pathname.split("/").slice(segments + 1).join("/"));
+  } catch {
+    return null;
+  }
+}
+
 const mime = (contentType: string): string => contentType.split(";")[0]!.trim().toLowerCase();
 
 // Classify a Content-Type as a single raw document worth serving at `/`, or null
@@ -134,18 +144,6 @@ function claimsArchive(contentType: string): boolean {
   }
 }
 
-// A filename the body carries with it, the standard way. Weaker than `?file=`:
-// an uploader may attach it to a tarball, so it only names single documents.
-function dispositionFileName(req: Request): string | null {
-  const m = req.headers.get("content-disposition")?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
-  if (!m) return null;
-  try {
-    return decodeURIComponent(m[1]!.trim());
-  } catch {
-    return m[1]!.trim(); // stray % in the name — take it literally
-  }
-}
-
 // How to read the body. Byte magic outranks the Content-Type header: clients send
 // no type, `application/octet-stream`, or curl's `application/x-www-form-urlencoded`
 // far more often than the truth, but a gzip header is a gzip header.
@@ -159,11 +157,10 @@ const named = (raw: string): Mode => {
   return name ? { kind: "file", name } : { kind: "invalid", message: `invalid file name: ${raw}` };
 };
 
-function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
-  // `?file=` is the caller being explicit — it outranks everything, including the
-  // bytes, so a tarball can still be published as one downloadable file.
-  const explicit = url.searchParams.get("file");
-  if (explicit !== null) return named(explicit);
+function detectMode(req: Request, file: string | undefined, head: Uint8Array): Mode {
+  // A path in the URL outranks the bytes, so a tarball can still be published
+  // as one downloadable file.
+  if (file !== undefined) return named(file);
 
   if (isGzip(head)) return { kind: "archive", gzipped: true };
   if (isTar(head)) return { kind: "archive", gzipped: false };
@@ -175,18 +172,14 @@ function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
     return { kind: "invalid", message: "zip is not supported — send a tar (tar cf - -C ./dist .)" };
   }
 
-  // Not an archive, so it's one document: prefer the name it came with, since the
-  // extension is a better signal than anything we can infer.
-  const filename = dispositionFileName(req);
-  if (filename !== null) return named(filename);
-
-  // Header next (it's an explicit claim), then the bytes themselves: front
-  // matter → markdown, a doctype/html tag → html, prose → markdown.
+  // Not an archive, so it's one document. The header first (it's an explicit
+  // claim), then the bytes: front matter → markdown, a doctype/html tag → html,
+  // prose → markdown.
   const kind = singleFileKind(contentType) ?? sniffDocKind(head);
   if (kind === null) {
     return {
       kind: "invalid",
-      message: "unrecognized body — send a tar, a .md/.html document, or name it with ?file=<name>",
+      message: "unrecognized body — send a tar, a .md/.html document, or PUT it to /shares/{id}/files/{path}",
     };
   }
   // Named so it serves at `/`: html as-is, markdown as the docs home.
@@ -229,7 +222,8 @@ interface PublishError {
 }
 const fail = (status: number, message: string): PublishError => ({ status, message });
 
-export async function handlePublish(req: Request, env: Env, rawId: string): Promise<Response> {
+// `file` set: write the body as that one file, keeping the rest of the share.
+export async function handlePublish(req: Request, env: Env, rawId: string, file?: string): Promise<Response> {
   if (!req.body) return json({ error: "empty body — pipe a tar or a single file" }, 400);
 
   // Per-IP throttle before any account minting or R2 work — this is the main
@@ -243,7 +237,7 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
   if (!siteId) return json({ error: `invalid share id: ${rawId}` }, 400);
   const modeParam = url.searchParams.get("mode") ?? "replace";
   if (modeParam !== "replace" && modeParam !== "merge") return json({ error: "mode must be replace or merge" }, 400);
-  const merge = modeParam === "merge";
+  const merge = file !== undefined || modeParam === "merge";
 
   let username: string;
   let plan: "free" | "paid" = "free";
@@ -305,7 +299,7 @@ export async function handlePublish(req: Request, env: Env, rawId: string): Prom
   try { payload = await peek(req.body); }
   catch { return json({ error: "failed to read request body" }, 400); }
   const { head, stream: body, cancel: cancelBody } = payload;
-  const mode = detectMode(req, url, head);
+  const mode = detectMode(req, file, head);
   if (mode.kind === "invalid") {
     void cancelBody().catch(() => {});
     return json({ error: mode.message }, 400);

@@ -3,6 +3,7 @@ import { apexApp } from "../src/apex";
 import { getMeta, getUser } from "../src/storage";
 import { sha256Hex } from "../src/ids";
 import { testBucket } from "./test-bucket";
+import { tar } from "./test-tar";
 
 async function fixture(meta: Record<string, unknown> = {}) {
   const f = testBucket();
@@ -73,6 +74,43 @@ describe("/shares", () => {
     expect((await f.call("DELETE", "/shares/docs/files/..%2F..%2Fx")).status).toBe(404);
     expect(await (await f.call("DELETE", "/shares/docs")).json()).toEqual({ ok: true });
     expect([...f.records.keys()].filter(k => k.includes("/docs"))).toEqual([]);
+  });
+
+  it("finds the file path after the share id, even in a share named files", async () => {
+    const f = await fixture();
+    f.json("_sites/alice/files", { generation: 1, public: false, accessKey: "key", bytes: 3, fileCount: 1, createdAt: 0, lastDeployAt: 0 });
+    f.records.set("sites/alice/files/a.css", { body: "a{}" });
+    expect((await f.call("DELETE", "/shares/files/files/a.css")).status).toBe(200);
+    expect(f.records.has("sites/alice/files/a.css")).toBe(false);
+  });
+});
+
+describe("PUT /shares/{id}/files/{path}", () => {
+  const put = (f: Awaited<ReturnType<typeof fixture>>, path: string, body: BodyInit) => apexApp.fetch(new Request(`https://example.com/shares/docs/files/${path}`, {
+    method: "PUT", body, headers: { authorization: "Bearer alice.owner" },
+  }), f.env);
+
+  it("writes one file at its URL path and keeps the rest of the share", async () => {
+    const f = await fixture();
+    const res = await put(f, "m%C3%ADdia/v%C3%ADdeo%20%231.bin", new Uint8Array([0, 1, 2, 3]));
+    expect(await res.json()).toMatchObject({ id: "docs", fileCount: 3, bytes: 9 });
+    expect(f.records.get("sites/alice/docs/mídia/vídeo #1.bin")).toBeTruthy();
+    expect(f.records.get("sites/alice/docs/index.html")!.body).toBe("hi");
+    expect((await getMeta(f.bucket, "alice", "docs"))!.generation).toBe(2);
+  });
+
+  it("stores a tarball as the named file instead of unpacking it", async () => {
+    const f = await fixture();
+    const body = tar([{ name: "inner.html", body: "x" }]);
+    expect((await put(f, "site.tar", body)).status).toBe(200);
+    expect(f.records.get("sites/alice/docs/site.tar")!.body.length).toBe(body.length);
+    expect(f.records.has("sites/alice/docs/inner.html")).toBe(false);
+  });
+
+  it.each(["", "..%2Fx", "_gen"])("refuses the path %j", async path => {
+    const f = await fixture();
+    expect((await put(f, path, "x")).status).toBe(400);
+    expect((await getMeta(f.bucket, "alice", "docs"))!.generation).toBe(1);
   });
 });
 

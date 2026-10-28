@@ -34,28 +34,33 @@ curl -s -X PUT --data-binary @report.md -H "Authorization: Bearer $AGENTHOST_TOK
 # a folder: pipe a tar (zip is rejected)
 tar cf - -C ./dist . | curl -s -X PUT --data-binary @- -H "Authorization: Bearer $AGENTHOST_TOKEN" \
   https://agenthost.page/shares/myblog
+
+# one file at a path, keeping the rest of the share
+curl -s -X PUT --data-binary @chart.png -H "Authorization: Bearer $AGENTHOST_TOKEN" \
+  https://agenthost.page/shares/myblog/files/img/chart.png
 ```
 
-- One `.md` or `.html` serves at `/`. Any other single file needs `?file=<name>`.
-- A `PUT` **replaces every file** in the share. Add `?mode=merge` to keep the files the body doesn't carry, e.g. to update a page without re-sending its video.
+- A file is always named in the URL path (percent-encode spaces and accents).
+- One `.md` or `.html` sent to `/shares/{id}` serves at `/`. Any other single file goes to `/shares/{id}/files/{path}`.
+- A `PUT /shares/{id}` **replaces every file** in the share. Add `?mode=merge` to keep the files the body doesn't carry, e.g. to update a page without re-sending its video.
 - A folder of `.md` becomes a docs site: `README.md` is the home, `SUMMARY.md` sets order and nesting.
 - With no `index.html` and no Markdown, `/` previews the file (video, image, audio and PDF play inline) or lists the files with download links.
 
 ## Large files
 
-Over ~100 MB, a `PUT` body is refused; upload those straight to storage instead. Three calls; the file lands at `path` inside the share (created if new) and joins whatever is already there:
+Over ~100 MB, a `PUT` body is refused; upload those straight to storage instead. Three calls with the same path; the file lands there inside the share (created if new) and joins whatever is already there:
 
 ```bash
 # 1. reserve; bytes must be the exact file size
 curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
-  --data '{"path":"demo.mp4","bytes":757603783}' https://agenthost.page/shares/demo/uploads
+  --data '{"bytes":757603783}' https://agenthost.page/shares/demo/uploads/prepare/demo.mp4
 
 # 2. within 15 min; use content-type from uploadHeaders
 curl -s --upload-file demo.mp4 -H 'content-type: <…>' '<uploadUrl>'
 
 # 3. complete
 curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
-  --data '{"path":"demo.mp4"}' https://agenthost.page/shares/demo/uploads/complete
+  https://agenthost.page/shares/demo/uploads/complete/demo.mp4
 ```
 
 An upload not completed within a day is discarded.

@@ -42,7 +42,7 @@ async function fixture() {
 describe("uploads into a share", () => {
   it("creates the share, reserves the bytes and hands back a keyed url", async () => {
     const f = await fixture();
-    const res = await f.call("POST", "/shares/demo/uploads", { path: "video.mp4", bytes: 4 });
+    const res = await f.call("POST", "/shares/demo/uploads/prepare/video.mp4", { bytes: 4 });
     expect(res.status).toBe(200);
     const body = await res.json<{ uploadUrl: string; uploadHeaders: Record<string, string>; url: string }>();
     expect(new URL(body.uploadUrl).pathname).toBe("/shares-bucket/sites/alice/demo/video.mp4");
@@ -56,22 +56,31 @@ describe("uploads into a share", () => {
     const f = await fixture();
     f.json("_sites/alice/demo", { generation: 3, bytes: 2, fileCount: 1, accessKey: "key", public: false, createdAt: 0, lastDeployAt: 0 });
     f.records.set("sites/alice/demo/index.html", { body: "hi" });
-    await f.call("POST", "/shares/demo/uploads", { path: "media/video.mp4", bytes: 4 });
-    expect((await f.call("POST", "/shares/demo/uploads/complete", { path: "media/video.mp4" })).status).toBe(409);
+    await f.call("POST", "/shares/demo/uploads/prepare/media/video.mp4", { bytes: 4 });
+    expect((await f.call("POST", "/shares/demo/uploads/complete/media/video.mp4")).status).toBe(409);
     f.records.set("sites/alice/demo/media/video.mp4", { body: "data" });
-    const res = await f.call("POST", "/shares/demo/uploads/complete", { path: "media/video.mp4" });
+    const res = await f.call("POST", "/shares/demo/uploads/complete/media/video.mp4");
     expect(await res.json()).toEqual({ url: "https://alice-demo.example.com/?k=key", id: "demo", path: "media/video.mp4", bytes: 6, fileCount: 2 });
     const meta = (await getMeta(f.bucket, "alice", "demo"))!;
     expect(meta).toMatchObject({ generation: 4, bytes: 6, fileCount: 2 });
     expect(meta.pending).toBeUndefined();
-    expect((await f.call("POST", "/shares/demo/uploads/complete", { path: "media/video.mp4" })).status).toBe(404);
+    expect((await f.call("POST", "/shares/demo/uploads/complete/media/video.mp4")).status).toBe(404);
+  });
+
+  it("names the file only in the URL, encoded like any other path", async () => {
+    const f = await fixture();
+    expect((await f.call("POST", "/shares/demo/uploads/prepare/m%C3%ADdia/v%C3%ADdeo%20%231.mp4", { bytes: 4 })).status).toBe(200);
+    expect((await getMeta(f.bucket, "alice", "demo"))!.pending).toHaveProperty(["mídia/vídeo #1.mp4"]);
+    f.records.set("sites/alice/demo/mídia/vídeo #1.mp4", { body: "data" });
+    const res = await f.call("POST", "/shares/demo/uploads/complete/m%C3%ADdia/v%C3%ADdeo%20%231.mp4");
+    expect(await res.json()).toMatchObject({ path: "mídia/vídeo #1.mp4", bytes: 4, fileCount: 1 });
   });
 
   it("deletes an upload whose size doesn't match the reservation", async () => {
     const f = await fixture();
-    await f.call("POST", "/shares/demo/uploads", { path: "video.mp4", bytes: 4 });
+    await f.call("POST", "/shares/demo/uploads/prepare/video.mp4", { bytes: 4 });
     f.records.set("sites/alice/demo/video.mp4", { body: "too long" });
-    expect((await f.call("POST", "/shares/demo/uploads/complete", { path: "video.mp4" })).status).toBe(400);
+    expect((await f.call("POST", "/shares/demo/uploads/complete/video.mp4")).status).toBe(400);
     expect(f.records.has("sites/alice/demo/video.mp4")).toBe(false);
     expect((await getMeta(f.bucket, "alice", "demo"))!.pending).toEqual({});
   });
@@ -82,27 +91,28 @@ describe("uploads into a share", () => {
     f.json("_sites/alice/demo", { generation: 1, bytes: 6, fileCount: 1, accessKey: "key", public: false, createdAt: 0, lastDeployAt: 0 });
     f.records.set("sites/alice/demo/a.bin", { body: "123456" });
     // Replacing a.bin frees its 6 bytes; 10 fit, 11 don't.
-    expect((await f.call("POST", "/shares/demo/uploads", { path: "a.bin", bytes: 11 })).status).toBe(413);
-    expect((await f.call("POST", "/shares/demo/uploads", { path: "a.bin", bytes: 10 })).status).toBe(200);
+    expect((await f.call("POST", "/shares/demo/uploads/prepare/a.bin", { bytes: 11 })).status).toBe(413);
+    expect((await f.call("POST", "/shares/demo/uploads/prepare/a.bin", { bytes: 10 })).status).toBe(200);
     // That reservation now holds the rest of the account.
-    expect((await f.call("POST", "/shares/demo/uploads", { path: "b.bin", bytes: 1 })).status).toBe(413);
-    expect((await f.call("POST", "/shares/demo/uploads", { path: "big.bin", bytes: MAX_FILE_BYTES + 1 })).status).toBe(413);
+    expect((await f.call("POST", "/shares/demo/uploads/prepare/b.bin", { bytes: 1 })).status).toBe(413);
+    expect((await f.call("POST", "/shares/demo/uploads/prepare/big.bin", { bytes: MAX_FILE_BYTES + 1 })).status).toBe(413);
   });
 
   it("lets one file take the whole account: plans cap storage, not shares or files", async () => {
     const f = await fixture();
-    expect((await f.call("POST", "/shares/demo/uploads", { path: "all.bin", bytes: LIMITS.free.perUser })).status).toBe(200);
-    expect((await f.call("POST", "/shares/other/uploads", { path: "one.bin", bytes: 1 })).status).toBe(413);
+    expect((await f.call("POST", "/shares/demo/uploads/prepare/all.bin", { bytes: LIMITS.free.perUser })).status).toBe(200);
+    expect((await f.call("POST", "/shares/other/uploads/prepare/one.bin", { bytes: 1 })).status).toBe(413);
   });
 
   it.each([
-    ["no JSON", undefined],
-    ["an unsafe path", { path: "../x", bytes: 1 }],
-    ["the live-reload path", { path: "_gen", bytes: 1 }],
-    ["a zero size", { path: "a.bin", bytes: 0 }],
-  ])("refuses %s without reserving anything", async (_, body) => {
+    ["no JSON", "a.bin", undefined],
+    ["no path", "", { bytes: 1 }],
+    ["an unsafe path", "..%2Fx", { bytes: 1 }],
+    ["the live-reload path", "_gen", { bytes: 1 }],
+    ["a zero size", "a.bin", { bytes: 0 }],
+  ])("refuses %s without reserving anything", async (_, path, body) => {
     const f = await fixture();
-    expect((await f.call("POST", "/shares/demo/uploads", body)).status).toBe(400);
+    expect((await f.call("POST", `/shares/demo/uploads/prepare/${path}`, body)).status).toBe(400);
     expect(f.records.has("_sites/alice/demo")).toBe(false);
   });
 

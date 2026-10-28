@@ -4,7 +4,7 @@
 
 import { Hono } from "hono";
 import type { Env } from "./env";
-import { handlePublish, safePath } from "./publish";
+import { handlePublish, routeFilePath, safePath } from "./publish";
 import { ownedShare, readJson, requireOwner, type AppContext } from "./auth";
 import { deleteSite, listSitesPage, putMeta, putUser, siteFileKey, type SiteMeta } from "./storage";
 import { generateAccessKey, metaUrl, siteHost } from "./ids";
@@ -26,12 +26,15 @@ function describe(c: AppContext, username: string, id: string, meta: SiteMeta) {
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Body through the Worker: a tar or one file, replacing the tree or merged into it.
+// A file is always named by the URL path, never by a query or body field.
+// Body through the Worker: a tar or document replacing the tree (or merged into
+// it), or one file at its path.
 app.put("/shares/:id", (c) => handlePublish(c.req.raw, c.env, c.req.param("id")));
+app.put("/shares/:id/files/*", (c) => handlePublish(c.req.raw, c.env, c.req.param("id"), routeFilePath(c.req.url, 3) ?? ""));
 
 // Straight to R2: one file per upload, always merged into the tree.
-app.post("/shares/:id/uploads", createUpload);
-app.post("/shares/:id/uploads/complete", completeUpload);
+app.post("/shares/:id/uploads/prepare/*", createUpload);
+app.post("/shares/:id/uploads/complete/*", completeUpload);
 
 app.get("/shares", async (c) => {
   const owner = await requireOwner(c);
@@ -80,13 +83,8 @@ app.delete("/shares/:id/files/*", async (c) => {
   const share = await ownedShare(c);
   if (share instanceof Response) return share;
   const { owner, id, meta } = share;
-  const raw = new URL(c.req.url).pathname;
-  let path: string | null;
-  try {
-    path = safePath(decodeURIComponent(raw.slice(raw.indexOf("/files/") + "/files/".length)));
-  } catch {
-    path = null;
-  }
+  const raw = routeFilePath(c.req.url, 3);
+  const path = raw === null ? null : safePath(raw);
   const object = path && !meta.pending?.[path] ? await c.env.SITES.head(siteFileKey(owner.username, id, path)) : null;
   if (!object) return c.json({ error: "file not found" }, 404);
   await c.env.SITES.delete(object.key);
