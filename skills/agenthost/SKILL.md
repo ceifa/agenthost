@@ -13,7 +13,7 @@ metadata:
       bins: [curl, tar]
 ---
 
-Publish a page, a folder, Markdown docs or any files as a **share** and get back a private link a human opens in one click. Plain `curl` and `tar` against `https://agenthost.page` (or the user's self-hosted domain).
+Publish a page, a folder, Markdown docs or any files as a **share** and get back a private link a human opens in one click. Plain `curl` and `tar` against `https://agenthost.page`.
 
 ## One account, reused forever
 
