@@ -32,7 +32,7 @@ async function fixture() {
   const f = testBucket();
   f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "free", createdAt: 0 });
   const env = { ...f.env, ...r2 } as Env;
-  const call = (method: string, path: string, body?: unknown) => apexApp.fetch(new Request(`https://example.com${path}`, {
+  const call = (method: string, path: string, body?: unknown) => apexApp.fetch(new Request(new URL(path, "https://example.com"), {
     method, body: body === undefined ? undefined : JSON.stringify(body),
     headers: { authorization: "Bearer alice.owner", "content-type": "application/json" },
   }), env);
@@ -44,7 +44,8 @@ describe("uploads into a share", () => {
     const f = await fixture();
     const res = await f.call("POST", "/shares/demo/uploads", { path: "video.mp4", bytes: 4 });
     expect(res.status).toBe(200);
-    const body = await res.json<{ uploadUrl: string; uploadHeaders: Record<string, string>; url: string }>();
+    const body = await res.json<{ uploadUrl: string; completeUrl: string; uploadHeaders: Record<string, string>; url: string }>();
+    expect(body.completeUrl).toBe("https://example.com/shares/demo/uploads/complete?path=video.mp4");
     expect(new URL(body.uploadUrl).pathname).toBe("/shares-bucket/sites/alice/demo/video.mp4");
     expect(body.uploadHeaders["content-type"]).toBe("video/mp4");
     const meta = (await getMeta(f.bucket, "alice", "demo"))!;
@@ -56,24 +57,61 @@ describe("uploads into a share", () => {
     const f = await fixture();
     f.json("_sites/alice/demo", { generation: 3, bytes: 2, fileCount: 1, accessKey: "key", public: false, createdAt: 0, lastDeployAt: 0 });
     f.records.set("sites/alice/demo/index.html", { body: "hi" });
-    await f.call("POST", "/shares/demo/uploads", { path: "media/video.mp4", bytes: 4 });
-    expect((await f.call("POST", "/shares/demo/uploads/complete", { path: "media/video.mp4" })).status).toBe(409);
+    const reservation = await f.call("POST", "/shares/demo/uploads", { path: "media/video.mp4", bytes: 4 });
+    const { completeUrl } = await reservation.json<{ completeUrl: string }>();
+    expect((await f.call("POST", completeUrl)).status).toBe(409);
     f.records.set("sites/alice/demo/media/video.mp4", { body: "data" });
-    const res = await f.call("POST", "/shares/demo/uploads/complete", { path: "media/video.mp4" });
+    const res = await f.call("POST", completeUrl);
     expect(await res.json()).toEqual({ url: "https://alice-demo.example.com/?k=key", id: "demo", path: "media/video.mp4", bytes: 6, fileCount: 2 });
     const meta = (await getMeta(f.bucket, "alice", "demo"))!;
     expect(meta).toMatchObject({ generation: 4, bytes: 6, fileCount: 2 });
     expect(meta.pending).toBeUndefined();
-    expect((await f.call("POST", "/shares/demo/uploads/complete", { path: "media/video.mp4" })).status).toBe(404);
+    expect((await f.call("POST", completeUrl)).status).toBe(404);
   });
 
   it("deletes an upload whose size doesn't match the reservation", async () => {
     const f = await fixture();
-    await f.call("POST", "/shares/demo/uploads", { path: "video.mp4", bytes: 4 });
+    const reservation = await f.call("POST", "/shares/demo/uploads", { path: "video.mp4", bytes: 4 });
+    const { completeUrl } = await reservation.json<{ completeUrl: string }>();
     f.records.set("sites/alice/demo/video.mp4", { body: "too long" });
-    expect((await f.call("POST", "/shares/demo/uploads/complete", { path: "video.mp4" })).status).toBe(400);
+    expect((await f.call("POST", completeUrl)).status).toBe(400);
     expect(f.records.has("sites/alice/demo/video.mp4")).toBe(false);
     expect((await getMeta(f.bucket, "alice", "demo"))!.pending).toEqual({});
+  });
+
+  it.each([
+    "media/demo.mp4",
+    "mídia/vídeo #1 & 2+3?.mp4",
+    "media/100%20done.mp4",
+  ])("completes %s through the returned URL without a body", async path => {
+    const f = await fixture();
+    const reservation = await f.call("POST", "/shares/demo/uploads", { path, bytes: 4 });
+    const { completeUrl } = await reservation.json<{ completeUrl: string }>();
+    expect(new URL(completeUrl).searchParams.get("path")).toBe(path);
+    f.records.set(`sites/alice/demo/${path}`, { body: "data" });
+    const res = await f.call("POST", completeUrl);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: "demo", path, bytes: 4, fileCount: 1 });
+    expect((await getMeta(f.bucket, "alice", "demo"))!.pending).toBeUndefined();
+  });
+
+  it("still requires the owner token to call completeUrl", async () => {
+    const f = await fixture();
+    const reservation = await f.call("POST", "/shares/demo/uploads", { path: "video.mp4", bytes: 4 });
+    const { completeUrl } = await reservation.json<{ completeUrl: string }>();
+    f.records.set("sites/alice/demo/video.mp4", { body: "data" });
+    const res = await apexApp.fetch(new Request(completeUrl, { method: "POST" }), f.env);
+    expect(res.status).toBe(401);
+    expect((await getMeta(f.bucket, "alice", "demo"))!.pending).toHaveProperty("video.mp4");
+  });
+
+  it("refuses completion without a reserved path in the URL", async () => {
+    const f = await fixture();
+    await f.call("POST", "/shares/demo/uploads", { path: "video.mp4", bytes: 4 });
+    for (const query of ["", "?path=missing.mp4", "?path=../video.mp4"]) {
+      expect((await f.call("POST", `/shares/demo/uploads/complete${query}`)).status).toBe(404);
+    }
+    expect((await getMeta(f.bucket, "alice", "demo"))!.pending).toHaveProperty("video.mp4");
   });
 
   it("counts reservations against the account, replacing a file at the same path", async () => {
