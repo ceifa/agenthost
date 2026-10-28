@@ -43,15 +43,15 @@ describe("apex canonical URLs", () => {
   });
 
   it.each(["POST", "PUT", "PATCH", "DELETE"])("passes %s API requests through with their body and authorization", async (method) => {
-    const request = new Request("https://www.agenthost.page/publish?id=report", {
+    const request = new Request("https://www.agenthost.page/shares/report", {
       method,
       body: "report bytes",
-      headers: { authorization: "Bearer test-owner-token" },
+      headers: { authorization: "Bearer alice.test-owner-token" },
     });
     await worker.fetch(request, env, ctx);
     expect(apexApp.fetch).toHaveBeenCalledWith(request, env, ctx);
     expect(await request.text()).toBe("report bytes");
-    expect(request.headers.get("authorization")).toBe("Bearer test-owner-token");
+    expect(request.headers.get("authorization")).toBe("Bearer alice.test-owner-token");
   });
 
   it("keeps local HTTP development working", async () => {

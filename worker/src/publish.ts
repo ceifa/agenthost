@@ -1,8 +1,8 @@
-// POST /publish — streaming files → bounded R2 puts → delete orphans → commit
-// generation and access metadata together.
+// PUT /shares/{id} — streaming files → bounded R2 puts → delete orphans (unless
+// merging) → commit generation and access metadata together.
 
 import type { Env } from "./env";
-import { LIMITS, PUT_CONCURRENCY, DEFAULT_SITE_ID } from "./config";
+import { LIMITS, MAX_BUFFERED_BYTES, MAX_FILE_BYTES, MAX_FILES, PUT_CONCURRENCY } from "./config";
 import {
   generateUsername,
   generateOwnerToken,
@@ -11,7 +11,7 @@ import {
   sha256Hex,
   contentTypeFor,
   siteHost,
-  shareUrl,
+  metaUrl,
   clientIp,
 } from "./ids";
 import { verifyOwner } from "./auth";
@@ -22,9 +22,10 @@ import {
   putUser,
   getMeta,
   putMeta,
-  assetUsage,
+  shareUsage,
   userUsage,
   listAll,
+  committedFiles,
   siteFileKey,
   sitePrefix,
   userKey,
@@ -91,7 +92,7 @@ function streamEntry(
 }
 
 // Returns a safe relative key, or null to skip the entry.
-function safePath(raw: string): string | null {
+export function safePath(raw: string): string | null {
   let p = raw.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
   if (!p) return null;
   // macOS AppleDouble / Finder cruft — never intended web content.
@@ -101,6 +102,16 @@ function safePath(raw: string): string | null {
   if (segs.some((s) => s === ".." || s === "")) return null;
   if (p.includes("\0")) return null;
   return p;
+}
+
+// The percent-decoded file path after a route's first `segments` path segments,
+// or null when it isn't valid percent-encoding.
+export function routeFilePath(url: string, segments: number): string | null {
+  try {
+    return decodeURIComponent(new URL(url).pathname.split("/").slice(segments + 1).join("/"));
+  } catch {
+    return null;
+  }
 }
 
 const mime = (contentType: string): string => contentType.split(";")[0]!.trim().toLowerCase();
@@ -133,18 +144,6 @@ function claimsArchive(contentType: string): boolean {
   }
 }
 
-// A filename the body carries with it, the standard way. Weaker than `?file=`:
-// an uploader may attach it to a tarball, so it only names single documents.
-function dispositionFileName(req: Request): string | null {
-  const m = req.headers.get("content-disposition")?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
-  if (!m) return null;
-  try {
-    return decodeURIComponent(m[1]!.trim());
-  } catch {
-    return m[1]!.trim(); // stray % in the name — take it literally
-  }
-}
-
 // How to read the body. Byte magic outranks the Content-Type header: clients send
 // no type, `application/octet-stream`, or curl's `application/x-www-form-urlencoded`
 // far more often than the truth, but a gzip header is a gzip header.
@@ -158,11 +157,10 @@ const named = (raw: string): Mode => {
   return name ? { kind: "file", name } : { kind: "invalid", message: `invalid file name: ${raw}` };
 };
 
-function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
-  // `?file=` is the caller being explicit — it outranks everything, including the
-  // bytes, so a tarball can still be published as one downloadable file.
-  const explicit = url.searchParams.get("file");
-  if (explicit !== null) return named(explicit);
+function detectMode(req: Request, file: string | undefined, head: Uint8Array): Mode {
+  // A path in the URL outranks the bytes, so a tarball can still be published
+  // as one downloadable file.
+  if (file !== undefined) return named(file);
 
   if (isGzip(head)) return { kind: "archive", gzipped: true };
   if (isTar(head)) return { kind: "archive", gzipped: false };
@@ -174,26 +172,22 @@ function detectMode(req: Request, url: URL, head: Uint8Array): Mode {
     return { kind: "invalid", message: "zip is not supported — send a tar (tar cf - -C ./dist .)" };
   }
 
-  // Not an archive, so it's one document: prefer the name it came with, since the
-  // extension is a better signal than anything we can infer.
-  const filename = dispositionFileName(req);
-  if (filename !== null) return named(filename);
-
-  // Header next (it's an explicit claim), then the bytes themselves: front
-  // matter → markdown, a doctype/html tag → html, prose → markdown.
+  // Not an archive, so it's one document. The header first (it's an explicit
+  // claim), then the bytes: front matter → markdown, a doctype/html tag → html,
+  // prose → markdown.
   const kind = singleFileKind(contentType) ?? sniffDocKind(head);
   if (kind === null) {
     return {
       kind: "invalid",
-      message: "unrecognized body — send a tar, a .md/.html document, or name it with ?file=<name>",
+      message: "unrecognized body — send a tar, a .md/.html document, or PUT it to /shares/{id}/files/{path}",
     };
   }
   // Named so it serves at `/`: html as-is, markdown as the docs home.
   return { kind: "file", name: kind === "html" ? "index.html" : "README.md" };
 }
 
-// Reads a request body fully into memory, aborting past `max` bytes. Only the
-// single-file path uses this (archives stream); the per-file cap keeps it small.
+// Reads a request body fully into memory, aborting past `max` bytes. Only a
+// single file sent without Content-Length lands here (archives stream).
 async function readBounded(body: ReadableStream<Uint8Array>, max: number): Promise<Uint8Array> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
@@ -204,7 +198,7 @@ async function readBounded(body: ReadableStream<Uint8Array>, max: number): Promi
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
-      if (total > max) throw new TarLimitError(`file is ${total}+ bytes; max is ${max}`);
+      if (total > max) throw new TarLimitError(`a body over ${max} bytes needs a Content-Length header`);
       chunks.push(value);
     }
   } catch (error) {
@@ -228,8 +222,8 @@ interface PublishError {
 }
 const fail = (status: number, message: string): PublishError => ({ status, message });
 
-export async function handlePublish(req: Request, env: Env): Promise<Response> {
-  if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
+// `file` set: write the body as that one file, keeping the rest of the share.
+export async function handlePublish(req: Request, env: Env, rawId: string, file?: string): Promise<Response> {
   if (!req.body) return json({ error: "empty body — pipe a tar or a single file" }, 400);
 
   // Per-IP throttle before any account minting or R2 work — this is the main
@@ -239,12 +233,16 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   }
 
   const url = new URL(req.url);
-  const apex = env.APEX_HOST;
+  const siteId = sanitizeSiteId(rawId);
+  if (!siteId) return json({ error: `invalid share id: ${rawId}` }, 400);
+  const modeParam = url.searchParams.get("mode") ?? "replace";
+  if (modeParam !== "replace" && modeParam !== "merge") return json({ error: "mode must be replace or merge" }, 400);
+  const merge = file !== undefined || modeParam === "merge";
 
   let username: string;
   let plan: "free" | "paid" = "free";
   let isNewUser = false;
-  let ownerToken: string | undefined;
+  let secret: string | undefined;
 
   if (req.headers.has("authorization")) {
     const owner = await verifyOwner(req, env);
@@ -252,33 +250,48 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
     username = owner.ctx.username;
     plan = owner.ctx.user.plan;
   } else {
-    // Anonymous → always a brand-new account (owned sites require the token).
+    // Anonymous → always a brand-new account (owned shares require the token).
     do {
       username = generateUsername();
     } while (await env.SITES.head(userKey(username)));
-    ownerToken = generateOwnerToken();
+    secret = generateOwnerToken();
     isNewUser = true;
   }
 
-  const siteId = sanitizeSiteId(url.searchParams.get("id") ?? req.headers.get("x-agenthost-site")) ?? DEFAULT_SITE_ID;
-
-  // Fail fast on over-quota: budget = min(per-site cap, account quota minus other sites).
+  // Fail fast on over-quota: the share may hold what the account has left
+  // after other shares and its own pending uploads.
   const limits = LIMITS[plan];
-  const [siteBytes, assetBytes, existingMeta] = isNewUser
-    ? ([0, 0, null] as const)
+  const [otherUsage, existingMeta, listed] = isNewUser
+    ? [0, null, []]
     : await Promise.all([
         userUsage(env.SITES, username, siteId),
-        assetUsage(env.SITES, username),
         getMeta(env.SITES, username, siteId),
+        listAll(env.SITES, sitePrefix(username, siteId)),
       ]);
-  const otherUsage = siteBytes + assetBytes;
-  const totalBudget = Math.min(limits.perSite, Math.max(0, limits.perUser - otherUsage));
+  const reserved = existingMeta ? shareUsage(existingMeta) - existingMeta.bytes : 0;
+  const totalBudget = Math.max(0, limits.perUser - otherUsage - reserved);
+  // Uploads still in flight are neither counted here nor orphaned below.
+  const existing = new Map(committedFiles(listed, username, siteId, existingMeta).map(o => [o.key, o.size]));
 
   const gate = new PutGate(PUT_CONCURRENCY);
   const writtenKeys = new Set<string>();
   let totalBytes = 0;
   let fileCount = 0;
+  if (merge) for (const size of existing.values()) { totalBytes += size; fileCount++; }
   let perr: PublishError | null = null;
+
+  // Account for a file about to be written at `key`, or say why it can't be.
+  const admit = (key: string, size: number): PublishError | null => {
+    const replaced = merge && !writtenKeys.has(key) ? existing.get(key) : undefined;
+    const bytes = totalBytes - (replaced ?? 0) + size;
+    const files = fileCount + (replaced === undefined ? 1 : 0);
+    if (files > MAX_FILES) return fail(413, `too many files; max is ${MAX_FILES}`);
+    if (bytes > totalBudget) return fail(413, `account storage exceeded: ${totalBudget} bytes left (plan ${plan})`);
+    totalBytes = bytes;
+    fileCount = files;
+    writtenKeys.add(key);
+    return null;
+  };
 
   // Peek before branching: the payload's own bytes decide archive-vs-document,
   // with the Content-Type header as a fallback rather than the source of truth.
@@ -286,7 +299,7 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
   try { payload = await peek(req.body); }
   catch { return json({ error: "failed to read request body" }, 400); }
   const { head, stream: body, cancel: cancelBody } = payload;
-  const mode = detectMode(req, url, head);
+  const mode = detectMode(req, file, head);
   if (mode.kind === "invalid") {
     void cancelBody().catch(() => {});
     return json({ error: mode.message }, 400);
@@ -297,51 +310,43 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
       // Single raw document: no archive to stream, so read the body directly and
       // write it under a name that serves at `/`.
       const name = mode.name;
+      const key = siteFileKey(username, siteId, name);
       if (RESERVED_FILE(name)) perr = fail(400, `reserved filename: ${name}`);
       else {
-        const cap = Math.min(limits.perFile, totalBudget);
         const lengthHeader = req.headers.get("content-length");
         const declared = lengthHeader !== null && /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : null;
-        if (declared !== null && (!Number.isSafeInteger(declared) || declared > cap)) {
-          throw new TarLimitError(`file is ${declared} bytes; max is ${cap}`);
+        if (declared !== null && !Number.isSafeInteger(declared)) {
+          throw new TarLimitError(`file is ${declared} bytes; max is ${MAX_FILE_BYTES}`);
         }
         if (declared === 0) {
           void cancelBody().catch(() => {});
           return json({ error: "empty file" }, 400);
         }
-        const key = siteFileKey(username, siteId, name);
-        if (declared !== null && declared > 0) {
-          const { readable, writable } = new FixedLengthStream(declared);
-          const stored = env.SITES.put(key, readable, { httpMetadata: { contentType: contentTypeFor(name) } });
-          const abort = new AbortController();
-          void stored.catch(error => {
-            abort.abort(error);
-            void readable.cancel(error).catch(() => {});
-            void cancelBody(error).catch(() => {});
-          });
-          await Promise.all([body.pipeTo(writable, { signal: abort.signal }), stored]);
-          totalBytes = declared;
-          fileCount = 1;
-          writtenKeys.add(key);
-        } else {
-          const bytes = await readBounded(body, cap);
-          if (bytes.byteLength === 0) perr = fail(400, "empty file");
-          else if (bytes.byteLength > totalBudget)
-            perr = fail(413, `site exceeds size budget of ${totalBudget} bytes (plan ${plan})`);
-          else {
-            totalBytes = bytes.byteLength;
-            fileCount = 1;
-            writtenKeys.add(key);
-            await env.SITES.put(key, bytes, { httpMetadata: { contentType: contentTypeFor(name) } });
+        if (declared !== null) {
+          perr = admit(key, declared);
+          if (!perr) {
+            const { readable, writable } = new FixedLengthStream(declared);
+            const stored = env.SITES.put(key, readable, { httpMetadata: { contentType: contentTypeFor(name) } });
+            const abort = new AbortController();
+            void stored.catch(error => {
+              abort.abort(error);
+              void readable.cancel(error).catch(() => {});
+              void cancelBody(error).catch(() => {});
+            });
+            await Promise.all([body.pipeTo(writable, { signal: abort.signal }), stored]);
           }
+        } else {
+          const bytes = await readBounded(body, MAX_BUFFERED_BYTES);
+          if (bytes.byteLength === 0) perr = fail(400, "empty file");
+          else perr = admit(key, bytes.byteLength);
+          if (!perr) await env.SITES.put(key, bytes, { httpMetadata: { contentType: contentTypeFor(name) } });
         }
       }
     } else {
       // Bare tars are accepted too — only gzipped bodies go through the inflater.
       const stream = mode.gzipped ? gunzipStream(body) : body;
-      // Hard cap at the per-file limit so an inflated header size can't force the
-      // parser to buffer a giant entry before publish's own check runs.
-      for await (const entry of parseTar(stream, { maxEntrySize: limits.perFile })) {
+      // A header declaring more than the account has left fails before its bytes are read.
+      for await (const entry of parseTar(stream, { maxEntrySize: Math.min(MAX_FILE_BYTES, totalBudget) })) {
         if (entry.type === "symlink" || entry.type === "hardlink") {
           perr = fail(400, `links are not allowed (${entry.path})`);
           break;
@@ -358,19 +363,9 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
         }
         if (RESERVED_FILE(path)) continue;
 
-        if (fileCount + 1 > limits.filesPerSite) {
-          perr = fail(413, `too many files; max is ${limits.filesPerSite}`);
-          break;
-        }
-        if (totalBytes + entry.size > totalBudget) {
-          perr = fail(413, `site exceeds size budget of ${totalBudget} bytes (plan ${plan})`);
-          break;
-        }
-
-        totalBytes += entry.size;
-        fileCount += 1;
         const key = siteFileKey(username, siteId, path);
-        writtenKeys.add(key);
+        perr = admit(key, entry.size);
+        if (perr) break;
         const { read, stored } = streamEntry(env.SITES, key, entry, contentTypeFor(path));
         await gate.add(() => stored);
         await read;
@@ -389,57 +384,38 @@ export async function handlePublish(req: Request, env: Env): Promise<Response> {
     void cancelBody().catch(() => {});
     return json({ error: perr.message }, perr.status);
   }
-  if (fileCount === 0) return json({ error: "archive contained no files" }, 400);
+  if (writtenKeys.size === 0) return json({ error: "archive contained no files" }, 400);
 
-  // Delete files removed since the last deploy. A brand-new username can't
-  // have prior objects — skip the list.
-  if (!isNewUser) {
-    const prefix = sitePrefix(username, siteId);
-    const existing = await listAll(env.SITES, prefix);
-    const orphans = existing
-      .map((o) => o.key)
-      .filter((k) => !writtenKeys.has(k));
-    await deleteKeys(env.SITES, orphans);
-  }
+  if (!merge) await deleteKeys(env.SITES, [...existing.keys()].filter((k) => !writtenKeys.has(k)));
 
   if (isNewUser) {
     await putUser(env.SITES, username, {
-      tokenHash: await sha256Hex(ownerToken!),
+      tokenHash: await sha256Hex(secret!),
       plan: "free",
       createdAt: Date.now(),
     });
   }
 
-  // Mint an access key only on a site's first publish (or if one is missing);
-  // redeploys preserve the existing keyHash/public so share links keep working.
-  const isPublic = existingMeta?.public ?? false;
-  let keyHash = existingMeta?.keyHash ?? "";
-  let accessKey: string | undefined;
-  if (!keyHash) {
-    accessKey = generateAccessKey();
-    keyHash = await sha256Hex(accessKey);
-  }
-
+  // Mint an access key only on a share's first publish; redeploys keep the key
+  // and visibility so share links keep working.
   const meta: SiteMeta = {
+    ...existingMeta,
+    ...(existingMeta?.accessKey || existingMeta?.keyHash ? {} : { accessKey: generateAccessKey() }),
     generation: (existingMeta?.generation ?? 0) + 1,
     createdAt: existingMeta?.createdAt ?? Date.now(),
     lastDeployAt: Date.now(),
     bytes: totalBytes,
     fileCount,
-    keyHash,
-    public: isPublic,
-    ...(existingMeta?.tombstone ? { tombstone: true } : {}),
+    public: existingMeta?.public ?? false,
   };
   await putMeta(env.SITES, username, siteId, meta);
 
-  const host = siteHost(username, siteId, apex);
   return json({
-    url: shareUrl(host, accessKey),
+    url: metaUrl(siteHost(username, siteId, env.APEX_HOST), meta),
+    id: siteId,
     username,
-    siteId,
     fileCount,
     bytes: totalBytes,
-    ...(ownerToken ? { ownerToken } : {}),
-    ...(isNewUser ? { claimUrl: `https://${apex}/claim?username=${username}` } : {}),
+    ...(secret ? { ownerToken: `${username}.${secret}` } : {}),
   });
 }

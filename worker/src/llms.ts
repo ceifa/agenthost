@@ -3,68 +3,61 @@
 // deployment, and limits are rendered from config so a quota bump can't silently
 // make this lie.
 
-import { ASSET_LIMITS, LIMITS, MB } from "./config";
+import { LIMITS, MAX_FILE_BYTES, MAX_FILES } from "./config";
+import { formatBytes as size } from "./templates";
 
 const free = LIMITS.free;
-const freeAssets = ASSET_LIMITS.free;
-const mb = (bytes: number) => `${Math.round(bytes / MB)} MB`;
 
-export const llmsTxt = (apexHost: string): string => `# agenthost — publish a static site or docs, get a private share link. No signup.
+export const llmsTxt = (apexHost: string): string => `# agenthost — publish a page, docs or files, get a private share link. No signup.
 
 ## Publish (one command, zero install)
-# A single .md or .html — pipe it straight in (md renders, html is served as-is;
-# the file lands at the site root /):
-curl -s --data-binary @report.md \\
-  https://${apexHost}/publish?id=report
+# A single .md or .html — pipe it straight in (md renders, html is served as-is):
+curl -s -X PUT --data-binary @report.md https://${apexHost}/shares/report
 
 # A whole folder — pipe a tar of it:
-tar cf - -C ./dist . | curl -s --data-binary @- \\
-  https://${apexHost}/publish?id=myblog
+tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://${apexHost}/shares/myblog
+
+# Any one file, at a path inside the share (keeps the other files):
+curl -s -X PUT --data-binary @chart.png https://${apexHost}/shares/myblog/files/img/chart.png
 
 ## Response (JSON)
 {
   "url": "https://cleverotter4f2-myblog.${apexHost}/?k=<key>",  // hand THIS to a human; private + pre-authed
-  "username": "cleverotter4f2",                                     // your account name (auto-generated, no hyphens)
-  "ownerToken": "<SAVE THIS to redeploy the same URL later>"
+  "id": "myblog",
+  "username": "cleverotter4f2",
+  "fileCount": 12,
+  "bytes": 48213,
+  "ownerToken": "<SAVE THIS: every later call needs it>"
 }
-The key in url comes back only on a site's first publish; redeploys return the bare
-url, so keep the first one.
+A PUT without Authorization creates a new account. Save ownerToken once and send it after.
 
-## Redeploy the SAME url (needs ownerToken)
-tar cf - -C ./dist . | curl --data-binary @- \\
-  -H 'Authorization: Bearer <ownerToken>' \\
-  'https://${apexHost}/publish?id=myblog&username=<username>'
+## Republish the SAME url
+tar cf - -C ./dist . | curl -s -X PUT --data-binary @- \\
+  -H 'Authorization: Bearer <ownerToken>' https://${apexHost}/shares/myblog
+PUT /shares/<id> replaces every file; add ?mode=merge to keep files the body doesn't carry.
+A file is always named in the URL path, percent-encoded.
+GET /shares/myblog returns the url again at any time.
 
-## Large downloadable assets (existing account required)
-Three calls, all with -H 'Authorization: Bearer <ownerToken>' except the PUT:
-1. POST https://${apexHost}/asset?username=<username> with JSON
-   {"name":"demo.mp4","bytes":<exact size>,"contentType":"video/mp4"}
-   → uploadUrl, uploadHeaders, completeUrl, url (the keyed url only comes back here)
-2. curl --upload-file demo.mp4 -H '<each uploadHeaders entry>' '<uploadUrl>'   (within 15 min)
-3. POST <completeUrl> → {"ok":true}
-The file goes straight from the client to R2. Opening the url shows a Download
-button whose bytes also come directly from R2.
-Free max: ${mb(freeAssets.perAsset)} per asset. Paid max: 5 GB per asset.
+## Large files (over ~100 MB, or any file you'd rather not stream through agenthost)
+1. POST https://${apexHost}/shares/<id>/uploads/prepare/demo.mp4  {"bytes":<exact size>}
+   → uploadUrl, uploadHeaders, url
+2. curl -T demo.mp4 '<uploadUrl>'   (within 15 min)
+3. POST https://${apexHost}/shares/<id>/uploads/complete/demo.mp4  (no body)
+Steps 1 and 3 take the Authorization header. The file joins the share at /demo.mp4.
 
-## Site asset paths
-Each site is the root of its own subdomain ({username}-{id}.${apexHost}), so
-both absolute and relative asset paths work:
-  <link href="/css/app.css">     GOOD
-  <link href="./css/app.css">    GOOD
+## What a share shows
+- index.html at /, or a folder of .md as a docs site (README.md home, SUMMARY.md for order).
+- Neither: / previews a single file (video, image, audio, pdf play inline) or lists the files.
+- Any file: ?download saves it instead of opening it.
+- Each share is the root of its own subdomain, so /css/app.css and ./css/app.css both work.
 
 ## Notes
-- Static sites, markdown docs, OR direct-R2 downloadable assets. /index.html is the default doc; a folder of .md renders as a
-  GitBook-style docs site (sidebar + README.md as home; optional SUMMARY.md for ordering and nesting).
-- No Content-Type needed: a tar body is a folder, anything else is one document. To publish a
-  single file of any other type, add ?file=<name>.
-- Sites are PRIVATE by default. Share the url; visitors stay logged in via a cookie.
-  Every page has a "Share" button that copies a key-embedded link.
-- Limits (free): ${free.filesPerSite} files, ${mb(free.perFile)}/file, ${mb(free.perSite)}/site, ${mb(free.perUser)}/account. Hosted sites are noindex.
-- Free sites are deleted ${free.retentionDays} days after the last publish — redeploy to keep alive.
+- Shares are PRIVATE by default. Visitors of the url stay logged in via a cookie.
+- Free accounts store ${size(free.perUser)} across all shares. Any share: up to ${MAX_FILES} files, ${size(MAX_FILE_BYTES)} per file.
+- Free shares are deleted ${free.retentionDays} days after the last change. Hosted pages are noindex.
+- Visibility, key rotation, deletes: https://${apexHost}/skill/references/http-api.md
 
 ## Install as a skill (optional — persist this contract)
-This publish contract ships as an Agent Skill (SKILL.md + references), so you don't
-have to re-read this file on every run. Install it once and it's always in reach.
 - Any agent: fetch https://${apexHost}/skill/SKILL.md and its references under /skill/.
 - From source: https://github.com/ceifa/agenthost/tree/main/skills/agenthost
 - OpenClaw: openclaw skills install @ceifa/agenthost

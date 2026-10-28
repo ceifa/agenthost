@@ -4,6 +4,7 @@ import { Marked } from "marked";
 import { markdownShell, esc } from "./templates";
 import { highlightCode, languageName } from "./highlight";
 import { listAll, sitePrefix } from "./storage";
+import { encodePath } from "./ids";
 import type { Env } from "./env";
 import { RENDER_LIMITS, RENDER_VERSION } from "./config";
 
@@ -34,7 +35,7 @@ export function splitFrontMatter(source: string): { title: string | null; body: 
 // root-absolute so they work from any depth *without* a <base> tag — which would
 // otherwise break relative links written inside a nested document.
 export function docHref(path: string): string {
-  return "/" + path.split("/").map(encodeURIComponent).join("/");
+  return "/" + encodePath(path);
 }
 
 function plainText(html: string): string {

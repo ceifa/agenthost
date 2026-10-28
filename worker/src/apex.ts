@@ -1,85 +1,114 @@
-// Apex / control-plane app on agenthost.page: /publish, owner endpoints,
+// Apex / control-plane app on agenthost.page: the /shares API, /account,
 // /llms.txt and /skill/. Anything else falls through to Static Assets (the
 // landing page).
 
 import { Hono } from "hono";
 import type { Env } from "./env";
-import { handlePublish } from "./publish";
-import { requireOwner, type AppContext } from "./auth";
-import { getMeta, putMeta, putUser, type SiteMeta } from "./storage";
-import { generateAccessKey, sha256Hex, sanitizeSiteId, siteHost, shareUrl } from "./ids";
+import { handlePublish, routeFilePath, safePath } from "./publish";
+import { ownedShare, readJson, requireOwner, type AppContext } from "./auth";
+import { deleteSite, listSitesPage, putMeta, putUser, siteFileKey, type SiteMeta } from "./storage";
+import { generateAccessKey, metaUrl, siteHost } from "./ids";
 import { llmsTxt } from "./llms";
 import { skillFile } from "./skill";
-import { completeAsset, createAsset, deleteAsset, serveAsset } from "./assets";
+import { completeUpload, createUpload } from "./uploads";
 
-async function requireSite(c: AppContext, username: string): Promise<{ siteId: string; meta: SiteMeta } | Response> {
-  const siteId = sanitizeSiteId(c.req.query("id"));
-  if (!siteId) return c.json({ error: "id required" }, 400);
-  const meta = await getMeta(c.env.SITES, username, siteId);
-  if (!meta) return c.json({ error: "site not found" }, 404);
-  return { siteId, meta };
-}
-
-// Tolerates an empty/non-JSON body.
-async function readBody(c: AppContext): Promise<Record<string, unknown>> {
-  try {
-    return (await c.req.json()) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
+function describe(c: AppContext, username: string, id: string, meta: SiteMeta) {
+  return {
+    id,
+    url: metaUrl(siteHost(username, id, c.env.APEX_HOST), meta),
+    public: meta.public,
+    bytes: meta.bytes,
+    fileCount: meta.fileCount,
+    createdAt: meta.createdAt,
+    lastDeployAt: meta.lastDeployAt,
+  };
 }
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.post("/publish", (c) => handlePublish(c.req.raw, c.env));
+// A file is always named by the URL path, never by a query or body field.
+// Body through the Worker: a tar or document replacing the tree (or merged into
+// it), or one file at its path.
+app.put("/shares/:id", (c) => handlePublish(c.req.raw, c.env, c.req.param("id")));
+app.put("/shares/:id/files/*", (c) => handlePublish(c.req.raw, c.env, c.req.param("id"), routeFilePath(c.req.url, 3) ?? ""));
 
-// Large binary assets use a two-step control flow around a direct R2 PUT. The
-// share page is served here, but neither uploads nor downloads cross the Worker.
-app.post("/asset", createAsset);
-app.post("/a/:username/:id/complete", completeAsset);
-app.delete("/a/:username/:id", deleteAsset);
-app.get("/a/:username/:id", serveAsset);
+// Straight to R2: one file per upload, always merged into the tree.
+app.post("/shares/:id/uploads/prepare/*", createUpload);
+app.post("/shares/:id/uploads/complete/*", completeUpload);
 
-// Attach an unverified recovery/abuse email to the account.
-app.post("/claim", async (c) => {
+app.get("/shares", async (c) => {
   const owner = await requireOwner(c);
   if (owner instanceof Response) return owner;
-  const email = ((await readBody(c)).email as string | undefined) ?? c.req.query("email");
-  if (!email || email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+  const page = await listSitesPage(c.env.SITES, owner.username, c.req.query("cursor"));
+  return c.json({
+    shares: page.items.map(({ siteId, meta }) => describe(c, owner.username, siteId, meta)),
+    cursor: page.cursor ?? null,
+  });
+});
+
+app.get("/shares/:id", async (c) => {
+  const share = await ownedShare(c);
+  if (share instanceof Response) return share;
+  return c.json(describe(c, share.owner.username, share.id, share.meta));
+});
+
+app.patch("/shares/:id", async (c) => {
+  const share = await ownedShare(c);
+  if (share instanceof Response) return share;
+  const value = (await readJson(c))?.public;
+  if (typeof value !== "boolean") return c.json({ error: "JSON body {\"public\": true|false} required" }, 400);
+  const meta = { ...share.meta, public: value };
+  await putMeta(c.env.SITES, share.owner.username, share.id, meta);
+  return c.json(describe(c, share.owner.username, share.id, meta));
+});
+
+// Rotating the key invalidates existing share links and makes the share private.
+app.post("/shares/:id/key", async (c) => {
+  const share = await ownedShare(c);
+  if (share instanceof Response) return share;
+  const { keyHash: _, ...rest } = share.meta;
+  const meta = { ...rest, accessKey: generateAccessKey(), public: false };
+  await putMeta(c.env.SITES, share.owner.username, share.id, meta);
+  return c.json(describe(c, share.owner.username, share.id, meta));
+});
+
+app.delete("/shares/:id", async (c) => {
+  const share = await ownedShare(c);
+  if (share instanceof Response) return share;
+  await deleteSite(c.env.SITES, share.owner.username, share.id);
+  return c.json({ ok: true });
+});
+
+app.delete("/shares/:id/files/*", async (c) => {
+  const share = await ownedShare(c);
+  if (share instanceof Response) return share;
+  const { owner, id, meta } = share;
+  const raw = routeFilePath(c.req.url, 3);
+  const path = raw === null ? null : safePath(raw);
+  const object = path && !meta.pending?.[path] ? await c.env.SITES.head(siteFileKey(owner.username, id, path)) : null;
+  if (!object) return c.json({ error: "file not found" }, 404);
+  await c.env.SITES.delete(object.key);
+  const next = {
+    ...meta,
+    generation: meta.generation + 1,
+    lastDeployAt: Date.now(),
+    bytes: Math.max(0, meta.bytes - object.size),
+    fileCount: Math.max(0, meta.fileCount - 1),
+  };
+  await putMeta(c.env.SITES, owner.username, id, next);
+  return c.json(describe(c, owner.username, id, next));
+});
+
+// Attach an unverified recovery/abuse email to the account.
+app.patch("/account", async (c) => {
+  const owner = await requireOwner(c);
+  if (owner instanceof Response) return owner;
+  const email = (await readJson(c))?.email;
+  if (typeof email !== "string" || email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return c.json({ error: "valid email required" }, 400);
   }
   await putUser(c.env.SITES, owner.username, { ...owner.user, email });
-  return c.json({ ok: true, username: owner.username, email });
-});
-
-// Rotating the key invalidates existing share links.
-app.post("/key/rotate", async (c) => {
-  const owner = await requireOwner(c);
-  if (owner instanceof Response) return owner;
-  const site = await requireSite(c, owner.username);
-  if (site instanceof Response) return site;
-
-  const accessKey = generateAccessKey();
-  site.meta.keyHash = await sha256Hex(accessKey);
-  site.meta.public = false;
-  await putMeta(c.env.SITES, owner.username, site.siteId, site.meta);
-  return c.json({ ok: true, public: false, url: shareUrl(siteHost(owner.username, site.siteId, c.env.APEX_HOST), accessKey) });
-});
-
-app.post("/key/public", async (c) => {
-  const owner = await requireOwner(c);
-  if (owner instanceof Response) return owner;
-  const site = await requireSite(c, owner.username);
-  if (site instanceof Response) return site;
-
-  const value = (await readBody(c)).public ?? c.req.query("public");
-  if (![true, false, "true", "false"].includes(value as boolean | string)) {
-    return c.json({ error: "public=true|false required" }, 400);
-  }
-  const makePublic = value === true || value === "true";
-  site.meta.public = makePublic;
-  await putMeta(c.env.SITES, owner.username, site.siteId, site.meta);
-  return c.json({ ok: true, public: makePublic });
+  return c.json({ username: owner.username, email });
 });
 
 app.get("/llms.txt", (c) =>

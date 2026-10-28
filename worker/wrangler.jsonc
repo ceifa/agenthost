@@ -29,7 +29,7 @@
     { "pattern": "*.agenthost.page/*", "zone_name": "agenthost.page" }
   ],
   "triggers": {
-    // nightly retention sweep: delete free-tier sites idle past their plan's
+    // nightly retention sweep: delete shares idle past their plan's
     // retention window (see worker/src/config.ts).
     "crons": ["0 4 * * *"]
   },

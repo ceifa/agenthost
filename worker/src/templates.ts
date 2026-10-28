@@ -1,9 +1,10 @@
-// Branded HTML the Worker generates: interstitial, share widget, live-reload probe, markdown shell, 404.
+// Branded HTML the Worker generates: interstitial, share widget, live-reload probe, markdown shell, file index, 404.
 
 import { LIVE } from "./config";
 // Browser scripts, written readably in ./client/*.ts and minified into strings by
 // scripts/build-client.mjs. Each reads its parameters from data- attributes on
 // its own <script> tag.
+import { encodePath } from "./ids";
 import LIVE_JS from "./client/gen/live";
 import COPY_LINK_JS from "./client/gen/copy-link";
 import DOC_JS from "./client/gen/doc";
@@ -27,7 +28,7 @@ export function interstitialHtml(opts: { siteId: string; apexHost: string; wrong
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Private site · agenthost</title>
+<title>Private share · agenthost</title>
 <style>${SHELL_CSS}
 .wrap{min-height:100vh;display:grid;place-items:center;padding:24px}
 .card{width:100%;max-width:380px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px}
@@ -38,7 +39,7 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
 button{background:var(--accent);color:#0c0d0f;border:0;border-radius:9px;padding:0 16px;font-size:15px;font-weight:600;cursor:pointer}
 .err{color:#ff6b6b;font-size:13px;margin-top:12px}.brand{font-size:12px;color:var(--muted);margin-top:18px;text-align:center}
 </style></head><body><div class="wrap"><div class="card">
-<h1>🔒 This site is private</h1>
+<h1>🔒 This share is private</h1>
 <p>Enter the access key to continue.</p>
 <form method="GET" action="">
 <input name="k" type="text" autocomplete="off" autofocus placeholder="access key" aria-label="access key">
@@ -264,7 +265,7 @@ ${toc}</div>
 <script>${DOC_JS}</script>${mermaidScript}</body></html>`;
 }
 
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;
   let unit = 0;
@@ -275,37 +276,51 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function assetDownloadHtml(opts: {
-  name: string;
-  bytes: number;
-  contentType: string;
-  downloadUrl: string;
-  shareUrl: string;
-}): string {
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>${esc(opts.name)} · agenthost</title>
-<style>
-:root{--bg:#f5f7fa;--surface:#fff;--text:#111827;--muted:#667085;--line:#d9dee7;--button:#1d4ed8;--button-text:#fff;--shadow:0 18px 50px rgba(28,39,60,.10)}
-:root[data-theme="dark"]{--bg:#0d1117;--surface:#161b22;--text:#f0f3f6;--muted:#9aa7b5;--line:#30363d;--button:#4f8cff;--button-text:#07101f;--shadow:0 18px 50px rgba(0,0,0,.32)}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1117;--surface:#161b22;--text:#f0f3f6;--muted:#9aa7b5;--line:#30363d;--button:#4f8cff;--button-text:#07101f;--shadow:0 18px 50px rgba(0,0,0,.32)}}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-.card{width:min(100%,520px);background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);padding:32px}
-.mark{width:48px;height:48px;display:grid;place-items:center;border:1px solid var(--line);margin-bottom:24px;color:var(--button)}
-.mark svg{width:23px;height:23px}h1{font-size:22px;line-height:1.25;letter-spacing:-.02em;text-wrap:balance;overflow-wrap:anywhere;margin:0 0 8px}.meta{color:var(--muted);font-size:13px;margin-bottom:28px}.actions{display:grid;grid-template-columns:1fr auto;gap:10px}
-.button{min-height:46px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);padding:0 18px;color:var(--text);background:transparent;font:600 14px/1 inherit;text-decoration:none;cursor:pointer}.button.primary{background:var(--button);border-color:var(--button);color:var(--button-text)}.button:hover{filter:brightness(.96)}.button:focus-visible{outline:3px solid color-mix(in srgb,var(--button) 35%,transparent);outline-offset:2px}.brand{margin-top:24px;color:var(--muted);font-size:12px}.brand a{color:inherit}
-@media(max-width:460px){.card{padding:24px}.actions{grid-template-columns:1fr}.button{width:100%}}
-@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
-</style></head><body><main class="card">
-<div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg></div>
-<h1>${esc(opts.name)}</h1><div class="meta">${esc(formatBytes(opts.bytes))} · ${esc(opts.contentType)}</div>
-<div class="actions"><a class="button primary" href="${esc(opts.downloadUrl)}">Download</a><button class="button" id="share" type="button">Copy link</button></div>
-<div class="brand">Shared with <a href="https://agenthost.page">agenthost</a></div>
-</main><script data-url="${esc(opts.shareUrl)}" data-button="share">${COPY_LINK_JS}</script></body></html>`;
+const fileHref = (path: string) => "/" + encodePath(path);
+
+function preview(path: string, contentType: string): string {
+  const src = esc(fileHref(path));
+  const type = contentType.split(";")[0]!;
+  if (type.startsWith("image/")) return `<img class="preview" src="${src}" alt="">`;
+  if (type.startsWith("video/")) return `<video class="preview" src="${src}" controls preload="metadata"></video>`;
+  if (type.startsWith("audio/")) return `<audio class="preview" src="${src}" controls preload="metadata"></audio>`;
+  if (type === "application/pdf") return `<iframe class="preview pdf" src="${src}" title="${esc(path)}"></iframe>`;
+  return "";
 }
 
-export function assetPendingHtml(name: string): string {
-  return errorHtml(425, esc(name), "The upload has not completed yet.", 28);
+// What `/` shows for a share with no index.html and no Markdown: the one file,
+// previewed when the browser can show it, or the list of files.
+export function fileIndexHtml(opts: { siteId: string; files: { path: string; bytes: number; contentType: string }[] }): string {
+  const { files } = opts;
+  const single = files.length === 1 ? files[0]! : null;
+  const download = (path: string) => `${esc(fileHref(path))}?download`;
+  const body = single
+    ? `${preview(single.path, single.contentType)}
+<h1>${esc(single.path)}</h1><div class="meta">${esc(formatBytes(single.bytes))} · ${esc(single.contentType.split(";")[0]!)}</div>
+<div class="actions"><a class="button primary" href="${download(single.path)}">Download</a><a class="button" href="${esc(fileHref(single.path))}">Open</a></div>`
+    : `<h1>${esc(opts.siteId)}</h1><div class="meta">${files.length} files · ${esc(formatBytes(files.reduce((n, f) => n + f.bytes, 0)))}</div>
+${files.length ? `<ul class="files">${files.map(f => `<li><a href="${esc(fileHref(f.path))}">${esc(f.path)}</a><span>${esc(formatBytes(f.bytes))}</span><a class="dl" href="${download(f.path)}" aria-label="Download ${esc(f.path)}">↓</a></li>`).join("")}</ul>` : ""}`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>${esc(single?.path ?? opts.siteId)} · agenthost</title>
+<style>
+:root{color-scheme:light dark;--bg:#f5f7fa;--surface:#fff;--text:#111827;--muted:#667085;--line:#d9dee7;--button:#1d4ed8;--button-text:#fff;--shadow:0 18px 50px rgba(28,39,60,.10)}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--surface:#161b22;--text:#f0f3f6;--muted:#9aa7b5;--line:#30363d;--button:#4f8cff;--button-text:#07101f;--shadow:0 18px 50px rgba(0,0,0,.32)}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.card{width:min(100%,${single ? "760px" : "620px"});background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);padding:32px}
+h1{font-size:22px;line-height:1.25;letter-spacing:-.02em;overflow-wrap:anywhere;margin:0 0 8px}.meta{color:var(--muted);font-size:13px;margin-bottom:24px}
+.preview{display:block;width:100%;max-height:70vh;object-fit:contain;background:#000;margin-bottom:24px}audio.preview{background:none}.pdf{height:70vh;border:1px solid var(--line);background:#fff}
+.actions{display:flex;gap:10px;flex-wrap:wrap}
+.button{min-height:46px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);padding:0 18px;color:var(--text);font:600 14px/1 inherit;text-decoration:none}.button.primary{background:var(--button);border-color:var(--button);color:var(--button-text)}.button:hover{filter:brightness(.96)}
+.files{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.files li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:16px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.files a{color:var(--text);overflow-wrap:anywhere;text-decoration:none}.files a:hover{text-decoration:underline}.files span{color:var(--muted);font-size:13px}.files .dl{color:var(--button);font-weight:600}
+.brand{margin-top:24px;color:var(--muted);font-size:12px}.brand a{color:inherit}
+@media(max-width:460px){.card{padding:24px}.button{flex:1}}
+</style></head><body><main class="card">
+${body}
+<div class="brand">Shared with <a href="https://agenthost.page">agenthost</a></div>
+</main></body></html>`;
 }
 
 function errorHtml(code: number, heading: string, message: string, h1Size: number): string {
@@ -318,4 +333,4 @@ h1{font-size:${h1Size}px;margin:0}p{color:var(--muted)}</style></head>
 }
 
 export const notFoundHtml = () => errorHtml(404, "404", "This page could not be found.", 64);
-export const goneHtml = () => errorHtml(410, "410 Gone", "This site has been removed.", 48);
+export const goneHtml = () => errorHtml(410, "410 Gone", "This share has been removed.", 48);

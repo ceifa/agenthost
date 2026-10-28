@@ -1,20 +1,29 @@
-// Serve flow for hosted sites:
+// Serve flow for shares:
 // (username, siteId from Host) → /_gen live probe | access gate → gen-keyed cache →
-// R2 get / markdown render → Share-widget + live-reload injection → noindex.
+// R2 get / markdown render / file index → Share-widget + live-reload injection → noindex.
 
 import type { Env } from "./env";
-import { AUTH_COOKIE_PREFIX, RENDER_VERSION, LIVE } from "./config";
-import { sha256Hex, contentTypeFor, shareUrl } from "./ids";
+import { AUTH_COOKIE_PREFIX, CACHE_MAX_BYTES, RENDER_VERSION, LIVE } from "./config";
+import { sha256Hex, contentTypeFor, encodePath, shareUrl } from "./ids";
 import { checkAccessKey } from "./auth";
-import { getMeta, siteFileKey } from "./storage";
+import { committedFiles, getMeta, listAll, siteFileKey, sitePrefix } from "./storage";
 import { renderDoc, homeDoc, loadDocIndexCached, readMarkdownSource, type DocIndex } from "./markdown";
-import { shareWidget, liveScript, notFoundHtml, goneHtml } from "./templates";
+import { shareWidget, liveScript, notFoundHtml, goneHtml, fileIndexHtml } from "./templates";
 
 // noindex on every hosted-site response — only the apex landing is indexable.
 function siteHeaders(extra?: Record<string, string>): Headers {
   const h = new Headers(extra);
   h.set("x-robots-tag", "noindex, nofollow");
   return h;
+}
+
+export function attachmentDisposition(name: string): string {
+  const ascii = name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7e]/g, "_")
+    .replace(/["\\]/g, "_") || "download";
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
 function etagMatches(header: string | null, etag: string): boolean {
@@ -87,7 +96,8 @@ async function handleGen(
   return genResponse(await hit.text(), req.headers.get("if-none-match"));
 }
 
-type TargetKind = "static" | "html" | "md";
+// "index" is the share's root when it has no page of its own.
+type TargetKind = "static" | "html" | "md" | "index";
 interface Target {
   key: string;
   relPath: string;
@@ -97,11 +107,11 @@ interface Target {
 }
 
 function classify(username: string, siteId: string, rel: string): Target {
-  const kind: TargetKind = /\.md$/i.test(rel) ? "md" : /\.html?$/i.test(rel) ? "html" : "static";
+  const kind: TargetKind = rel === "" ? "index" : /\.md$/i.test(rel) ? "md" : /\.html?$/i.test(rel) ? "html" : "static";
   return { key: siteFileKey(username, siteId, rel), relPath: rel, kind };
 }
 
-async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, username: string, siteId: string, rest: string, gen: number): Promise<Target | null> {
+async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, username: string, siteId: string, rest: string, gen: number, asFile: boolean): Promise<Target | null> {
   const candidates: string[] = [];
   if (rest === "") candidates.push("index.html");
   else if (rest.endsWith("/")) candidates.push(rest + "index.html");
@@ -111,17 +121,18 @@ async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, user
   }
   for (const rel of candidates) {
     const target = classify(username, siteId, rel);
-    const conditional = target.kind === "static" || (target.kind === "md" && new URL(req.url).searchParams.has("raw"));
+    const conditional = target.kind === "static" || asFile;
     const object = req.method === "HEAD"
       ? await env.SITES.head(target.key)
       : await env.SITES.get(target.key, conditional ? { onlyIf: req.headers, range: req.headers } : undefined);
     if (object) return { ...target, object };
   }
-  // Markdown-only site: `/` renders README.md / first SUMMARY entry.
+  // Markdown-only site: `/` renders README.md / first SUMMARY entry; with no
+  // Markdown either, it lists the files.
   if (rest === "") {
     const index = await loadDocIndexCached(env, ctx, username, siteId, gen);
     const home = homeDoc(index);
-    if (home) return { ...classify(username, siteId, home), docIndex: index };
+    return home ? { ...classify(username, siteId, home), docIndex: index } : classify(username, siteId, "");
   }
   return null;
 }
@@ -143,13 +154,14 @@ async function resolveTargetCached(
   rest: string,
   gen: number,
   req: Request,
+  asFile: boolean,
 ): Promise<Target | null> {
   const cache = caches.default;
-  const key = new Request(`https://as-routes.internal/${username}/${siteId}/g${gen}/r${RENDER_VERSION}/${rest}`);
+  const key = new Request(`https://as-routes.internal/${username}/${siteId}/g${gen}/r${RENDER_VERSION}/${encodePath(rest)}`);
   const hit = await cache.match(key);
   if (hit) return classify(username, siteId, await hit.text());
 
-  const target = await resolveTarget(env, ctx, req, username, siteId, rest, gen);
+  const target = await resolveTarget(env, ctx, req, username, siteId, rest, gen, asFile);
   if (target) {
     ctx.waitUntil(cache.put(key, new Response(target.relPath, {
       headers: { "content-type": "text/plain; charset=utf-8", "cache-control": IMMUTABLE_CACHE },
@@ -169,9 +181,9 @@ export function cacheKeyPath(
   target: { kind: TargetKind; relPath: string },
   raw: boolean,
 ): string {
-  const rendered = target.kind === "md" && !raw;
+  const rendered = target.kind === "index" || (target.kind === "md" && !raw);
   const version = rendered ? `/r${RENDER_VERSION}` : "";
-  return `${CACHE_HOST}/${username}/${siteId}/g${gen}${version}/${target.relPath}${raw ? "?raw" : ""}`;
+  return `${CACHE_HOST}/${username}/${siteId}/g${gen}${version}/${encodePath(target.relPath)}${raw ? "?raw" : ""}`;
 }
 
 export async function handleSite(
@@ -184,8 +196,14 @@ export async function handleSite(
 ): Promise<Response> {
   const url = new URL(req.url);
   if (!siteId) return htmlResponse(notFoundHtml(), 404);
-  // The whole path is now the file path within the site (siteId rides the host).
-  const rest = url.pathname.replace(/^\/+/, "");
+  // The whole path is the file path within the share (siteId rides the host).
+  // Files are stored under their decoded names; links to them are percent-encoded.
+  let rest: string;
+  try {
+    rest = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+  } catch {
+    return htmlResponse(notFoundHtml(), 404);
+  }
 
   if (rest === "_gen") return handleGen(req, env, ctx, username, siteId);
 
@@ -194,9 +212,9 @@ export async function handleSite(
   if (meta.tombstone) return htmlResponse(goneHtml(), 410);
 
   let key: string | null = null;
-  if (!meta.public && meta.keyHash) {
+  if (!meta.public && (meta.accessKey || meta.keyHash)) {
     const gate = await checkAccessKey(req, env, {
-      keyHash: meta.keyHash, label: siteId, cookieName: AUTH_COOKIE_PREFIX + siteId, cookiePath: "/", limiterKey: siteId,
+      accessKey: meta.accessKey, keyHash: meta.keyHash, label: siteId, cookieName: AUTH_COOKIE_PREFIX + siteId, limiterKey: siteId,
     });
     if (gate instanceof Response) return gate;
     key = gate;
@@ -204,10 +222,13 @@ export async function handleSite(
   const gen = meta.generation;
 
   const raw = url.searchParams.has("raw");
+  // ?download hands over the file itself, never our rendering of it.
+  const download = url.searchParams.has("download");
+  const asFile = raw || download;
   const share = shareUrl(host, key);
   const live = versionTag(gen);
 
-  const target = await resolveTargetCached(env, ctx, username, siteId, rest, gen, req);
+  const target = await resolveTargetCached(env, ctx, username, siteId, rest, gen, req, asFile);
   if (!target) {
     const custom = await env.SITES.get(siteFileKey(username, siteId, "404.html"));
     if (custom) return decorate(req.method === "HEAD" ? null : custom.body, { shareUrl: share, live, lastDeployAt: meta.lastDeployAt }, 404);
@@ -215,7 +236,7 @@ export async function handleSite(
   }
 
   const cache = caches.default;
-  const cacheReq = new Request(cacheKeyPath(username, siteId, gen, target, raw));
+  const cacheReq = new Request(cacheKeyPath(username, siteId, gen, target, asFile));
   const cancelPrefetch = () => {
     if (target.object && "body" in target.object) ctx.waitUntil(target.object.body.cancel());
   };
@@ -227,7 +248,7 @@ export async function handleSite(
     // The body also depends on our decoration and the current access policy.
     // Fresh authorization runs before evaluating this validator. No key is
     // stored in a shared cache entry or exposed in an ETag.
-    const etag = `W/"${await sha256Hex(JSON.stringify([versionTag(gen), target.relPath, host, meta.public, meta.keyHash, meta.lastDeployAt]))}"`;
+    const etag = `W/"${await sha256Hex(JSON.stringify([versionTag(gen), target.relPath, host, meta.public, meta.accessKey ?? meta.keyHash, meta.lastDeployAt]))}"`;
     const matches = (req.method === "GET" || req.method === "HEAD") && etagMatches(req.headers.get("if-none-match"), etag);
     if (matches || req.method === "HEAD") {
       cancelPrefetch();
@@ -250,7 +271,18 @@ export async function handleSite(
     return decorated;
   };
 
-  if (target.kind === "md" && !raw) {
+  if (target.kind === "index") {
+    return serveHtmlCached(async () => {
+      const prefix = sitePrefix(username, siteId);
+      const files = committedFiles(await listAll(env.SITES, prefix), username, siteId, meta).map(o => {
+        const path = o.key.slice(prefix.length);
+        return { path, bytes: o.size, contentType: contentTypeFor(path) };
+      });
+      return fileIndexHtml({ siteId, files });
+    });
+  }
+
+  if (target.kind === "md" && !asFile) {
     return serveHtmlCached(async () => {
       const obj = target.object ?? await env.SITES.get(target.key);
       if (!obj || !("body" in obj)) return null;
@@ -260,7 +292,7 @@ export async function handleSite(
     });
   }
 
-  if (target.kind === "html") {
+  if (target.kind === "html" && !download) {
     return serveHtmlCached(async () => {
       const obj = target.object ?? await env.SITES.get(target.key);
       return obj && "body" in obj ? (obj as R2ObjectBody).body : null;
@@ -283,23 +315,29 @@ export async function handleSite(
   const supportsConditions = hit &&
     (!req.headers.has("if-modified-since") || hit.status === 304 || hit.headers.has("last-modified")) &&
     (!req.headers.has("range") || hit.status !== 200 || hit.headers.has("content-length"));
+  // Per-request presentation, applied after the cache so one entry serves all.
+  const present = (h: Headers) => {
+    h.set("x-robots-tag", "noindex, nofollow");
+    h.set("cache-control", "no-cache");
+    if (raw) h.set("content-type", "text/plain; charset=utf-8");
+    if (download) h.set("content-disposition", attachmentDisposition(target.relPath.slice(target.relPath.lastIndexOf("/") + 1)));
+    return h;
+  };
   if (hit && supportsConditions) {
     cancelPrefetch();
     if (req.method === "HEAD" && hit.body) ctx.waitUntil(hit.body.cancel());
-    const h = new Headers(hit.headers);
-    h.set("x-robots-tag", "noindex, nofollow");
-    h.set("cache-control", "no-cache");
-    return new Response(req.method === "HEAD" ? null : hit.body, { status: hit.status, headers: h });
+    return new Response(req.method === "HEAD" ? null : hit.body, { status: hit.status, headers: present(new Headers(hit.headers)) });
   }
   if (hit?.body) ctx.waitUntil(hit.body.cancel());
 
   const obj = target.object ?? (req.method === "HEAD" ? await env.SITES.head(target.key) : await env.SITES.get(target.key, conditional ? { onlyIf: req.headers, range: req.headers } : undefined));
   if (!obj) return htmlResponse(notFoundHtml(), 404);
 
-  const h = siteHeaders({ "cache-control": "no-cache" });
+  const h = new Headers();
   obj.writeHttpMetadata(h);
-  if (raw) h.set("content-type", "text/plain; charset=utf-8");
-  else if (!h.has("content-type")) h.set("content-type", contentTypeFor(target.relPath));
+  // A direct upload stores a type only when the caller forced one.
+  const stored = h.get("content-type");
+  if (!stored || stored === "application/octet-stream") h.set("content-type", contentTypeFor(target.relPath));
   h.set("etag", obj.httpEtag);
   h.set("last-modified", obj.uploaded.toUTCString());
 
@@ -312,11 +350,11 @@ export async function handleSite(
     if ("body" in obj && obj !== target.object) ctx.waitUntil((obj as R2ObjectBody).body.cancel());
     if (!unchanged) h.set("content-length", String(obj.size));
     h.set("accept-ranges", "bytes");
-    return new Response(null, { status: unchanged ? 304 : 200, headers: h });
+    return new Response(null, { status: unchanged ? 304 : 200, headers: present(h) });
   }
 
   // Precondition matched (If-None-Match / If-Modified-Since) → no body present.
-  if (!("body" in obj)) return new Response(null, { status: 304, headers: h });
+  if (!("body" in obj)) return new Response(null, { status: 304, headers: present(h) });
 
   const bodyObj = obj as R2ObjectBody;
   let status = 200;
@@ -332,11 +370,12 @@ export async function handleSite(
   }
   h.set("accept-ranges", "bytes");
 
-  const response = new Response(bodyObj.body, { status, headers: h });
-  if (!conditional && status === 200) {
+  if (!conditional && status === 200 && bodyObj.size <= CACHE_MAX_BYTES) {
+    const [served, stored] = bodyObj.body.tee();
     const cacheHeaders = new Headers(h);
     cacheHeaders.set("cache-control", IMMUTABLE_CACHE);
-    ctx.waitUntil(cache.put(cacheReq, new Response(response.clone().body, { status: 200, headers: cacheHeaders })));
+    ctx.waitUntil(cache.put(cacheReq, new Response(stored, { status: 200, headers: cacheHeaders })));
+    return new Response(served, { status, headers: present(h) });
   }
-  return response;
+  return new Response(bodyObj.body, { status, headers: present(h) });
 }
