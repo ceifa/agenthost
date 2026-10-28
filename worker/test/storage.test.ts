@@ -10,7 +10,7 @@ const meta = { generation: 1, public: false, accessKey: "key", bytes: 10, fileCo
 describe("compact metadata", () => {
   it("accounts for 100 shares and their pending uploads in one LIST with no metadata GETs", async () => {
     const f = testBucket();
-    for (let i = 0; i < 100; i++) f.json(`_sites/u/s${i}`, { ...meta, pending: { "big.bin": { bytes: 20, expiresAt: 0 } } });
+    for (let i = 0; i < 100; i++) f.json(`_sites/u/s${i}`, { ...meta, pending: { "big.bin": { bytes: 20, expiresAt: 1e15 } } });
     expect(await userUsage(f.bucket, "u")).toBe(3000);
     expect(f.list).toHaveBeenCalledOnce();
     expect(f.get).not.toHaveBeenCalled();

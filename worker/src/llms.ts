@@ -37,9 +37,8 @@ GET /shares/myblog returns the url again at any time.
 ## Large files (over ~100 MB, or any file you'd rather not stream through agenthost)
 1. POST https://${apexHost}/shares/<id>/uploads  {"path":"demo.mp4","bytes":<exact size>}
    → uploadUrl, uploadHeaders, url
-2. curl -X PUT --upload-file demo.mp4 -H '<each uploadHeaders entry>' '<uploadUrl>'   (within 15 min)
-3. POST https://${apexHost}/shares/<id>/uploads/complete  {"path":"demo.mp4"}
-Steps 1 and 3 take the Authorization header. The file joins the share at /demo.mp4.
+2. curl --upload-file demo.mp4 -H '<each uploadHeaders entry>' '<uploadUrl>'   (within 15 min)
+Only step 1 takes the Authorization header. No completion call: the file joins the share at /demo.mp4.
 
 ## What a share shows
 - index.html at /, or a folder of .md as a docs site (README.md home, SUMMARY.md for order).

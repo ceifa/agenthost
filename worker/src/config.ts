@@ -22,7 +22,7 @@ export const MAX_FILE_BYTES = 5 * GB;
 // A single-file body without Content-Length has to be buffered to learn its size.
 export const MAX_BUFFERED_BYTES = 32 * MB;
 
-// Past UPLOAD_EXPIRY_MS the sweep deletes a reservation and whatever landed at its path.
+// Expired reservations release quota without deleting files already in R2.
 export const UPLOAD_URL_TTL_SECONDS = 15 * 60;
 export const UPLOAD_EXPIRY_MS = 24 * 60 * 60 * 1000;
 

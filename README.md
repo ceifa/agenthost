@@ -28,8 +28,8 @@ your own domain with [DEPLOYING.md](./DEPLOYING.md).)
 ## Large files
 
 Files too big to stream through the Worker go straight to R2: reserve
-(`POST /shares/{id}/uploads`), `PUT` the file to the signed URL it returns, then
-complete. The file joins the share like any other — `<video src="/demo.mp4">` in
+(`POST /shares/{id}/uploads`), then `PUT` the file to the signed URL it returns.
+No completion call. The file joins the share like any other: `<video src="/demo.mp4">` in
 the share's page works, with seeking. Files can be up to 5 GB. The
 exact recipe is in the [skill](./skills/agenthost/SKILL.md#large-files).
 

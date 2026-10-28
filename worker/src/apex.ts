@@ -6,11 +6,11 @@ import { Hono } from "hono";
 import type { Env } from "./env";
 import { handlePublish, safePath } from "./publish";
 import { ownedShare, readJson, requireOwner, type AppContext } from "./auth";
-import { deleteSite, listSitesPage, putMeta, putUser, siteFileKey, type SiteMeta } from "./storage";
+import { deleteSite, listSitesPage, mapBounded, putMeta, putUser, reconcileUploads, siteFileKey, type SiteMeta } from "./storage";
 import { generateAccessKey, metaUrl, siteHost } from "./ids";
 import { llmsTxt } from "./llms";
 import { skillFile } from "./skill";
-import { completeUpload, createUpload } from "./uploads";
+import { createUpload } from "./uploads";
 
 function describe(c: AppContext, username: string, id: string, meta: SiteMeta) {
   return {
@@ -31,14 +31,14 @@ app.put("/shares/:id", (c) => handlePublish(c.req.raw, c.env, c.req.param("id"))
 
 // Straight to R2: one file per upload, always merged into the tree.
 app.post("/shares/:id/uploads", createUpload);
-app.post("/shares/:id/uploads/complete", completeUpload);
 
 app.get("/shares", async (c) => {
   const owner = await requireOwner(c);
   if (owner instanceof Response) return owner;
   const page = await listSitesPage(c.env.SITES, owner.username, c.req.query("cursor"));
   return c.json({
-    shares: page.items.map(({ siteId, meta }) => describe(c, owner.username, siteId, meta)),
+    shares: await mapBounded(page.items, async ({ siteId, meta }) =>
+      describe(c, owner.username, siteId, await reconcileUploads(c.env.SITES, owner.username, siteId, meta))),
     cursor: page.cursor ?? null,
   });
 });

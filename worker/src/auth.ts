@@ -4,7 +4,7 @@
 import type { Context } from "hono";
 import type { Env } from "./env";
 import { AUTH_COOKIE_MAX_AGE } from "./config";
-import { getMeta, getUser, type SiteMeta, type UserRecord } from "./storage";
+import { getMeta, getUser, reconcileUploads, type SiteMeta, type UserRecord } from "./storage";
 import { sha256Hex, timingSafeEqual, clientIp, sanitizeSiteId } from "./ids";
 import { interstitialHtml } from "./templates";
 
@@ -52,7 +52,7 @@ export async function ownedShare(c: AppContext): Promise<{ owner: OwnerCtx; id: 
   const id = sanitizeSiteId(c.req.param("id"));
   const meta = id ? await getMeta(c.env.SITES, owner.username, id) : null;
   if (!id || !meta) return c.json({ error: "share not found" }, 404);
-  return { owner, id, meta };
+  return { owner, id, meta: await reconcileUploads(c.env.SITES, owner.username, id, meta) };
 }
 
 // The request's JSON body if it is an object, else null.

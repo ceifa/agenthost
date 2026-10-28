@@ -43,22 +43,18 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- -H "Authorization: Bearer
 
 ## Large files
 
-Over ~100 MB, a `PUT` body is refused; upload those straight to storage instead. Three calls; the file lands at `path` inside the share (created if new) and joins whatever is already there:
+Over ~100 MB, a `PUT` body is refused; upload those straight to storage instead. Two calls; the file lands at `path` inside the share (created if new) and joins whatever is already there:
 
 ```bash
 # 1. reserve; bytes must be the exact file size
 curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
   --data '{"path":"demo.mp4","bytes":757603783}' https://agenthost.page/shares/demo/uploads
 
-# 2. within 15 min; use content-type from uploadHeaders
-curl -s --upload-file demo.mp4 -H 'content-type: <…>' '<uploadUrl>'
-
-# 3. complete
-curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
-  --data '{"path":"demo.mp4"}' https://agenthost.page/shares/demo/uploads/complete
+# 2. within 15 min; copy these headers from uploadHeaders
+curl -s --upload-file demo.mp4 -H 'content-type: <…>' -H '<if-match or if-none-match>: <…>' '<uploadUrl>'
 ```
 
-An upload not completed within a day is discarded.
+A successful upload needs no confirmation call. Unused reservations expire after a day.
 
 ## What to hand the human
 

@@ -6,7 +6,7 @@ import type { Env } from "./env";
 import { AUTH_COOKIE_PREFIX, CACHE_MAX_BYTES, RENDER_VERSION, LIVE } from "./config";
 import { sha256Hex, contentTypeFor, encodePath, shareUrl } from "./ids";
 import { checkAccessKey } from "./auth";
-import { committedFiles, getMeta, listAll, siteFileKey, sitePrefix } from "./storage";
+import { committedFiles, getMeta, listAll, reconcileUploads, siteFileKey, sitePrefix } from "./storage";
 import { renderDoc, homeDoc, loadDocIndexCached, readMarkdownSource, type DocIndex } from "./markdown";
 import { shareWidget, liveScript, notFoundHtml, goneHtml, fileIndexHtml } from "./templates";
 
@@ -87,7 +87,8 @@ async function handleGen(
   const cacheReq = new Request(`${CACHE_HOST}/${username}/${siteId}/r${RENDER_VERSION}/_gen`);
   let hit = await cache.match(cacheReq);
   if (!hit) {
-    const gen = (await getMeta(env.SITES, username, siteId))?.generation ?? 0;
+    const record = await getMeta(env.SITES, username, siteId);
+    const gen = record ? (await reconcileUploads(env.SITES, username, siteId, record)).generation : 0;
     hit = new Response(versionTag(gen), {
       headers: { "content-type": "text/plain; charset=utf-8", "cache-control": `public, s-maxage=${LIVE.genCacheTtlSeconds}` },
     });
@@ -111,7 +112,7 @@ function classify(username: string, siteId: string, rel: string): Target {
   return { key: siteFileKey(username, siteId, rel), relPath: rel, kind };
 }
 
-async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, username: string, siteId: string, rest: string, gen: number, asFile: boolean): Promise<Target | null> {
+async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, username: string, siteId: string, rest: string, gen: number, asFile: boolean, cacheable: boolean): Promise<Target | null> {
   const candidates: string[] = [];
   if (rest === "") candidates.push("index.html");
   else if (rest.endsWith("/")) candidates.push(rest + "index.html");
@@ -130,7 +131,7 @@ async function resolveTarget(env: Env, ctx: ExecutionContext, req: Request, user
   // Markdown-only site: `/` renders README.md / first SUMMARY entry; with no
   // Markdown either, it lists the files.
   if (rest === "") {
-    const index = await loadDocIndexCached(env, ctx, username, siteId, gen);
+    const index = await loadDocIndexCached(env, ctx, username, siteId, gen, cacheable);
     const home = homeDoc(index);
     return home ? { ...classify(username, siteId, home), docIndex: index } : classify(username, siteId, "");
   }
@@ -155,14 +156,15 @@ async function resolveTargetCached(
   gen: number,
   req: Request,
   asFile: boolean,
+  cacheable: boolean,
 ): Promise<Target | null> {
   const cache = caches.default;
   const key = new Request(`https://as-routes.internal/${username}/${siteId}/g${gen}/r${RENDER_VERSION}/${encodePath(rest)}`);
-  const hit = await cache.match(key);
+  const hit = cacheable ? await cache.match(key) : undefined;
   if (hit) return classify(username, siteId, await hit.text());
 
-  const target = await resolveTarget(env, ctx, req, username, siteId, rest, gen, asFile);
-  if (target) {
+  const target = await resolveTarget(env, ctx, req, username, siteId, rest, gen, asFile, cacheable);
+  if (target && cacheable) {
     ctx.waitUntil(cache.put(key, new Response(target.relPath, {
       headers: { "content-type": "text/plain; charset=utf-8", "cache-control": IMMUTABLE_CACHE },
     })));
@@ -207,7 +209,7 @@ export async function handleSite(
 
   if (rest === "_gen") return handleGen(req, env, ctx, username, siteId);
 
-  const meta = await getMeta(env.SITES, username, siteId);
+  let meta = await getMeta(env.SITES, username, siteId);
   if (!meta) return htmlResponse(notFoundHtml(), 404);
   if (meta.tombstone) return htmlResponse(goneHtml(), 410);
 
@@ -219,7 +221,10 @@ export async function handleSite(
     if (gate instanceof Response) return gate;
     key = gate;
   }
+  meta = await reconcileUploads(env.SITES, username, siteId, meta);
   const gen = meta.generation;
+  // A direct PUT can land after this request checked R2. Do not freeze that window.
+  const cacheable = !meta.pending;
 
   const raw = url.searchParams.has("raw");
   // ?download hands over the file itself, never our rendering of it.
@@ -228,7 +233,7 @@ export async function handleSite(
   const share = shareUrl(host, key);
   const live = versionTag(gen);
 
-  const target = await resolveTargetCached(env, ctx, username, siteId, rest, gen, req, asFile);
+  const target = await resolveTargetCached(env, ctx, username, siteId, rest, gen, req, asFile, cacheable);
   if (!target) {
     const custom = await env.SITES.get(siteFileKey(username, siteId, "404.html"));
     if (custom) return decorate(req.method === "HEAD" ? null : custom.body, { shareUrl: share, live, lastDeployAt: meta.lastDeployAt }, 404);
@@ -249,12 +254,12 @@ export async function handleSite(
     // Fresh authorization runs before evaluating this validator. No key is
     // stored in a shared cache entry or exposed in an ETag.
     const etag = `W/"${await sha256Hex(JSON.stringify([versionTag(gen), target.relPath, host, meta.public, meta.accessKey ?? meta.keyHash, meta.lastDeployAt]))}"`;
-    const matches = (req.method === "GET" || req.method === "HEAD") && etagMatches(req.headers.get("if-none-match"), etag);
+    const matches = cacheable && (req.method === "GET" || req.method === "HEAD") && etagMatches(req.headers.get("if-none-match"), etag);
     if (matches || req.method === "HEAD") {
       cancelPrefetch();
-      return new Response(null, { status: matches ? 304 : 200, headers: siteHeaders({ etag, "content-type": "text/html; charset=utf-8", "cache-control": "private, no-cache" }) });
+      return new Response(null, { status: matches ? 304 : 200, headers: siteHeaders({ ...(cacheable ? { etag } : {}), "content-type": "text/html; charset=utf-8", "cache-control": "private, no-cache" }) });
     }
-    let response = await cache.match(cacheReq);
+    let response = cacheable ? await cache.match(cacheReq) : undefined;
     if (response) cancelPrefetch();
     if (!response) {
       const produced = await produce();
@@ -262,12 +267,12 @@ export async function handleSite(
       response = new Response(produced, {
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": IMMUTABLE_CACHE },
       });
-      ctx.waitUntil(cache.put(cacheReq, response.clone()));
+      if (cacheable) ctx.waitUntil(cache.put(cacheReq, response.clone()));
     }
     // HTMLRewriter accepts a stream: readers can receive the first bytes before
     // R2/cache finishes producing the page, without allocating a full HTML string.
     const decorated = decorate(response.body, { shareUrl: share, live, lastDeployAt: meta.lastDeployAt }, 200);
-    decorated.headers.set("etag", etag);
+    if (cacheable) decorated.headers.set("etag", etag);
     return decorated;
   };
 
@@ -287,7 +292,7 @@ export async function handleSite(
       const obj = target.object ?? await env.SITES.get(target.key);
       if (!obj || !("body" in obj)) return null;
       const source = await readMarkdownSource(obj as R2ObjectBody);
-      const index = target.docIndex ?? await loadDocIndexCached(env, ctx, username, siteId, gen);
+      const index = target.docIndex ?? await loadDocIndexCached(env, ctx, username, siteId, gen, cacheable);
       return renderDoc(siteId, target.relPath, source, index);
     });
   }
@@ -309,7 +314,7 @@ export async function handleSite(
     const value = req.headers.get(name);
     if (value !== null) cacheHeaders.set(name, value);
   }
-  const hit = await cache.match(new Request(cacheReq, { headers: cacheHeaders }));
+  const hit = cacheable ? await cache.match(new Request(cacheReq, { headers: cacheHeaders })) : undefined;
   // Older generations may still have entries written before these headers were
   // stored. Let R2 evaluate a condition the legacy cache entry cannot answer.
   const supportsConditions = hit &&
@@ -368,7 +373,7 @@ export async function handleSite(
   }
   h.set("accept-ranges", "bytes");
 
-  if (!conditional && status === 200 && bodyObj.size <= CACHE_MAX_BYTES) {
+  if (cacheable && !conditional && status === 200 && bodyObj.size <= CACHE_MAX_BYTES) {
     const [served, stored] = bodyObj.body.tee();
     const cacheHeaders = new Headers(h);
     cacheHeaders.set("cache-control", IMMUTABLE_CACHE);

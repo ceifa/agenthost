@@ -15,9 +15,8 @@ export interface SiteMeta {
   keyHash?: string; // sha256 of a key minted before keys were stored; gone on rotate
   public: boolean;
   tombstone?: boolean; // takedown marker → serve 410
-  // Presigned uploads not yet completed, by path. Their bytes count against
-  // the quota until completed or swept.
-  pending?: Record<string, { bytes: number; expiresAt: number }>;
+  // Reserve quota until a read observes a new R2 version or the reservation expires.
+  pending?: Record<string, { bytes: number; expiresAt: number; previous?: { version: string; bytes: number } }>;
 }
 
 export interface UserRecord {
@@ -111,6 +110,36 @@ export async function listAll(b: R2Bucket, prefix: string): Promise<R2Object[]> 
   return out;
 }
 
+export async function reconcileUploads(b: R2Bucket, username: string, siteId: string, meta: SiteMeta, now = Date.now(), listed?: R2Object[]): Promise<SiteMeta> {
+  if (!meta.pending || !Object.keys(meta.pending).length) return meta;
+  const objects = listed ?? await listAll(b, sitePrefix(username, siteId));
+  const byKey = new Map(objects.map(o => [o.key, o]));
+  const pending = { ...meta.pending };
+  let changed = false;
+  let uploaded = false;
+  for (const [path, reservation] of Object.entries(pending)) {
+    const object = byKey.get(siteFileKey(username, siteId, path));
+    const arrived = !!object && object.version !== reservation.previous?.version;
+    if (arrived || reservation.expiresAt <= now) {
+      delete pending[path];
+      changed = true;
+      uploaded ||= arrived;
+    }
+  }
+  if (!changed) return meta;
+  const next: SiteMeta = {
+    ...meta,
+    generation: meta.generation + 1,
+    lastDeployAt: uploaded ? now : meta.lastDeployAt,
+    bytes: objects.reduce((total, o) => total + o.size, 0),
+    fileCount: objects.length,
+    pending,
+  };
+  if (!Object.keys(pending).length) delete next.pending;
+  await putMeta(b, username, siteId, next);
+  return next;
+}
+
 export interface RecordPage<T> { items: T[]; cursor?: string }
 export interface SiteRecord { username: string; siteId: string; meta: SiteMeta }
 
@@ -163,8 +192,7 @@ export async function deleteKeys(b: R2Bucket, keys: string[]): Promise<void> {
   }
 }
 
-// A share's committed files out of a LIST of its prefix: uploads still in flight
-// land on their final key before they're completed, and don't count yet.
+// Keep pending paths out of publish's orphan deletion and the file index until reconciled.
 export function committedFiles(objects: R2Object[], username: string, siteId: string, meta: SiteMeta | null): R2Object[] {
   const pending = new Set(Object.keys(meta?.pending ?? {}).map(p => siteFileKey(username, siteId, p)));
   return objects.filter(o => !pending.has(o.key));
@@ -173,14 +201,17 @@ export function committedFiles(objects: R2Object[], username: string, siteId: st
 // Stored bytes plus uploads still reserved.
 export function shareUsage(meta: SiteMeta): number {
   let total = meta.bytes ?? 0;
-  for (const { bytes } of Object.values(meta.pending ?? {})) total += bytes;
+  for (const { bytes, previous } of Object.values(meta.pending ?? {})) total += Math.max(0, bytes - (previous?.bytes ?? 0));
   return total;
 }
 
 // Derived from each share's record — there is no mutable usage counter.
 export async function userUsage(b: R2Bucket, username: string, exceptSite?: string): Promise<number> {
   let total = 0;
-  for await (const { meta } of siteRecords(b, username, exceptSite)) total += shareUsage(meta);
+  for await (const { siteId, meta } of siteRecords(b, username, exceptSite)) {
+    const expired = Object.values(meta.pending ?? {}).some(p => p.expiresAt <= Date.now());
+    total += shareUsage(expired ? await reconcileUploads(b, username, siteId, meta) : meta);
+  }
   return total;
 }
 

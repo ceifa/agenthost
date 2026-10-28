@@ -6,8 +6,14 @@ import type { Env } from "../src/env";
 interface Stored { body: string; customMetadata?: Record<string, string>; httpMetadata?: R2HTTPMetadata }
 export function testBucket(pageSize = 1000) {
   const records = new Map<string, Stored>();
+  const versions = new WeakMap<Stored, string>();
+  let nextVersion = 0;
+  const version = (value: Stored) => {
+    if (!versions.has(value)) versions.set(value, String(++nextVersion));
+    return versions.get(value)!;
+  };
   const object = (key: string, value: Stored) => ({
-    key, size: new TextEncoder().encode(value.body).length,
+    key, version: version(value), size: new TextEncoder().encode(value.body).length,
     httpEtag: '"test-etag"', uploaded: new Date(0),
     customMetadata: value.customMetadata, httpMetadata: value.httpMetadata,
     writeHttpMetadata: (h: Headers) => { if (value.httpMetadata?.contentType) h.set("content-type", value.httpMetadata.contentType); },
