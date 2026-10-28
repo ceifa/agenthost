@@ -14,7 +14,7 @@ Paths are relative to `https://agenthost.page/` (so `PUT https://agenthost.page/
 | `DELETE /shares/{id}` | Delete the share and all its files. |
 | `DELETE /shares/{id}/files/{path}` | Delete one file (percent-encode the path). |
 | `POST /shares/{id}/uploads` | Reserve a large-file upload. |
-| `POST /shares/{id}/uploads/complete?path={path}` | Commit it (returned as `completeUrl`). |
+| `POST /shares/{id}/uploads/complete` | Commit it. |
 | `PATCH /account` | `{"email": "you@example.com"}` sets a recovery/abuse contact. |
 
 `id` is lowercased and reduced to `[a-z0-9._-]`, at most 32 characters.
@@ -45,9 +45,9 @@ Response:
 
 ### Uploads
 
-1. `POST /shares/{id}/uploads` with `{"path": "media/demo.mp4", "bytes": <exact size>, "contentType": "video/mp4"}` (`contentType` optional; guessed from the extension). Returns `uploadUrl`, `uploadHeaders`, `uploadExpiresIn`, `completeUrl` and the share's `url`.
+1. `POST /shares/{id}/uploads` with `{"path": "media/demo.mp4", "bytes": <exact size>, "contentType": "video/mp4"}` (`contentType` optional; guessed from the extension). Returns `uploadUrl`, `uploadHeaders`, `uploadExpiresIn` and the share's `url`.
 2. `PUT` the file to `uploadUrl` within `uploadExpiresIn` seconds, sending every `uploadHeaders` entry as is. Anything else fails the signature.
-3. `POST` to `completeUrl` with the owner token and no body. Returns `{ url, id, path, bytes, fileCount }`.
+3. `POST /shares/{id}/uploads/complete` with `{"path": "media/demo.mp4"}`. Returns `{ url, id, path, bytes, fileCount }`.
 
 The reserved bytes count against the account until completed. A size mismatch deletes the upload; one never completed is discarded after a day. A `PUT` that replaces the share leaves uploads in flight alone.
 

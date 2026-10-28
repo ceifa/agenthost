@@ -54,7 +54,8 @@ curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
 curl -s --upload-file demo.mp4 -H 'content-type: <…>' '<uploadUrl>'
 
 # 3. complete
-curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" '<completeUrl>'
+curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
+  --data '{"path":"demo.mp4"}' https://agenthost.page/shares/demo/uploads/complete
 ```
 
 An upload not completed within a day is discarded.

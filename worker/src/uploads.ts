@@ -71,11 +71,8 @@ export async function createUpload(c: AppContext): Promise<Response> {
   }
   pending[path] = { bytes, expiresAt: now + UPLOAD_EXPIRY_MS };
   await putMeta(c.env.SITES, owner.username, id, { ...meta, pending });
-  const completeUrl = new URL(`/shares/${id}/uploads/complete`, c.req.url);
-  completeUrl.searchParams.set("path", path);
   return c.json({
     uploadUrl: upload.url,
-    completeUrl: completeUrl.href,
     uploadHeaders: upload.headers,
     uploadExpiresIn: upload.expiresIn,
     url: metaUrl(siteHost(owner.username, id, c.env.APEX_HOST), meta),
@@ -86,7 +83,7 @@ export async function completeUpload(c: AppContext): Promise<Response> {
   const share = await ownedShare(c);
   if (share instanceof Response) return share;
   const { owner, id, meta } = share;
-  const path = uploadPath(c.req.query("path"));
+  const path = uploadPath((await readJson(c))?.path);
   const reserved = path ? meta.pending?.[path] : undefined;
   if (!path || !reserved) return c.json({ error: "no pending upload at that path" }, 404);
 

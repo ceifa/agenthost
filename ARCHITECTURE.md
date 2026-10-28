@@ -262,14 +262,13 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
    per-file cap and the share/account budget — a file already at `path` is replaced, so its
    size is credited back — records `pending[path] = {bytes, expiresAt}` on the share record
    (creating the share if new), and returns a 15-minute presigned PUT for the file's final
-   key with exact signed `Content-Length` and `Content-Type`, plus a `completeUrl` identifying
-   the reserved path.
+   key with exact signed `Content-Length` and `Content-Type`.
 2. The caller PUTs the payload **directly to `<account>.r2.cloudflarestorage.com`**. No bytes
    cross the Worker. The signed length keeps the URL from exceeding the reservation; the URL
    is scoped to one key.
-3. A body-free `POST` to `completeUrl` (`/shares/{id}/uploads/complete?path=…`) checks the
-   object's size (a mismatch deletes it), recounts the tree from one LIST, drops the
-   reservation and bumps the generation. It still requires the owner token.
+3. `POST /shares/{id}/uploads/complete` `R2.head`s the object, checks its size (a mismatch
+   deletes it), recounts the tree from one LIST, drops the reservation and bumps the
+   generation.
 
 The PUT lands on the live key, before completion. A reader who misses the cache in that
 window gets the new file a little early — the same non-atomic window publish already
