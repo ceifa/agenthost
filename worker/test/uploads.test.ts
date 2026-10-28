@@ -98,6 +98,14 @@ describe("uploads into a share", () => {
     expect((await f.call("POST", "/shares/demo/uploads/prepare/big.bin", { bytes: MAX_FILE_BYTES + 1 })).status).toBe(413);
   });
 
+  it("caps a paid account at 1 TB", async () => {
+    const f = await fixture();
+    f.json("_users/alice", { tokenHash: await sha256Hex("owner"), plan: "paid", createdAt: 0 });
+    f.json("_sites/alice/other", { generation: 1, bytes: 1024 ** 4 - 10, fileCount: 1, public: true, createdAt: 0, lastDeployAt: 0 });
+    expect((await f.call("POST", "/shares/demo/uploads/prepare/a.bin", { bytes: 11 })).status).toBe(413);
+    expect((await f.call("POST", "/shares/demo/uploads/prepare/a.bin", { bytes: 10 })).status).toBe(200);
+  });
+
   it("lets one file take the whole account: plans cap storage, not shares or files", async () => {
     const f = await fixture();
     expect((await f.call("POST", "/shares/demo/uploads/prepare/all.bin", { bytes: LIMITS.free.perUser })).status).toBe(200);

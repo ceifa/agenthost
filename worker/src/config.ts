@@ -12,7 +12,7 @@ export interface PlanLimits {
 
 export const LIMITS: Record<"free" | "paid", PlanLimits> = {
   free: { perUser: 500 * MB, retentionDays: 15 },
-  paid: { perUser: Number.MAX_SAFE_INTEGER, retentionDays: null },
+  paid: { perUser: 1024 * GB, retentionDays: null },
 };
 
 // Same for every plan. Listing, docs navigation, the file index and orphan

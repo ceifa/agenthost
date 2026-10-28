@@ -552,7 +552,7 @@ Three tiers, friction-zero default, founder-gated upgrades:
 | Custom domain | — | `status.acme.com` (admin-registered) |
 | Publish / serve | full | full (identical) |
 | Retention | 15 days since last change | infinite |
-| Storage | 500 MB/account | ~unlimited |
+| Storage | 500 MB/account | 1 TB/account |
 
 - **Anonymous (default).** The first `PUT` returns `ownerToken` once (only the secret's
   hash is stored). Every later call sends `Authorization: Bearer <ownerToken>`. Token loss
@@ -594,7 +594,7 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
 
 | Limit | Free | Paid |
 |---|---|---|
-| **Storage per account** | **500 MB** | effectively unlimited |
+| **Storage per account** | **500 MB** | **1 TB** |
 | **Retention** | **15 days** since last change | **infinite** |
 
 Plans differ only in what costs us money: storage and how long it's kept. Per-file and
