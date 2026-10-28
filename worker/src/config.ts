@@ -7,12 +7,12 @@ export const GB = 1024 * MB;
 // and files is the account's business.
 export interface PlanLimits {
   perUser: number;
-  retentionDays: number | null; // days since last deploy before the sweep deletes; null = infinite
+  retentionDays: number; // days since last deploy before the sweep deletes
 }
 
 export const LIMITS: Record<"free" | "paid", PlanLimits> = {
   free: { perUser: 500 * MB, retentionDays: 15 },
-  paid: { perUser: 1024 * GB, retentionDays: null },
+  paid: { perUser: 1024 * GB, retentionDays: 365 },
 };
 
 // Same for every plan. Listing, docs navigation, the file index and orphan

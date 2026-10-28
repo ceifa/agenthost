@@ -1,5 +1,5 @@
 // Nightly retention sweep. Delete shares whose last publish is older than their
-// plan's retention window (retentionDays: null = infinite, never swept), drop
+// plan's retention window, drop
 // uploads never completed, then free accounts left with nothing once they are
 // old enough.
 
@@ -31,7 +31,7 @@ export async function runRetentionSweep(env: Env, now: number): Promise<SweepRes
     let kept = 0;
     for await (const { siteId, meta } of siteRecords(env.SITES, username)) {
       checked++;
-      if (days !== null && now - meta.lastDeployAt > days * DAY_MS) {
+      if (now - meta.lastDeployAt > days * DAY_MS) {
         await deleteSite(env.SITES, username, siteId);
         recordDelete(`${username}/${siteId}`);
         continue;

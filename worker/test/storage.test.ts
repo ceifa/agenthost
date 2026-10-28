@@ -89,6 +89,19 @@ describe("admin and retention", () => {
     expect(f.put).not.toHaveBeenCalled();
   });
 
+  it("keeps a paid share for a year after its last change, then deletes it", async () => {
+    const f = testBucket();
+    f.json("_users/d", { ...user, plan: "paid" });
+    f.json("_sites/d/old", meta);
+    f.records.set("sites/d/old/index.html", { body: "old" });
+    await runRetentionSweep(f.env, 365 * 86400000);
+    expect(f.records.has("_sites/d/old")).toBe(true);
+    await runRetentionSweep(f.env, 366 * 86400000);
+    expect(f.records.has("_sites/d/old")).toBe(false);
+    expect(f.records.has("sites/d/old/index.html")).toBe(false);
+    expect(f.records.has("_users/d")).toBe(true);
+  });
+
   it("deletes free accounts left empty after 90 days and keeps paid, young or non-empty ones", async () => {
     const f = testBucket(1);
     const now = 91 * 86400000;

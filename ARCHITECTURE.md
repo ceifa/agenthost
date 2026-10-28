@@ -551,7 +551,7 @@ Three tiers, friction-zero default, founder-gated upgrades:
 | URL | `{auto}-{id}.agenthost.page` | + **custom username** |
 | Custom domain | — | `status.acme.com` (admin-registered) |
 | Publish / serve | full | full (identical) |
-| Retention | 15 days since last change | infinite |
+| Retention | 15 days since last change | 1 year since last change |
 | Storage | 500 MB/account | 1 TB/account |
 
 - **Anonymous (default).** The first `PUT` returns `ownerToken` once (only the secret's
@@ -595,7 +595,7 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
 | Limit | Free | Paid |
 |---|---|---|
 | **Storage per account** | **500 MB** | **1 TB** |
-| **Retention** | **15 days** since last change | **infinite** |
+| **Retention** | **15 days** since last change | **1 year** since last change |
 
 Plans differ only in what costs us money: storage and how long it's kept. Per-file and
 per-share byte caps went away — with an account quota they only decided how the owner may
@@ -615,10 +615,9 @@ both until it completes: briefly conservative, never under.
 
 ### Retention sweep (cron)
 
-A **Cron Trigger** on the same Worker runs nightly and deletes free-tier shares whose
-`lastDeployAt` is older than 15 days — keeping R2 from bloating with abandoned shares.
-Any write resets the clock. **Paid users (`plan === "paid"`) are skipped — infinite
-retention.** Deleting a share = `R2.list` its prefix + delete all keys and its record.
+A **Cron Trigger** on the same Worker runs nightly and deletes shares whose
+`lastDeployAt` is older than their plan's retention (15 days free, 1 year paid), keeping R2
+from bloating with abandoned shares. Any write resets the clock. Deleting a share = `R2.list` its prefix + delete all keys and its record.
 Uploads reserved more than a day ago and never completed are deleted, with whatever
 landed at their path, on every plan. A free account whose `createdAt` is older than 90 days
 and has no share left after the pass loses its `_users/{username}` record too; its owner
