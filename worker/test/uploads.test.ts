@@ -27,6 +27,12 @@ describe("direct R2 upload signing", () => {
     expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("content-length;host");
     expect(signed.headers).toEqual({ "content-length": "757603783" });
   });
+
+  it("also signs a content type the caller forced", async () => {
+    const signed = await signDirectUpload(r2 as Env, "sites/user/demo/video.bin", { bytes: 4, contentType: "video/webm", expiresIn: 900 });
+    expect(new URL(signed.url).searchParams.get("X-Amz-SignedHeaders")).toBe("content-length;content-type;host");
+    expect(signed.headers).toEqual({ "content-length": "4", "content-type": "video/webm" });
+  });
 });
 
 async function fixture() {
@@ -66,6 +72,14 @@ describe("uploads into a share", () => {
     expect(meta).toMatchObject({ generation: 4, bytes: 6, fileCount: 2 });
     expect(meta.pending).toBeUndefined();
     expect((await f.call("POST", "/shares/demo/uploads/complete/media/video.mp4")).status).toBe(404);
+  });
+
+  it("signs a forced content type and refuses a malformed one", async () => {
+    const f = await fixture();
+    const res = await f.call("POST", "/shares/demo/uploads/prepare/clip.bin", { bytes: 4, contentType: "Video/WebM" });
+    expect((await res.json<{ uploadHeaders: Record<string, string> }>()).uploadHeaders).toEqual({ "content-length": "4", "content-type": "video/webm" });
+    expect((await f.call("POST", "/shares/demo/uploads/prepare/other.bin", { bytes: 4, contentType: "not a type" })).status).toBe(400);
+    expect((await getMeta(f.bucket, "alice", "demo"))!.pending).not.toHaveProperty(["other.bin"]);
   });
 
   it("names the file only in the URL, encoded like any other path", async () => {

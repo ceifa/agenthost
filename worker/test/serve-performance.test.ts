@@ -8,7 +8,7 @@ import type { SiteMeta } from "../src/storage";
 const prefix = "sites/u/docs/";
 const controlKeys = ["_sites/u/docs"];
 
-function fixture(files: Record<string, string>) {
+function fixture(files: Record<string, string>, types: Record<string, string> = {}) {
   const meta: Omit<SiteMeta, "bytes" | "fileCount" | "createdAt"> = { generation: 1, lastDeployAt: 1, public: true, tombstone: false };
   const objects = new Map(Object.entries(files).map(([path, body]) => [prefix + path, body]));
   const cacheEntries = new Map<string, Response>();
@@ -39,12 +39,12 @@ function fixture(files: Record<string, string>) {
         size: new TextEncoder().encode(content).length,
         httpEtag: '"fixture-etag"',
         uploaded: new Date("2026-01-01T00:00:00Z"),
-        writeHttpMetadata: (headers: Headers) => headers.set("content-type", "text/plain"),
+        writeHttpMetadata: (headers: Headers) => { if (types[key.slice(prefix.length)]) headers.set("content-type", types[key.slice(prefix.length)]!); },
       };
     }),
     head: vi.fn(async (key: string) => {
       const content = objects.get(key);
-      return content === undefined ? null : { key, size: content.length, httpEtag: '"fixture-etag"', uploaded: new Date("2026-01-01T00:00:00Z"), writeHttpMetadata: (headers: Headers) => headers.set("content-type", "text/plain") };
+      return content === undefined ? null : { key, size: content.length, httpEtag: '"fixture-etag"', uploaded: new Date("2026-01-01T00:00:00Z"), writeHttpMetadata: (headers: Headers) => { if (types[key.slice(prefix.length)]) headers.set("content-type", types[key.slice(prefix.length)]!); } };
     }),
     list: vi.fn(async () => ({ objects: [...objects].map(([key, body]) => ({ key, size: body.length })), truncated: false })),
   };
@@ -332,13 +332,18 @@ describe("shares without a page of their own", () => {
     await g.settle();
   });
 
-  it("serves a file with the type of its extension, whatever the upload stored", async () => {
-    const f = fixture({ "demo.mp4": "data", "app.css": "body{}" });
-    expect((await f.request("/demo.mp4")).headers.get("content-type")).toBe("video/mp4");
-    expect((await f.request("/app.css")).headers.get("content-type")).toBe("text/css; charset=utf-8");
-    await f.settle();
-    expect((await f.request("/demo.mp4")).headers.get("content-type")).toBe("video/mp4");
-    await f.settle();
+  it("serves the stored type, falling back to the extension when an upload stored none", async () => {
+    const f = fixture(
+      { "forced.mp4": "data", "none.mp4": "data", "generic.mp4": "data" },
+      { "forced.mp4": "video/webm", "generic.mp4": "application/octet-stream" },
+    );
+    for (const [path, type] of [["forced.mp4", "video/webm"], ["none.mp4", "video/mp4"], ["generic.mp4", "video/mp4"]]) {
+      expect((await f.request(`/${path}`)).headers.get("content-type")).toBe(type);
+      await f.settle();
+      // Same answer from the edge cache.
+      expect((await f.request(`/${path}`)).headers.get("content-type")).toBe(type);
+      await f.settle();
+    }
   });
 
   it("lists files on a site that only lacks an index.html", async () => {

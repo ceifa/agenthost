@@ -33,6 +33,12 @@ export async function createUpload(c: AppContext): Promise<Response> {
   if (typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes <= 0) {
     return c.json({ error: "bytes must be a positive integer" }, 400);
   }
+  // Optional: without it the file is served with the type of its extension.
+  const contentType = body.contentType;
+  if (contentType !== undefined && (typeof contentType !== "string" || contentType.length > 120 ||
+      !/^[\w.+-]+\/[\w.+-]+(?:\s*;\s*[\w.+-]+=[\w.+-]+)*$/.test(contentType))) {
+    return c.json({ error: "contentType must be a MIME type" }, 400);
+  }
 
   const limits = LIMITS[owner.user.plan];
   if (bytes > MAX_FILE_BYTES) return c.json({ error: `file is ${bytes} bytes; max is ${MAX_FILE_BYTES}` }, 413);
@@ -60,7 +66,7 @@ export async function createUpload(c: AppContext): Promise<Response> {
 
   let upload;
   try {
-    upload = await signDirectUpload(c.env, key, { bytes, expiresIn: UPLOAD_URL_TTL_SECONDS });
+    upload = await signDirectUpload(c.env, key, { bytes, contentType: contentType?.toLowerCase(), expiresIn: UPLOAD_URL_TTL_SECONDS });
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "direct R2 uploads are not configured" }, 503);
   }

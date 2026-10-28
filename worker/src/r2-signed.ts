@@ -35,9 +35,10 @@ function objectUrl(env: Env, key: string): URL {
 export async function signDirectUpload(
   env: Env,
   key: string,
-  opts: { bytes: number; expiresIn: number },
+  opts: { bytes: number; contentType?: string; expiresIn: number },
 ): Promise<SignedUpload> {
-  const headers = { "content-length": String(opts.bytes) };
+  const headers: Record<string, string> = { "content-length": String(opts.bytes) };
+  if (opts.contentType) headers["content-type"] = opts.contentType;
   const url = objectUrl(env, key);
   url.searchParams.set("X-Amz-Expires", String(opts.expiresIn));
   const signed = await credentials(env).sign(url, {

@@ -173,8 +173,8 @@ overwrite-in-place/concurrent-publish quota limitations still apply.
 Per-file R2 `httpMetadata`:
 
 ```
-contentType   = guessed from extension at publish; serving always derives it from the
-                extension again, so a direct upload needs no Content-Type of its own
+contentType   = guessed from extension at publish; a direct upload stores one only when
+                the caller forced it, and serving falls back to the extension otherwise
 ```
 
 (Browser caching is handled at serve time with `no-cache` + `ETag`, not stored on the
@@ -264,12 +264,13 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
 
 ### 5.5 Presigned uploads
 
-1. `POST /shares/{id}/uploads/prepare/{path}` sends only `{bytes}`. The Worker checks the
+1. `POST /shares/{id}/uploads/prepare/{path}` sends only `{bytes, contentType?}`. The Worker checks the
    per-file cap and the share/account budget — a file already at `path` is replaced, so its
    size is credited back — records `pending[path] = {bytes, expiresAt}` on the share record
    (creating the share if new), and returns a 15-minute presigned PUT for the file's final
-   key. Only `Content-Length` is signed: `curl -T` sends it, so the caller copies no header
-   and can chain all three calls in one shell command without ever printing the URL.
+   key. Only `Content-Length` is signed, plus `Content-Type` when forced: `curl -T` sends the
+   length, so the usual caller copies no header and can chain all three calls in one shell
+   command without ever printing the URL.
 2. The caller PUTs the payload **directly to `<account>.r2.cloudflarestorage.com`**. No bytes
    cross the Worker. The signed length keeps the URL from exceeding the reservation; the URL
    is scoped to one key.

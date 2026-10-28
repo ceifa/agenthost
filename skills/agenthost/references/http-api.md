@@ -26,7 +26,7 @@ Paths are relative to `https://agenthost.page/`. Every call sends `Authorization
 
 `PUT /shares/{id}` replaces every file; `?mode=merge` keeps the ones the body doesn't carry. A tar (gzipped or not) is a folder. Anything else must be one document: Markdown is stored as `README.md`, HTML as `index.html`. `.DS_Store`, `._*` and directory entries are skipped.
 
-`PUT /shares/{id}/files/{path}` stores the body as is, a tar included; the extension sets the served type. `_gen` is reserved. Every file is served with the type of its extension.
+`PUT /shares/{id}/files/{path}` stores the body as is, a tar included; the extension sets the served type. `_gen` is reserved. Files are served with the type of their extension.
 
 Both answer:
 
@@ -45,8 +45,8 @@ Both answer:
 
 ### Uploads
 
-1. `POST /shares/{id}/uploads/prepare/media/demo.mp4` with `{"bytes": <exact size>}`. Returns `uploadUrl`, `uploadHeaders`, `uploadExpiresIn` and the share's `url`.
-2. `PUT` the file to `uploadUrl` within `uploadExpiresIn` seconds. The only signed header is `content-length`, which `curl -T` sets itself; a different size fails the signature.
+1. `POST /shares/{id}/uploads/prepare/media/demo.mp4` with `{"bytes": <exact size>}`. An optional `"contentType"` overrides the type of the extension; the `PUT` must then send it as `content-type`. Returns `uploadUrl`, `uploadHeaders`, `uploadExpiresIn` and the share's `url`.
+2. `PUT` the file to `uploadUrl` within `uploadExpiresIn` seconds.
 3. `POST /shares/{id}/uploads/complete/media/demo.mp4`, no body. Returns `{ url, id, path, bytes, fileCount }`.
 
 The reserved bytes count against the account until completed. A size mismatch deletes the upload; one never completed is discarded after a day. A `PUT` that replaces the share leaves uploads in flight alone.
