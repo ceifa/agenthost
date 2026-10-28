@@ -5,16 +5,9 @@
 import { LIMITS, MAX_FILE_BYTES, MAX_FILES, UPLOAD_EXPIRY_MS, UPLOAD_URL_TTL_SECONDS } from "./config";
 import { ownedShare, readJson, requireOwner, type AppContext } from "./auth";
 import { committedFiles, getMeta, listAll, putMeta, shareUsage, siteFileKey, sitePrefix, userUsage, RESERVED_FILE, type SiteMeta } from "./storage";
-import { clientIp, contentTypeFor, generateAccessKey, metaUrl, sanitizeSiteId, siteHost } from "./ids";
+import { clientIp, generateAccessKey, metaUrl, sanitizeSiteId, siteHost } from "./ids";
 import { routeFilePath, safePath } from "./publish";
 import { signDirectUpload } from "./r2-signed";
-
-function safeContentType(raw: unknown, path: string): string {
-  if (typeof raw === "string" && raw.length <= 120 && /^[\w.+-]+\/[\w.+-]+(?:\s*;\s*[\w.+-]+=[\w.+-]+)*$/.test(raw)) {
-    return raw.toLowerCase();
-  }
-  return contentTypeFor(path);
-}
 
 // The file path after /shares/{id}/uploads/{prepare|complete}/.
 function uploadPath(c: AppContext): string | null {
@@ -67,7 +60,7 @@ export async function createUpload(c: AppContext): Promise<Response> {
 
   let upload;
   try {
-    upload = await signDirectUpload(c.env, key, { bytes, contentType: safeContentType(body.contentType, path), expiresIn: UPLOAD_URL_TTL_SECONDS });
+    upload = await signDirectUpload(c.env, key, { bytes, expiresIn: UPLOAD_URL_TTL_SECONDS });
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "direct R2 uploads are not configured" }, 503);
   }

@@ -10,7 +10,7 @@ metadata:
   openclaw:
     emoji: "🚀"
     requires:
-      bins: [curl, tar]
+      bins: [curl, tar, jq]
 ---
 
 Plain `curl` and `tar` against `https://agenthost.page`. A share is one tree of files served at `https://{username}-{id}.agenthost.page`.
@@ -41,19 +41,14 @@ curl -s -X PUT --data-binary @chart.png -H "Authorization: Bearer $AGENTHOST_TOK
 
 ## Large files
 
-Bodies over ~100 MB are refused. Upload straight to storage, with the same path in all three calls:
+Bodies over ~100 MB are refused; those go straight to storage. Run this as one command, so the signed URL never has to be read or retyped:
 
 ```bash
-# 1. reserve the exact size in bytes
-curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" --data '{"bytes":757603783}' \
-  https://agenthost.page/shares/demo/uploads/prepare/demo.mp4
-
-# 2. within 15 min, with content-type from uploadHeaders
-curl -s --upload-file demo.mp4 -H 'content-type: <…>' '<uploadUrl>'
-
-# 3. commit; without it the file is discarded after a day
-curl -s -X POST -H "Authorization: Bearer $AGENTHOST_TOKEN" \
-  https://agenthost.page/shares/demo/uploads/complete/demo.mp4
+# reserve the exact size, PUT the file to the signed URL, then commit (uncommitted uploads are discarded after a day)
+F=demo.mp4 API=https://agenthost.page/shares/demo/uploads AUTH="Authorization: Bearer $AGENTHOST_TOKEN"
+R=$(curl -s -H "$AUTH" --data "{\"bytes\":$(wc -c < "$F")}" "$API/prepare/$F") &&
+curl -s --fail-with-body -T "$F" "$(printf '%s' "$R" | jq -er .uploadUrl || printf '%s\n' "$R" >&2)" &&
+curl -s -X POST -H "$AUTH" "$API/complete/$F"
 ```
 
 ## What to hand the human

@@ -332,6 +332,15 @@ describe("shares without a page of their own", () => {
     await g.settle();
   });
 
+  it("serves a file with the type of its extension, whatever the upload stored", async () => {
+    const f = fixture({ "demo.mp4": "data", "app.css": "body{}" });
+    expect((await f.request("/demo.mp4")).headers.get("content-type")).toBe("video/mp4");
+    expect((await f.request("/app.css")).headers.get("content-type")).toBe("text/css; charset=utf-8");
+    await f.settle();
+    expect((await f.request("/demo.mp4")).headers.get("content-type")).toBe("video/mp4");
+    await f.settle();
+  });
+
   it("lists files on a site that only lacks an index.html", async () => {
     const f = fixture({ "about.html": "<p>about</p>", "app.css": "body{}" });
     const res = await f.request();

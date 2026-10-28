@@ -335,7 +335,8 @@ export async function handleSite(
 
   const h = new Headers();
   obj.writeHttpMetadata(h);
-  if (!h.has("content-type")) h.set("content-type", contentTypeFor(target.relPath));
+  // The extension decides, not what a direct upload happened to send (or omit).
+  h.set("content-type", contentTypeFor(target.relPath));
   h.set("etag", obj.httpEtag);
   h.set("last-modified", obj.uploaded.toUTCString());
 

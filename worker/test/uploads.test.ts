@@ -17,14 +17,15 @@ const r2 = {
 
 describe("direct R2 upload signing", () => {
   it("signs an exact-size PUT straight to the file's key in R2", async () => {
-    const signed = await signDirectUpload(r2 as Env, "sites/user/demo/video.mp4", { bytes: 757_603_783, contentType: "video/mp4", expiresIn: 900 });
+    const signed = await signDirectUpload(r2 as Env, "sites/user/demo/video.mp4", { bytes: 757_603_783, expiresIn: 900 });
     const url = new URL(signed.url);
     expect(url.host).toBe("0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com");
     expect(url.pathname).toBe("/shares-bucket/sites/user/demo/video.mp4");
     expect(url.searchParams.get("X-Amz-Signature")).toMatch(/^[a-f0-9]{64}$/);
     // No content-disposition: the file opens inline unless a reader asks for ?download.
-    expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("content-length;content-type;host");
-    expect(signed.headers).toEqual({ "content-length": "757603783", "content-type": "video/mp4" });
+    // Only the length: `curl -T` sets it, so the upload needs no header copied by hand.
+    expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("content-length;host");
+    expect(signed.headers).toEqual({ "content-length": "757603783" });
   });
 });
 
@@ -46,7 +47,7 @@ describe("uploads into a share", () => {
     expect(res.status).toBe(200);
     const body = await res.json<{ uploadUrl: string; uploadHeaders: Record<string, string>; url: string }>();
     expect(new URL(body.uploadUrl).pathname).toBe("/shares-bucket/sites/alice/demo/video.mp4");
-    expect(body.uploadHeaders["content-type"]).toBe("video/mp4");
+    expect(body.uploadHeaders).toEqual({ "content-length": "4" });
     const meta = (await getMeta(f.bucket, "alice", "demo"))!;
     expect(body.url).toBe(`https://alice-demo.example.com/?k=${meta.accessKey}`);
     expect(meta).toMatchObject({ generation: 0, bytes: 0, fileCount: 0, public: false, pending: { "video.mp4": { bytes: 4 } } });
