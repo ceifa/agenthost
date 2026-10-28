@@ -37,7 +37,7 @@ curl -s -X PUT --data-binary @chart.png -H "Authorization: Bearer $AGENTHOST_TOK
 
 - `PUT /shares/{id}` **replaces every file**; `?mode=merge` keeps the ones the body doesn't carry. The same `id` keeps the same URL.
 - A file is named only by its URL path. Percent-encode spaces and accents.
-- `.md` files make a docs site: `README.md` is the home, `SUMMARY.md` sets the order. With no `index.html` or Markdown, `/` previews the single file or lists them all.
+- `.md` files make a docs site, with GFM and ` ```mermaid ` diagrams rendered: `README.md` is the home, `SUMMARY.md` sets the order. With no `index.html` or Markdown, `/` previews the single file or lists them all.
 
 ## Large files
 
