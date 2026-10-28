@@ -269,8 +269,7 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
    size is credited back — records `pending[path] = {bytes, expiresAt}` on the share record
    (creating the share if new), and returns a 15-minute presigned PUT for the file's final
    key. Only `Content-Length` is signed, plus `Content-Type` when forced: `curl -T` sends the
-   length, so the usual caller copies no header and can chain all three calls in one shell
-   command without ever printing the URL.
+   length, so the usual caller copies no header.
 2. The caller PUTs the payload **directly to `<account>.r2.cloudflarestorage.com`**. No bytes
    cross the Worker. The signed length keeps the URL from exceeding the reservation; the URL
    is scoped to one key.
