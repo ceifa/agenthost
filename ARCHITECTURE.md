@@ -554,7 +554,7 @@ Three tiers, friction-zero default, founder-gated upgrades:
 | URL | `{auto}-{id}.agenthost.page` | + **custom username** |
 | Custom domain | — | `status.acme.com` (admin-registered) |
 | Publish / serve | full | full (identical) |
-| Retention | 15 days without a visit or change | 1 year without a visit or change |
+| Retention | 15 days without a visit | 1 year without a visit |
 | Storage | 500 MB/account | 1 TB/account |
 
 - **Anonymous (default).** The first `PUT` returns `ownerToken` once (only the secret's
@@ -598,7 +598,7 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
 | Limit | Free | Paid |
 |---|---|---|
 | **Storage per account** | **500 MB** | **1 TB** |
-| **Retention** | **15 days** without a visit or change | **1 year** without a visit or change |
+| **Retention** | **15 days** without a visit | **1 year** without a visit |
 
 Plans differ only in what costs us money: storage and how long it's kept. Per-file and
 per-share byte caps went away — with an account quota they only decided how the owner may
