@@ -19,8 +19,6 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string; // your Access team, e.g. "acme" → https://acme.cloudflareaccess.com
   ACCESS_AUD?: string; // Access Application audience (AUD) tag from the dashboard
   DEV_MODE?: string; // "1" honors the ?__host= routing override — local dev only
-  // Custom domains need no bindings: the admin records a `_domains` mapping and
-  // completes routing + TLS once per domain in the dashboard (see domains.ts).
   // Per-IP rate limiters (Workers native binding; namespaces in wrangler.jsonc).
   // PUBLISH_LIMITER guards /publish (anonymous account minting is the main abuse
   // lever); ACCESS_LIMITER throttles wrong-key attempts on private sites.

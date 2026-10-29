@@ -12,9 +12,6 @@
   let renaming = $state(false);
   let newName = $state("");
   let busy = $state(false);
-  let domainFor = $state(null);
-  let domainHost = $state("");
-  let domainSetup = $state(null);
 
   const stored = $derived(sites.reduce((n, x) => n + x.bytes, 0));
   const query = () => "?username=" + encodeURIComponent(user.username);
@@ -80,27 +77,6 @@
     }
   }
 
-  function openDomain(s) {
-    domainFor = s.siteId;
-    domainHost = "";
-    domainSetup = null;
-  }
-
-  async function mapDomain(e) {
-    e.preventDefault();
-    busy = true;
-    try {
-      const d = await post("/domain", { host: domainHost, username: user.username, siteId: domainFor });
-      onchange({ customDomain: d.host });
-      domainSetup = { host: d.host, steps: d.provision?.steps ?? [] };
-      flash(`Added ${d.host}`);
-    } catch (e) {
-      flash(e.message, true);
-    } finally {
-      busy = false;
-    }
-  }
-
   const escape = (close) => (e) => e.key === "Escape" && close();
 
   load();
@@ -133,7 +109,6 @@
   <dl class="facts">
     <div><dt>Joined</dt><dd title={fmtDate(user.createdAt)}>{ago(user.createdAt)}</dd></div>
     <div><dt>Email</dt><dd>{#if user.email}<a href="mailto:{user.email}">{user.email}</a>{:else}<span class="dim">none</span>{/if}</dd></div>
-    <div><dt>Custom domain</dt><dd>{#if user.customDomain}<a href="https://{user.customDomain}" target="_blank" rel="noreferrer">{user.customDomain}</a>{:else}<span class="dim">none</span>{/if}</dd></div>
     <div><dt>Storage</dt><dd>{loading ? "…" : fmtBytes(stored)}{siteCursor ? "+" : ""}</dd></div>
   </dl>
 
@@ -157,7 +132,6 @@
             <span class="num">{s.fileCount}</span>
             <span title={fmtDate(s.lastDeployAt)}>{ago(s.lastDeployAt)}</span>
             <span class="acts">
-              <button onclick={() => openDomain(s)}>Add domain</button>
               {#if s.tombstone}
                 <button onclick={() => takedown(s, false)}>Restore</button>
               {:else}
@@ -165,26 +139,6 @@
               {/if}
             </span>
           </div>
-          {#if domainFor === s.siteId}
-            <div class="drawer">
-              {#if domainSetup}
-                <p><b>{domainSetup.host}</b> now serves {s.siteId}. Finish the one-time setup in the Cloudflare dashboard:</p>
-                <ol>{#each domainSetup.steps as step}<li>{step}</li>{/each}</ol>
-                <button onclick={() => (domainFor = null)}>Done</button>
-              {:else}
-                <form class="inline" onsubmit={mapDomain}>
-                  <!-- svelte-ignore a11y_autofocus -->
-                  <input bind:value={domainHost} placeholder="status.example.com" aria-label="Custom domain" required autofocus
-                    onkeydown={escape(() => (domainFor = null))} />
-                  <button class="primary" disabled={busy}>{busy ? "Adding…" : "Add domain"}</button>
-                  <button type="button" onclick={() => (domainFor = null)}>Cancel</button>
-                  <p class="hint">
-                    {#if user.customDomain}Replaces {user.customDomain}, the account's current domain.{:else}One custom domain per account.{/if}
-                  </p>
-                </form>
-              {/if}
-            </div>
-          {/if}
         {/each}
       </div>
       {#if siteCursor}<button class="more" disabled={paging} onclick={loadMore}>Load more shares</button>{/if}
@@ -232,11 +186,6 @@
 
   .tag { font: 500 11px var(--sans); color: var(--dim); border: 1px solid var(--line); padding: 1px 6px; margin-left: 8px; vertical-align: 1px; }
   .tag.red { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
-
-  .drawer { grid-column: 1 / -1; padding: 14px 10px 16px 22px; border-bottom: 1px solid var(--line); border-left: 2px solid var(--accent); background: var(--panel); font-size: 14px; }
-  .drawer p { margin: 0 0 8px; }
-  .drawer ol { margin: 0 0 12px; padding-left: 20px; color: var(--dim); }
-  .drawer li { margin: 4px 0; }
 
   .inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .inline input { width: 260px; }

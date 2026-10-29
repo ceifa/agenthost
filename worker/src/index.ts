@@ -2,14 +2,12 @@
 //   admin.agenthost.page            → admin (behind Cloudflare Access; JWT-verified)
 //   agenthost.page / www            → apex: landing (Static Assets) + /publish + owner API
 //   {username}-{siteId}.agenthost.page → hosted site (split on the first hyphen)
-//   any other host                   → custom domain → _domains lookup → hosted site
 // Plus a nightly scheduled() retention sweep.
 
 import type { Env } from "./env";
 import { apexApp } from "./apex";
 import { handleAdmin } from "./admin";
 import { handleSite } from "./serve";
-import { getDomain, type DomainRecord } from "./storage";
 import { runRetentionSweep } from "./sweep";
 
 function resolveHost(req: Request, env: Env, url: URL): string {
@@ -22,19 +20,6 @@ function resolveHost(req: Request, env: Env, url: URL): string {
     return env.APEX_HOST.toLowerCase();
   }
   return host;
-}
-
-// Custom-domain mappings change rarely but are checked on every request for a
-// mapped host — a short per-isolate cache keeps R2 off that hot path.
-const DOMAIN_CACHE_TTL_MS = 60_000;
-const domainCache = new Map<string, { rec: DomainRecord | null; expires: number }>();
-
-async function lookupDomain(env: Env, host: string): Promise<DomainRecord | null> {
-  const hit = domainCache.get(host);
-  if (hit && hit.expires > Date.now()) return hit.rec;
-  const rec = await getDomain(env.SITES, host);
-  domainCache.set(host, { rec, expires: Date.now() + DOMAIN_CACHE_TTL_MS });
-  return rec;
 }
 
 export default {
@@ -68,12 +53,6 @@ export default {
       const username = sub.slice(0, dash);
       const siteId = sub.slice(dash + 1);
       return handleSite(req, env, ctx, username, siteId, host);
-    }
-
-    // Custom domain → serve its mapped site (siteId no longer rides the path).
-    const dom = await lookupDomain(env, host);
-    if (dom) {
-      return handleSite(req, env, ctx, dom.username, dom.siteId, host);
     }
 
     return new Response("not found", { status: 404 });
