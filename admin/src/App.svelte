@@ -17,8 +17,7 @@
     const q = search.trim().toLowerCase();
     if (!q) return filtered;
     if (target?.username) return filtered.filter((u) => u.username === target.username);
-    if (target?.host) return filtered.filter((u) => u.customDomain === target.host);
-    return filtered.filter((u) => [u.username, u.email, u.customDomain].some((v) => v?.toLowerCase().includes(q)));
+    return filtered.filter((u) => [u.username, u.email].some((v) => v?.toLowerCase().includes(q)));
   });
   const narrowed = $derived(!!search || sharesOnly);
   const user = $derived(users.find((u) => u.username === selected));
@@ -99,7 +98,7 @@
           <button class="row" class:on={u.username === selected} onclick={() => select(u.username)}>
             <span class="name">{u.username}</span>
             {#if u.plan === "paid"}<span class="paid">paid</span>{/if}
-            <span class="sub">{u.customDomain ?? u.email ?? `joined ${ago(u.createdAt)}`}</span>
+            <span class="sub">{u.email ?? `joined ${ago(u.createdAt)}`}</span>
           </button>
         </li>
       {/each}

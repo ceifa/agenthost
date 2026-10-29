@@ -15,14 +15,12 @@ import {
   putUser,
   getMeta,
   putMeta,
-  putDomain,
   userSitesPrefix,
   userKey,
   mapBounded,
   owners,
 } from "./storage";
 import { isValidUsername } from "./ids";
-import { customDomainHost, customDomainSetup } from "./domains";
 
 const api = new Hono<{ Bindings: Env }>();
 
@@ -39,7 +37,6 @@ api.get("/users", async (c) => {
     username,
     plan: user.plan,
     email: user.email,
-    customDomain: user.customDomain,
     createdAt: user.createdAt,
     hasShares: shareOwners.has(username),
   }));
@@ -117,21 +114,6 @@ api.post("/takedown", async (c) => {
   meta.tombstone = tombstone;
   await putMeta(c.env.SITES, username, siteId, meta);
   return c.json({ ok: true, username, siteId, tombstone });
-});
-
-api.post("/domain", async (c) => {
-  const body = await readFields(c, "host", "username", "siteId");
-  if (!body) return c.json({ error: "host, username, siteId required" }, 400);
-  const { username, siteId } = body;
-  const host = customDomainHost(body.host, c.env.APEX_HOST);
-  if (!host) return c.json({ error: `invalid custom domain: ${body.host}` }, 400);
-  const user = await getUser(c.env.SITES, username);
-  if (!user) return c.json({ error: "unknown username" }, 404);
-
-  await putDomain(c.env.SITES, host, { username, siteId });
-  await putUser(c.env.SITES, username, { ...user, customDomain: host });
-  const provision = customDomainSetup(host);
-  return c.json({ ok: true, host, username, siteId, provision });
 });
 
 const app = new Hono<{ Bindings: Env }>();

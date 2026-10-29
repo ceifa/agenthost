@@ -27,7 +27,7 @@ export function parseHost(input) {
   let host;
   try { host = new URL(input.includes("://") ? input : "https://" + input).hostname; }
   catch { return null; }
-  if (!host.endsWith("." + APEX)) return { host };
+  if (!host.endsWith("." + APEX)) return null;
   const label = host.slice(0, -APEX.length - 1);
   if (label.includes(".")) return null;
   const i = label.indexOf("-");

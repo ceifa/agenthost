@@ -24,13 +24,7 @@ export interface UserRecord {
   tokenHash: string; // sha256(ownerToken); the secret itself is never stored
   email?: string; // optional, unverified contact (set on claim)
   plan: "free" | "paid";
-  customDomain?: string;
   createdAt: number;
-}
-
-export interface DomainRecord {
-  username: string;
-  siteId: string;
 }
 
 export const siteFileKey = (u: string, s: string, path: string) => `sites/${u}/${s}/${path}`;
@@ -41,7 +35,6 @@ export const userKey = (u: string) => `_users/${u}`;
 // An empty object whose upload time is the share's last visit. Kept apart from
 // the share record so a visit never races a publish's read-modify-write.
 export const visitKey = (u: string, s: string) => `_visits/${u}/${s}`;
-export const domainKey = (host: string) => `_domains/${host}`;
 
 // The live-reload probe answers /_gen, so a published file there could never be served.
 export const RESERVED_FILE = (path: string) => path === "_gen";
@@ -67,8 +60,6 @@ export const getMeta = (b: R2Bucket, u: string, s: string) => getJson<SiteMeta>(
 export const putMeta = (b: R2Bucket, u: string, s: string, meta: SiteMeta) => putJson(b, metaKey(u, s), meta);
 export const getUser = (b: R2Bucket, u: string) => getJson<UserRecord>(b, userKey(u));
 export const putUser = (b: R2Bucket, u: string, rec: UserRecord) => putJson(b, userKey(u), rec);
-export const getDomain = (b: R2Bucket, host: string) => getJson<DomainRecord>(b, domainKey(host));
-export const putDomain = (b: R2Bucket, host: string, rec: DomainRecord) => putJson(b, domainKey(host), rec);
 
 export async function* objectPages(b: R2Bucket, prefix: string): AsyncGenerator<R2Objects> {
   let cursor: string | undefined;

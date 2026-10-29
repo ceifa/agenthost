@@ -52,9 +52,7 @@
     // (403); the public publish/serve flow works without them.
     // DEV_MODE is intentionally NOT set here — set it only in .dev.vars locally.
   }
-  // Cloudflare Access (admin auth) is configured in the dashboard. Custom domains
-  // need no paid Cloudflare for SaaS: the admin records a `_domains` mapping and
-  // adds the domain as a zone + Worker Custom Domain in the dashboard (free TLS +
-  // routing) — see DEPLOYING.md §5. Per-IP rate limiting is in-code above (a
-  // dashboard WAF rule may still be layered on top as defense-in-depth).
+  // Cloudflare Access (admin auth) is configured in the dashboard. Per-IP rate
+  // limiting is in-code above (a dashboard WAF rule may still be layered on top
+  // as defense-in-depth).
 }

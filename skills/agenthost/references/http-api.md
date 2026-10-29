@@ -83,4 +83,4 @@ JSON `{ "error": "<message>" }`:
 
 Any plan: up to 1000 files per share and 5 GB per file. A single file sent without `Content-Length` is capped at 32 MB.
 
-Paid plans, custom usernames and custom domains are enabled by the operator, not self-serve.
+Paid plans and custom usernames are enabled by the operator, not self-serve.

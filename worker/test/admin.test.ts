@@ -1,10 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import worker from "../src/index";
+import { describe, expect, it } from "vitest";
 import { handleAdmin } from "../src/admin";
-import { getDomain, getUser } from "../src/storage";
 import { testBucket } from "./test-bucket";
-
-afterEach(() => vi.unstubAllGlobals());
 
 const user = { tokenHash: "x", plan: "free", createdAt: 0 };
 
@@ -18,7 +14,7 @@ function fixture() {
 }
 
 describe("admin request bodies", () => {
-  it.each(["plan", "rename", "takedown", "domain"])("answers a malformed %s body with 400, not a crash", async (path) => {
+  it.each(["plan", "rename", "takedown"])("answers a malformed %s body with 400, not a crash", async (path) => {
     const f = fixture();
     for (const body of ["{not json", "[]", "null", "{}"]) {
       const res = await f.post(path, body);
@@ -51,32 +47,5 @@ describe("account list", () => {
     const first = await flags();
     const second = await flags(first.cursor!);
     expect(Object.fromEntries([...first.users, ...second.users].map((u) => [u.username, u.hasShares]))).toEqual({ alice: true, bob: false, carol: true, dan: true });
-  });
-});
-
-describe("custom domains", () => {
-  it("stores the domain the way the Host router looks it up", async () => {
-    const f = fixture();
-    f.json("_sites/alice/docs", { generation: 1, public: true, lastDeployAt: 0 });
-    f.records.set("sites/alice/docs/index.html", { body: "<p>home</p>", httpMetadata: { contentType: "text/html" } });
-    const res = await f.post("domain", JSON.stringify({ host: " Status.Acme.COM. ", username: "alice", siteId: "docs" }));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ host: "status.acme.com" });
-    expect(await getDomain(f.bucket, "status.acme.com")).toEqual({ username: "alice", siteId: "docs" });
-    expect((await getUser(f.bucket, "alice"))!.customDomain).toBe("status.acme.com");
-
-    // A browser asking for STATUS.acme.com reaches the mapped site.
-    vi.stubGlobal("caches", { default: { match: async () => undefined, put: async () => {} } });
-    vi.stubGlobal("HTMLRewriter", class { on() { return this; } transform(r: Response) { return r; } });
-    const served = await worker.fetch(new Request("https://STATUS.acme.com/", { headers: { host: "STATUS.acme.com" } }), { ...f.env, DEV_MODE: "0" }, { waitUntil() {} } as unknown as ExecutionContext);
-    expect(served.status).toBe(200);
-    expect(await served.text()).toBe("<p>home</p>");
-  });
-
-  it.each(["not a host", "example.com", "docs.example.com", "-bad.com", "a..b.com", "localhost"])("refuses %s", async (host) => {
-    const f = fixture();
-    const res = await f.post("domain", JSON.stringify({ host, username: "alice", siteId: "docs" }));
-    expect(res.status).toBe(400);
-    expect(f.put).not.toHaveBeenCalled();
   });
 });

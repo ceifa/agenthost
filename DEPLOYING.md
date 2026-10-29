@@ -103,30 +103,7 @@ They ship as secrets so no operator's identity lives in the repo, and because
 secrets survive `wrangler deploy` untouched (dashboard-only *vars* would be wiped
 on the next deploy unless declared in config).
 
-## 5. Optional: custom domains (no paid tier needed)
-
-To let a user bring their own domain (`status.acme.com`), you don't need
-Cloudflare for SaaS. Serving is driven entirely by a `_domains/{host}` mapping in
-R2; getting the domain's traffic to the Worker and its TLS cert is a free,
-one-time dashboard step per domain that **you** (the admin) perform:
-
-1. **Add the domain as a zone** in your Cloudflare account (Free plan). Change its
-   nameservers at the registrar to the ones Cloudflare gives you. Universal SSL
-   then issues a certificate for it at no cost.
-2. **Attach this Worker as a Custom Domain**: in the Worker's *Settings → Domains
-   & Routes → Add Custom Domain*, enter the host (e.g. `status.acme.com`). This
-   creates the proxied DNS record and cert automatically.
-3. **Record the mapping** in the admin console (the "+ domain" button on a site,
-   which calls `POST /admin/api/domain`). The API response returns this same
-   checklist; serving starts working the moment the mapping is written and DNS/TLS
-   are live.
-
-The trade-off versus Cloudflare for SaaS: the customer's whole zone lives in
-*your* account (they delegate nameservers to you), so this suits a handful of
-admin-registered domains rather than thousands of self-serve ones. No API token
-or `wrangler.jsonc` change is required.
-
-## 6. Deploy
+## 5. Deploy
 
 ```bash
 pnpm install
@@ -137,7 +114,7 @@ pnpm run deploy
 copies them into `public/`, and runs one `wrangler deploy` that ships the Worker +
 both static bundles.
 
-## 7. Verify
+## 6. Verify
 
 ```bash
 # publish a one-file site
@@ -184,14 +161,12 @@ publish → serve loop runs offline against a fixture directory.
 | `ACCESS_AUD` | secret (`wrangler secret put`) | admin only | Access Application AUD tag. |
 | `DEV_MODE` | `.dev.vars` | local dev | `1` bypasses Access + enables `?__host=`. |
 
-Custom domains need no config or secrets — see §5 (dashboard-only setup).
-
 Tunable limits/quotas (account storage, retention, files per share, etc.) live in
 `worker/src/config.ts`.
 
 ## Control records
 
-Small JSON control records (`_users/`, `_sites/`, `_domains/`) live in
+Small JSON control records (`_users/`, `_sites/`) live in
 R2 `customMetadata.json` with empty bodies; inspection tools must read custom metadata,
 not the body. The Worker no longer reads the older layouts, so a bucket from before
 2026-10-18 needs its legacy records migrated before this Worker serves it.

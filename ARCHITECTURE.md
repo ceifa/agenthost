@@ -20,8 +20,8 @@ This document is the design the implementation follows — the **why** behind th
 3. **Cloudflare-native.** Lean on R2's strong read-after-write consistency instead of
    adding coordination primitives.
 4. **Cheap at low scale.** R2 has no egress fees — that is the entire serving economics.
-5. **Sane upgrade path.** Anonymous publish → optional paid features (custom username,
-   custom domain) enabled by the founder via an admin.
+5. **Sane upgrade path.** Anonymous publish → optional paid features (custom username)
+   enabled by the founder via an admin.
 
 The headline decision: **one Worker + one R2 bucket, and nothing else.** Everything that
 would normally need a coordination primitive is either solved by R2's strong
@@ -35,8 +35,7 @@ uniqueness-race that would otherwise need a Durable Object).
 **We use:**
 
 - **Workers** — the only compute. One script: routes by `Host`. Apex → landing / shares API.
-  `*.agenthost.page` → serve a share. `*.workers.dev` → admin (behind Access). Custom domain →
-  serve a site. One deploy.
+  `*.agenthost.page` → serve a share. `*.workers.dev` → admin (behind Access). One deploy.
 - **R2** — the only byte store. One bucket holds every file of every version of every
   site, plus tiny metadata objects. **Read-after-write is strongly consistent per object**
   — this is what lets us drop Durable Objects/KV.
@@ -47,10 +46,6 @@ uniqueness-race that would otherwise need a Durable Object).
   no purge API, no mixed assets.
 - **Cloudflare Access** — founder-only auth in front of the admin (`*.workers.dev` host).
   Zero auth code.
-- **Custom domains (no paid tier)** — bring-your-own-domain (`status.acme.com`) is a
-  free `_domains/{host}` mapping in R2 plus a one-time dashboard step: the admin adds
-  the domain as a zone and attaches the Worker as a Custom Domain (free routing + TLS).
-  No Cloudflare for SaaS. Trade-off: the customer's zone lives in the admin's account.
 - **Rate limiting** — per-IP Workers rate-limit bindings on publishes and uploads. No DO.
 - **Wildcard DNS + Worker route** — proxied `*` A-record (`192.0.2.1` dummy) + route
   `*.agenthost.page/*`. Free Universal SSL covers the **single-level** wildcard
@@ -91,10 +86,6 @@ https://{username}-{siteId}.agenthost.page/...
   One user hosts many sites, each on its own `{username}-{siteId}` subdomain. Combined length
   is capped (username ≤ 30, siteId ≤ 32) so the label fits the 63-octet DNS limit.
 
-**Custom domain.** `https://status.acme.com` maps to a specific site via a `_domains/{host}`
-record in R2. Routing + TLS come from adding the domain as a zone in the admin's account
-and attaching the Worker as a Custom Domain — no Cloudflare for SaaS, no fallback origin.
-
 ### Asset paths — the win of the subdomain scheme
 
 Because each site is the **root of its own subdomain**, both root-absolute and relative
@@ -119,7 +110,6 @@ sites/{username}/{siteId}/{path}        # a share's files, OVERWRITTEN IN PLACE 
 _sites/{username}/{siteId}             # { generation, createdAt, lastDeployAt, bytes, fileCount, accessKey, public, tombstone?, pending? }
 _visits/{username}/{siteId}            # empty; its upload time is the last visit (§9)
 _users/{username}                       # JSON, see below
-_domains/{host}                         # JSON: { username, siteId }  (paid custom domains)
 ```
 
 **A share is one tree of files.** A page, a docs folder, a single video and a dataset are
@@ -154,13 +144,12 @@ entries — globally, with no purge API. See §6.
   "tokenHash": "sha256(secret)",       // ownerToken is "{username}.{secret}"; the secret is never stored
   "email": "you@x.com",                // optional, unverified contact (PATCH /account)
   "plan": "free" | "paid",             // only the admin changes this
-  "customDomain": "status.acme.com",   // optional, admin-registered
   "createdAt": 1718800000
 }
 ```
 
-**Compact, directly listable metadata.** Small control records (shares, users and
-custom domains) store their JSON once in R2 `customMetadata.json` with an empty body.
+**Compact, directly listable metadata.** Small control records (shares and users)
+store their JSON once in R2 `customMetadata.json` with an empty body.
 `R2.list({ include: ["customMetadata"] })` returns these records without per-object GETs.
 Every record must fit R2's metadata limit; the free-form fields are the email (≤ 254
 characters) and pending upload paths (≤ 512 characters, at most one per file a share
@@ -296,7 +285,7 @@ the churn cost nothing.
 
 ## 6. Serve flow
 
-Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` enabled:
+Worker on `*.agenthost.page/*`, `run_worker_first` enabled:
 
 1. Parse `Host`:
    - apex `agenthost.page` / `www` → landing page + `/shares` API + `/llms.txt` (Static
@@ -304,8 +293,6 @@ Worker on `*.agenthost.page/*` (and custom-domain hosts), `run_worker_first` ena
    - `*.workers.dev` → admin surface, behind Cloudflare Access (§8).
    - `{username}-{siteId}.agenthost.page` → split on the **first** hyphen (usernames are
      hyphen-free) → `{username, siteId}`; it's a share request.
-   - any other host → look up `_domains/{host}` in R2 → `{username, siteId}` (paid custom
-     domain).
 2. The path, percent-decoded, is the file path within the share (`{rest}`); `siteId` came
    from the Host. Files are stored under their decoded names, so `/a%20b.pdf` is `a b.pdf`.
 3. Read the authoritative site record fresh: **one R2 GET** for generation, takedown and
@@ -364,11 +351,10 @@ These are operation counts, not production latency measurements. Run
 `pnpm -C worker exec vitest run test/serve-performance.test.ts` to check the budgets,
 generation invalidation, access changes, streaming, and conditional-cache delegation.
 
-**`noindex` on all shares.** Every response served from a user subdomain or custom
-domain carries `X-Robots-Tag: noindex, nofollow`. Hosted sites are never indexed — this
-protects the apex domain's search reputation from spam/phishing content. **Only the landing
-page** (apex `agenthost.page`) is indexable. There is no per-site opt-in to indexing in the
-MVP.
+**`noindex` on all shares.** Every response served from a user subdomain carries
+`X-Robots-Tag: noindex, nofollow`. Hosted sites are never indexed — this protects the
+apex domain's search reputation from spam/phishing content. **Only the landing page** (apex
+`agenthost.page`) is indexable. There is no per-site opt-in to indexing in the MVP.
 
 **`/llms.txt`** is served at the apex (`agenthost.page/llms.txt`) — a machine-readable
 description of how to publish, so any agent that lands on the domain can self-serve. (This
@@ -552,7 +538,6 @@ Three tiers, friction-zero default, founder-gated upgrades:
 | | **Free** | **Paid** (admin enables) |
 |---|---|---|
 | URL | `{auto}-{id}.agenthost.page` | + **custom username** |
-| Custom domain | — | `status.acme.com` (admin-registered) |
 | Publish / serve | full | full (identical) |
 | Retention | 15 days without a visit | 1 year without a visit |
 | Storage | 500 MB/account | 1 TB/account |
@@ -563,7 +548,7 @@ Three tiers, friction-zero default, founder-gated upgrades:
 - **Recovery email (optional, free).** `PATCH /account` attaches a recovery/abuse contact
   (unverified string in v1).
 - **Paid (founder enables via admin).** Custom username (rename, one `R2.head` collision
-  check) and/or custom domain (a `_domains` mapping + one-time dashboard zone/Custom Domain).
+  check).
   A rename keeps the token's secret but changes its prefix: the owner now sends
   `{newname}.{secret}`. The customer's URLs change anyway, so they have to be told either way;
   an alias record for the old name was rejected as permanent machinery for a rare,
@@ -583,8 +568,7 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
   email (`ALLOWED_ADMIN_EMAIL`). The Worker verifies the signed Access JWT
   (`Cf-Access-Jwt-Assertion`) as defense-in-depth — no hand-rolled auth.
 - **Operations** (all behind Access): list users/shares (`R2.list` on `_users/` and
-  `_sites/{username}/`), set `plan`, rename a username, attach a custom domain (writes
-  `_domains/{host}` + returns the dashboard checklist), and take down an abusive share. Each
+  `_sites/{username}/`), set `plan`, rename a username, and take down an abusive share. Each
   is a JSON edit in R2.
 - Scales fine on `R2.list` at low volume; D1 can back the admin later if listing grows —
   additive, never touches the hot path.
@@ -668,7 +652,7 @@ agenthost/
 ├─ pnpm-workspace.yaml
 ├─ turbo.json                   # build/deploy task graph across packages
 ├─ worker/                      # (2) THE BACKEND — the entire server (Hono on Workers)
-│  ├─ src/index.ts              # fetch entry: routes by Host ; apex→landing/API ; admin ; *→serve ; custom-domain→serve
+│  ├─ src/index.ts              # fetch entry: routes by Host ; apex→landing/API ; admin ; *→serve
 │  ├─ src/apex.ts               # the /shares REST API, /account, /llms.txt, /skill/
 │  ├─ src/publish.ts            # PUT /shares/{id}: streaming files → bounded R2 puts → orphans → metadata commit
 │  ├─ src/uploads.ts            # presigned uploads: quota reservation, exact-size signing, completion
