@@ -54,7 +54,7 @@ Steps 1 and 3 take the Authorization header. The file joins the share at /demo.m
 ## Notes
 - Shares are PRIVATE by default. Visitors of the url stay logged in via a cookie.
 - Free accounts store ${size(free.perUser)} across all shares. Any share: up to ${MAX_FILES} files, ${size(MAX_FILE_BYTES)} per file.
-- Free shares are deleted ${free.retentionDays} days after the last change. Hosted pages are noindex.
+- Free shares are deleted after ${free.retentionDays} days without a visit. Hosted pages are noindex.
 - Visibility, key rotation, deletes: https://${apexHost}/skill/references/http-api.md
 
 ## Install as a skill (optional — persist this contract)

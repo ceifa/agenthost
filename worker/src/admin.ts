@@ -93,12 +93,13 @@ api.post("/rename", async (c) => {
 
   await putUser(c.env.SITES, to, user);
   const objs = await listAll(c.env.SITES, userSitesPrefix(from));
-  const flat = await listAll(c.env.SITES, `_sites/${from}/`);
+  const flat = [...await listAll(c.env.SITES, `_sites/${from}/`), ...await listAll(c.env.SITES, `_visits/${from}/`)];
   // Copy in bounded batches — sequential round trips would crawl on big accounts.
   await mapBounded([...objs, ...flat], async (o) => {
     const body = await c.env.SITES.get(o.key);
     if (!body) return;
-    const newKey = o.key.startsWith("_sites/") ? o.key.replace(`_sites/${from}/`, `_sites/${to}/`) : o.key.replace(userSitesPrefix(from), userSitesPrefix(to));
+    const [root] = o.key.split("/", 1);
+    const newKey = `${root}/${to}/${o.key.slice(`${root}/${from}/`.length)}`;
     await c.env.SITES.put(newKey, body.body, { httpMetadata: body.httpMetadata, customMetadata: body.customMetadata });
   });
   await deleteKeys(c.env.SITES, [...objs, ...flat].map((o) => o.key));

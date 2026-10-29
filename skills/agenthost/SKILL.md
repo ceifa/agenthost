@@ -62,6 +62,6 @@ The `url` in the response, exactly as returned: it carries the access key (`?k=â
 
 ## Limits
 
-Free accounts store 500 MB across all shares, and a free share is deleted 15 days after its last write. Any plan: 1000 files per share, 5 GB per file.
+Free accounts store 500 MB across all shares, and a free share is deleted after 15 days without a visit. Any plan: 1000 files per share, 5 GB per file.
 
 Visibility, key rotation, deletes, recovery email, every field and error: [references/http-api.md](references/http-api.md).

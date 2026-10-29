@@ -6,7 +6,7 @@ import type { Env } from "./env";
 import { AUTH_COOKIE_PREFIX, CACHE_MAX_BYTES, RENDER_VERSION, LIVE } from "./config";
 import { sha256Hex, contentTypeFor, encodePath, shareUrl } from "./ids";
 import { checkAccessKey } from "./auth";
-import { committedFiles, getMeta, listAll, siteFileKey, sitePrefix } from "./storage";
+import { committedFiles, getMeta, listAll, siteFileKey, sitePrefix, visitKey } from "./storage";
 import { renderDoc, homeDoc, loadDocIndexCached, readMarkdownSource, type DocIndex } from "./markdown";
 import { shareWidget, liveScript, notFoundHtml, goneHtml, fileIndexHtml } from "./templates";
 
@@ -186,6 +186,26 @@ export function cacheKeyPath(
   return `${CACHE_HOST}/${username}/${siteId}/g${gen}${version}/${encodePath(target.relPath)}${raw ? "?raw" : ""}`;
 }
 
+// Retention counts from the last visit, so a reader opening a share keeps it.
+// One R2 write per share per day per colo: an isolate remembers what it already
+// recorded, and a day-keyed Cache API marker covers the other isolates in a colo.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const visited = new Set<string>();
+
+function recordVisit(env: Env, ctx: ExecutionContext, username: string, siteId: string): void {
+  const day = Math.floor(Date.now() / DAY_MS);
+  const id = `${day}/${username}/${siteId}`;
+  if (visited.has(id)) return;
+  if (visited.size > 10_000) visited.clear();
+  visited.add(id);
+  ctx.waitUntil((async () => {
+    const marker = new Request(`https://as-visits.internal/${id}`);
+    if (await caches.default.match(marker)) return;
+    await env.SITES.put(visitKey(username, siteId), "");
+    await caches.default.put(marker, new Response(null, { headers: { "cache-control": `public, s-maxage=${DAY_MS / 1000}` } }));
+  })().catch(() => visited.delete(id)));
+}
+
 export async function handleSite(
   req: Request,
   env: Env,
@@ -234,6 +254,8 @@ export async function handleSite(
     if (custom) return decorate(req.method === "HEAD" ? null : custom.body, { shareUrl: share, live, lastDeployAt: meta.lastDeployAt }, 404);
     return htmlResponse(notFoundHtml(), 404);
   }
+
+  recordVisit(env, ctx, username, siteId);
 
   const cache = caches.default;
   const cacheReq = new Request(cacheKeyPath(username, siteId, gen, target, asFile));
