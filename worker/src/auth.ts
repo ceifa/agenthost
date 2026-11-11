@@ -37,6 +37,8 @@ export async function verifyOwner(req: Request, env: Env): Promise<OwnerResult> 
   if (!user || !match) {
     return { ok: false, status: 403, error: "invalid owner token" };
   }
+  // Said only to the token's holder, so it tells nobody else the account exists.
+  if (user.suspended) return { ok: false, status: 403, error: "account suspended" };
   return { ok: true, ctx: { username, user } };
 }
 
@@ -102,10 +104,18 @@ export async function checkAccessKey(
   // Wrong key: throttle guessing before re-prompting. (The keyspace already
   // makes brute force infeasible; this also caps the invocation cost.)
   const limited = !!k && !(await env.ACCESS_LIMITER.limit({ key: `${clientIp(req)}:${gate.limiterKey}` })).success;
-  return new Response(interstitialHtml({ siteId: gate.label, apexHost: env.APEX_HOST, wrong: !!k }), {
+  return new Response(interstitialHtml({ siteId: gate.label, apexHost: env.APEX_HOST, wrong: !!k, abuse: abuseMailto(env, url.host) }), {
     status: limited ? 429 : 401,
     headers: { ...noindex, "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   });
+}
+
+// Where to report a share, when the operator has set a contact: a mailto with
+// the share's host already in the subject, so a report always names its target.
+export function abuseMailto(env: Env, shareHost?: string): string | null {
+  const email = env.ABUSE_EMAIL?.trim();
+  if (!email) return null;
+  return `mailto:${email}?subject=${encodeURIComponent(`Abuse report${shareHost ? `: ${shareHost}` : ""}`)}`;
 }
 
 // Admin auth: verify the *signed* Access JWT (Cf-Access-Jwt-Assertion), not the

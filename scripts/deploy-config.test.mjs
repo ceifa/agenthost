@@ -72,3 +72,10 @@ test("ZONE_NAME alone keeps the shipped apex", () => {
   assert.equal(config.vars.APEX_HOST, "agenthost.page");
   assert.deepEqual(config.routes[1], { pattern: "*.agenthost.page/*", zone_name: "parent.page" });
 });
+
+test("passes an abuse contact through to the Worker", () => {
+  const config = applyOverrides(shipped(), { ABUSE_EMAIL: "abuse@example.com" });
+  assert.equal(config.vars.ABUSE_EMAIL, "abuse@example.com");
+  assert.equal(config.vars.APEX_HOST, "agenthost.page");
+  assert.equal(shipped().vars.ABUSE_EMAIL, undefined);
+});

@@ -14,6 +14,7 @@ import {
   getUser,
   putUser,
   updateMeta,
+  siteRecords,
   userSitesPrefix,
   userKey,
   mapBounded,
@@ -37,6 +38,7 @@ api.get("/users", async (c) => {
     plan: user.plan,
     email: user.email,
     createdAt: user.createdAt,
+    suspended: user.suspended ?? false,
     hasShares: shareOwners.has(username),
   }));
   return c.json({ users, cursor: page.cursor ?? null });
@@ -111,6 +113,29 @@ api.post("/takedown", async (c) => {
   const meta = await updateMeta(c.env.SITES, username, siteId, current => current && { ...current, tombstone });
   if (!meta) return c.json({ error: "site not found" }, 404);
   return c.json({ ok: true, username, siteId, tombstone });
+});
+
+// Suspending an account refuses its owner token everywhere and takes down every
+// share it has. A takedown alone stops one address; the same token would publish
+// the next. Lifting a suspension gives the token back and leaves the shares down:
+// each is restored on its own, so one mistaken click doesn't republish them all.
+api.post("/suspend", async (c) => {
+  const body = await readFields(c, "username");
+  if (!body) return c.json({ error: "username required" }, 400);
+  const { username, suspended = true } = body;
+  if (typeof suspended !== "boolean") return c.json({ error: "suspended must be a boolean" }, 400);
+  const user = await getUser(c.env.SITES, username);
+  if (!user) return c.json({ error: "unknown username" }, 404);
+  const { suspended: _, ...rest } = user;
+  // The token first, so nothing new is published while the shares go down.
+  await putUser(c.env.SITES, username, suspended ? { ...rest, suspended: true } : rest);
+  let takenDown = 0;
+  if (suspended) {
+    for await (const { siteId } of siteRecords(c.env.SITES, username)) {
+      if (await updateMeta(c.env.SITES, username, siteId, current => current && { ...current, tombstone: true })) takenDown++;
+    }
+  }
+  return c.json({ ok: true, username, suspended, takenDown });
 });
 
 const app = new Hono<{ Bindings: Env }>();

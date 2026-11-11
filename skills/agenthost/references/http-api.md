@@ -67,7 +67,7 @@ JSON `{ "error": "<message>" }`:
 |---|---|
 | 400 | Empty or unrecognized body, unsafe path, link in the tar, bad `id`, `mode` or JSON. |
 | 401 | Missing or malformed `Authorization`. |
-| 403 | Wrong owner token. |
+| 403 | Wrong owner token, a suspended account, or deleting a share that was taken down. |
 | 404 | No such share, file or pending upload. |
 | 409 | Completing an upload whose file never arrived. |
 | 413 | Out of account storage, over 1000 files, or a file over 5 GB. |

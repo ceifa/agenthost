@@ -79,6 +79,9 @@ app.post("/shares/:id/key", async (c) => {
 app.delete("/shares/:id", async (c) => {
   const share = await ownedShare(c);
   if (share instanceof Response) return share;
+  // Deleting the record would delete the takedown with it, and the next PUT to
+  // the same id would bring the address back.
+  if (share.meta.tombstone) return c.json({ error: "this share was taken down and cannot be deleted" }, 403);
   await deleteSite(c.env.SITES, share.owner.username, share.id);
   return c.json({ ok: true });
 });
@@ -116,7 +119,7 @@ app.patch("/account", async (c) => {
 });
 
 app.get("/llms.txt", (c) =>
-  c.body(llmsTxt(c.env.APEX_HOST), 200, { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" }),
+  c.body(llmsTxt(c.env.APEX_HOST, c.env.ABUSE_EMAIL), 200, { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" }),
 );
 
 app.get("/skill/*", (c) => {

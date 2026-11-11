@@ -26,6 +26,7 @@ export interface UserRecord {
   email?: string; // optional, unverified contact (set on claim)
   plan: "free" | "paid";
   createdAt: number;
+  suspended?: boolean; // set by the admin: the owner token is refused
 }
 
 export const siteFileKey = (u: string, s: string, path: string) => `sites/${u}/${s}/${path}`;

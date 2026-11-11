@@ -144,7 +144,8 @@ entries — globally, with no purge API. See §6.
   "tokenHash": "sha256(secret)",       // ownerToken is "{username}.{secret}"; the secret is never stored
   "email": "you@x.com",                // optional, unverified contact (PATCH /account)
   "plan": "free" | "paid",             // only the admin changes this
-  "createdAt": 1718800000
+  "createdAt": 1718800000,
+  "suspended": true                    // optional; set by the admin, the token is refused (§9)
 }
 ```
 
@@ -588,8 +589,8 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
   email (`ALLOWED_ADMIN_EMAIL`). The Worker verifies the signed Access JWT
   (`Cf-Access-Jwt-Assertion`) as defense-in-depth — no hand-rolled auth.
 - **Operations** (all behind Access): list users/shares (`R2.list` on `_users/` and
-  `_sites/{username}/`), set `plan`, rename a username, and take down an abusive share. Each
-  is a JSON edit in R2.
+  `_sites/{username}/`), set `plan`, rename a username, take down an abusive share, and
+  suspend an account. Each is a JSON edit in R2.
 - Scales fine on `R2.list` at low volume; D1 can back the admin later if listing grows —
   additive, never touches the hot path.
 
@@ -652,7 +653,22 @@ Public-by-default publishing means day-one abuse risk. Controls, **no Durable Ob
   domain's search reputation.
 - **Per-IP rate limits** on publishes, uploads and wrong access keys.
 - **Size/count/quota caps** (above), enforced during untar.
-- **Takedown** endpoint in the admin (§8).
+- **Takedown** in the admin (§8): the share serves 410. It holds against its owner: a
+  publish keeps it (the record is updated, never replaced, §4), and the owner can't delete
+  a taken-down share, because deleting the record would delete the takedown and free the
+  address for the next PUT. The sweep still removes it when its retention runs out.
+- **Suspension** in the admin: a takedown stops one address, and the same token would
+  publish the next. Suspending sets `suspended` on the account and takes down every share
+  it has; the owner API then answers every call with 403 `account suspended`. Lifting it
+  gives the token back and leaves the shares down, each restored on its own. What it cannot
+  stop is a new anonymous account, which costs one request; that is the rate limits' job.
+- **A place to report.** `ABUSE_EMAIL`, when set, is linked from the landing page, from the
+  key prompt of every private share (with the share's host in the subject) and from
+  `/llms.txt`, next to the one-line rule it enforces.
+- **The domain is shared.** Shares are subdomains of the apex, which is not on the Public
+  Suffix List, so a browser blocklist that flags one share's host can flag the whole
+  domain, landing page included. The fixes are a separate registrable domain for shares or
+  a PSL entry; neither is done.
 - Turnstile deferred.
 
 ---
