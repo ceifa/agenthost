@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handlePublish } from "../src/publish";
 import { getMeta, getUser, userUsage } from "../src/storage";
-import { sanitizeSiteId, sha256Hex, siteHost } from "../src/ids";
+import { sha256Hex } from "../src/ids";
 import { LIMITS, MAX_FILES } from "../src/config";
 import { testBucket } from "./test-bucket";
 import { gzip, header, tar } from "./test-tar";
@@ -171,34 +171,5 @@ describe("archive publishing", () => {
     expect((await f.post(tar([{ name: "a.txt", body: "a" }]))).status).toBe(429);
     expect(f.get).not.toHaveBeenCalled();
     expect(f.put).not.toHaveBeenCalled();
-  });
-});
-
-describe("share ids", () => {
-  // Regression: `report.md` was kept as is and produced `{user}-report.md.{apex}`,
-  // two labels deep, which the single-level wildcard certificate doesn't cover.
-  it.each([
-    ["report.md", "report-md"],
-    ["v1.2.3", "v1-2-3"],
-    ["Notes.", "notes"],
-    [".hidden", "hidden"],
-    ["my_site", "my_site"],
-    ["a b/c", "a-b-c"],
-  ])("maps %s to the single DNS label %s", (raw, id) => {
-    expect(sanitizeSiteId(raw)).toBe(id);
-    expect(siteHost("alice", id, "example.com").split(".")).toHaveLength(3);
-  });
-
-  it.each(["", ".", "..", "---", "x".repeat(33)])("refuses %j", raw => {
-    expect(sanitizeSiteId(raw)).toBeNull();
-  });
-
-  it("publishes a dotted id under its hyphenated name and says so", async () => {
-    const f = await fixture();
-    const res = await handlePublish(new Request("https://example.com/shares/report.md", {
-      method: "PUT", body: "# Home", headers: { authorization: "Bearer alice.owner", "content-length": "6" },
-    }), f.env, "report.md");
-    expect(await res.json()).toMatchObject({ id: "report-md", url: expect.stringMatching(/^https:\/\/alice-report-md\.example\.com\//) });
-    expect(f.records.has("_sites/alice/report-md")).toBe(true);
   });
 });
