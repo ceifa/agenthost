@@ -97,7 +97,7 @@
         <li>
           <button class="row" class:on={u.username === selected} onclick={() => select(u.username)}>
             <span class="name">{u.username}</span>
-            {#if u.plan === "paid"}<span class="paid">paid</span>{/if}
+            {#if u.suspended}<span class="susp">suspended</span>{:else if u.plan === "paid"}<span class="paid">paid</span>{/if}
             <span class="sub">{u.email ?? `joined ${ago(u.createdAt)}`}</span>
           </button>
         </li>
@@ -157,6 +157,7 @@
   .row.on { background: var(--panel); border-left-color: var(--accent); }
   .name { font: 500 14px var(--mono); overflow: hidden; text-overflow: ellipsis; }
   .paid { font-size: 11px; font-weight: 600; color: var(--bg); background: var(--accent); padding: 0 6px; align-self: center; }
+  .susp { font-size: 11px; font-weight: 600; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 40%, transparent); padding: 0 6px; align-self: center; }
   .sub { grid-column: 1 / -1; color: var(--dim); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .none { color: var(--dim); font-size: 13px; padding: 12px 20px; margin: 0; }
   .more { margin: 14px 20px 0; }

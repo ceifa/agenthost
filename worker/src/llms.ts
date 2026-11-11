@@ -8,7 +8,7 @@ import { formatBytes as size } from "./templates";
 
 const free = LIMITS.free;
 
-export const llmsTxt = (apexHost: string): string => `# agenthost — publish a page, docs or files, get a private share link. No signup.
+export const llmsTxt = (apexHost: string, abuseEmail?: string): string => `# agenthost — publish a page, docs or files, get a private share link. No signup.
 
 ## Publish (one command, zero install)
 # A single .md or .html — pipe it straight in (md renders, html is served as-is):
@@ -56,6 +56,7 @@ Steps 1 and 3 take the Authorization header. The file joins the share at /demo.m
 - Free accounts store ${size(free.perUser)} across all shares. Any share: up to ${MAX_FILES} files, ${size(MAX_FILE_BYTES)} per file.
 - Free shares are deleted after ${free.retentionDays} days without a visit. Hosted pages are noindex.
 - Visibility, key rotation, deletes: https://${apexHost}/skill/references/http-api.md
+- No phishing, malware or illegal content: such shares are taken down and the account suspended.${abuseEmail?.trim() ? `\n- Report abuse: ${abuseEmail.trim()}` : ""}
 
 ## Install as a skill (optional — persist this contract)
 - Any agent: fetch https://${apexHost}/skill/SKILL.md and its references under /skill/.

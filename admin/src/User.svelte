@@ -67,6 +67,17 @@
     }
   }
 
+  async function suspend(suspended) {
+    try {
+      const d = await post("/suspend", { username: user.username, suspended });
+      onchange({ suspended });
+      if (suspended) for (const s of sites) s.tombstone = true;
+      flash(suspended ? `${user.username} suspended, ${d.takenDown} shares taken down` : `${user.username} can publish again; its shares stay down until restored`);
+    } catch (e) {
+      flash(e.message, true);
+    }
+  }
+
   async function takedown(s, tombstone) {
     try {
       await post("/takedown", { username: user.username, siteId: s.siteId, tombstone });
@@ -96,7 +107,13 @@
         </form>
       {:else}
         <h1>{user.username}</h1>
+        {#if user.suspended}<span class="tag red">suspended</span>{/if}
         <button onclick={() => { newName = user.username; renaming = true; }}>Rename</button>
+        {#if user.suspended}
+          <button onclick={() => suspend(false)}>Lift suspension</button>
+        {:else}
+          <Confirm label="Suspend" confirm="Refuse its token and take down every share" onconfirm={() => suspend(true)} />
+        {/if}
       {/if}
     </div>
     <div class="plan" role="group" aria-label="Plan">

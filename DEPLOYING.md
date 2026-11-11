@@ -28,6 +28,10 @@ cp deploy.env.example deploy.env
   `example.com/*` and `*.example.com/*` are derived from it.
 - `ZONE_NAME` → only if `APEX_HOST` is not the zone apex itself.
 - `R2_BUCKET_NAME` → only if you want a bucket other than `agenthost-sites`.
+- `ABUSE_EMAIL` → a mailbox you read, e.g. `abuse@example.com`. It becomes the
+  "Report abuse" link on the landing page, on the key prompt of every private
+  share and in `/llms.txt`. Leave it unset and no link is shown; set it before
+  you tell anyone the instance exists.
 
 `deploy.env` is git-ignored, so your values never land in the repo and
 `worker/wrangler.jsonc` stays as shipped. `pnpm run deploy`, `pnpm dev` and
@@ -154,6 +158,7 @@ publish → serve loop runs offline against a fixture directory.
 | `ZONE_NAME` | `deploy.env` | no | Zone holding `APEX_HOST`, when it is not the apex itself. |
 | `R2_ACCOUNT_ID` | from `CLOUDFLARE_ACCOUNT_ID` | uploads | Public account identifier used in the R2 S3 endpoint. |
 | `R2_BUCKET_NAME` | `deploy.env` | uploads | Bucket holding every share (default `agenthost-sites`). |
+| `ABUSE_EMAIL` | `deploy.env` | no | Mailbox behind the "Report abuse" links; unset hides them. |
 | `R2_ACCESS_KEY_ID` | secret | uploads | Bucket-scoped S3 access key used only to sign URLs. |
 | `R2_SECRET_ACCESS_KEY` | secret | uploads | Bucket-scoped S3 secret used only to sign URLs. |
 | `ALLOWED_ADMIN_EMAIL` | secret (`wrangler secret put`) | admin only | Email allowed into the admin. |
