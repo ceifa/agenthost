@@ -35,7 +35,7 @@ uniqueness-race that would otherwise need a Durable Object).
 **We use:**
 
 - **Workers** — the only compute. One script: routes by `Host`. Apex → landing / shares API.
-  `*.agenthost.page` → serve a share. `*.workers.dev` → admin (behind Access). One deploy.
+  `*.agenthost.page` → serve a share. `admin.agenthost.page` → admin (behind Access). One deploy.
 - **R2** — the only byte store. One bucket holds every file of every version of every
   site, plus tiny metadata objects. **Read-after-write is strongly consistent per object**
   — this is what lets us drop Durable Objects/KV.
@@ -44,8 +44,8 @@ uniqueness-race that would otherwise need a Durable Object).
 - **Cache API + CDN** — edge-caches served bytes keyed by the generation-pinned cache key
   (`cache://…/g{gen}/{path}`), so committing a new generation on publish instantly orphans old entries —
   no purge API, no mixed assets.
-- **Cloudflare Access** — founder-only auth in front of the admin (`*.workers.dev` host).
-  Zero auth code.
+- **Cloudflare Access** — founder-only auth in front of the admin (`admin.agenthost.page`).
+  The Worker verifies the Access JWT and the request's origin (§6.6).
 - **Rate limiting** — per-IP Workers rate-limit bindings on publishes and uploads. No DO.
 - **Wildcard DNS + Worker route** — proxied `*` A-record (`192.0.2.1` dummy) + route
   `*.agenthost.page/*`. Free Universal SSL covers the **single-level** wildcard
@@ -290,7 +290,7 @@ Worker on `*.agenthost.page/*`, `run_worker_first` enabled:
 1. Parse `Host`:
    - apex `agenthost.page` / `www` → landing page + `/shares` API + `/llms.txt` (Static
      Assets + endpoints).
-   - `*.workers.dev` → admin surface, behind Cloudflare Access (§8).
+   - `admin.agenthost.page` → admin surface, behind Cloudflare Access (§8).
    - `{username}-{siteId}.agenthost.page` → split on the **first** hyphen (usernames are
      hyphen-free) → `{username, siteId}`; it's a share request.
 2. The path, percent-decoded, is the file path within the share (`{rest}`); `siteId` came
@@ -452,7 +452,7 @@ read once the preview limit is reached; oversized SUMMARY files fall back to fil
 navigation. These are deliberate
 CPU/latency tradeoffs and leave uploaded files and `?raw` downloads intact.
 
-## 6.6 Control-plane isolation (decision needed)
+## 6.6 Control-plane isolation
 
 **Control plane** = the privileged surfaces (the **admin** console and the **publish/manage
 API**) — they hold secrets and can mutate state. **Data plane** = the **untrusted user
@@ -471,10 +471,22 @@ move hosted user sites off `agenthost.page`.
 
 **DECIDED (Open Q #6):** we do **not** register a separate content domain. Instead:
 
-- **Admin → the Worker's default `*.workers.dev` host**, behind Cloudflare Access. This is a
-  different registrable domain from `agenthost.page`, so nothing a user site does with
-  `Domain=.agenthost.page` cookies can reach the admin. This isolates the highest-value
-  control surface for free.
+- **Admin → `admin.agenthost.page`**, behind Cloudflare Access. It used to sit on the
+  Worker's `*.workers.dev` host, a different registrable domain; it moved into the zone, so
+  it is now **same-site** with every hosted share and has to defend itself:
+  - *Request forgery.* A share's page can send requests here and the browser attaches the
+    Access cookie, whatever its `SameSite`, because sibling subdomains are the same site.
+    Access forwards a "simple" cross-origin request (a form post, a `text/plain` fetch)
+    without a preflight. The Access JWT therefore proves who the operator is, not that the
+    operator meant the request. Every admin write must also carry the admin's own `Origin`
+    and `Content-Type: application/json`: no form can send that type, and any other origin's
+    fetch with it needs a preflight, which Access answers 403.
+  - *Framing.* Every admin response sends `frame-ancestors 'none'` and
+    `Cross-Origin-Resource-Policy: same-origin`, so a share can neither frame the console
+    for a click nor pull an API answer in as a subresource.
+  - Reads need no token: without CORS headers another origin cannot read the answer.
+  - A share can still set a `Domain=.agenthost.page` cookie that reaches the admin host. The
+    worst it can do is shadow the Access cookie and force a new login.
 - **Publish API stays on `agenthost.page`** but is **token-based (Authorization header, not
   cookies)**, so cookie injection from user content can't compromise it.
 - **Hosted user sites + landing stay on `agenthost.page`.** Accepted residual risk: a
