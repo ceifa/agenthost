@@ -164,6 +164,11 @@ publish → serve loop runs offline against a fixture directory.
 Tunable limits/quotas (account storage, retention, files per share, etc.) live in
 `worker/src/config.ts`.
 
+The nightly sweep spends at most `SWEEP.maxOps` R2 operations per run (8,000 by default,
+under Workers Paid's 10,000 subrequests per invocation) and carries on the next night. On
+the Workers Free plan the limit is 50: lower `SWEEP.maxOps` to about 40, and expect the
+sweep to clear only a dozen shares a night.
+
 ## Control records
 
 Small JSON control records (`_users/`, `_sites/`) live in

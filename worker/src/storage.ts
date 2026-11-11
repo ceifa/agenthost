@@ -226,8 +226,28 @@ export async function deleteSite(b: R2Bucket, username: string, siteId: string):
   await b.delete([metaKey(username, siteId), visitKey(username, siteId)]);
 }
 
-// When each of a user's shares was last visited, by share id.
-export async function lastVisits(b: R2Bucket, username: string): Promise<Map<string, number>> {
-  const prefix = `_visits/${username}/`;
-  return new Map((await listAll(b, prefix)).map(o => [o.key.slice(prefix.length), o.uploaded.getTime()]));
+// `{username}/{siteId}` after a control prefix. Neither part contains a slash.
+function ownerAndShare(key: string, prefix: string): { username: string; siteId: string } | null {
+  const slash = key.indexOf("/", prefix.length);
+  return slash < 0 ? null : { username: key.slice(prefix.length, slash), siteId: key.slice(slash + 1) };
+}
+
+// Every share record of every account, in key order: a thousand per LIST, so
+// the nightly sweep costs a call per thousand shares instead of calls per account.
+export const allSiteRecords = (b: R2Bucket): AsyncGenerator<SiteRecord> => paginate(cursor => recordPage(b, "_sites/", cursor, obj => {
+  const id = ownerAndShare(obj.key, "_sites/");
+  const meta = listed<SiteMeta>(obj);
+  return id && meta && { ...id, meta };
+}));
+
+export interface VisitRecord { username: string; siteId: string; at: number }
+
+// When every share was last visited, in the same order.
+export async function* allVisits(b: R2Bucket): AsyncGenerator<VisitRecord> {
+  for await (const page of objectPages(b, "_visits/")) {
+    for (const obj of page.objects) {
+      const id = ownerAndShare(obj.key, "_visits/");
+      if (id) yield { ...id, at: obj.uploaded.getTime() };
+    }
+  }
 }

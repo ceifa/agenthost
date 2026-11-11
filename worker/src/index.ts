@@ -58,9 +58,16 @@ export default {
     return new Response("not found", { status: 404 });
   },
 
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(
-      runRetentionSweep(env, Date.now()).then((r) => console.log("retention sweep:", JSON.stringify(r))),
-    );
+  // Awaited, and a failure rethrown: the invocation is then recorded as failed,
+  // where the dashboard and a notification can see it, instead of a rejection
+  // lost inside waitUntil.
+  async scheduled(_event: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    try {
+      const result = await runRetentionSweep(env, Date.now());
+      console.log("retention sweep:", JSON.stringify(result));
+    } catch (error) {
+      console.error("retention sweep failed:", error);
+      throw error;
+    }
   },
 } satisfies ExportedHandler<Env>;
