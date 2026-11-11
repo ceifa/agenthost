@@ -24,8 +24,24 @@ import { isValidUsername } from "./ids";
 
 const api = new Hono<{ Bindings: Env }>();
 
+// The admin shares a registrable domain with every hosted share, so a share's
+// page is same-site to it: the browser attaches the Access cookie to whatever
+// that page sends here, whatever the cookie's SameSite says, and Access forwards
+// a "simple" cross-origin request (a form, or a text/plain fetch) without a
+// preflight. The signed JWT therefore proves who the operator is, not that the
+// operator meant the request. A write must also come from the admin's own page:
+// its Origin, and a JSON content type that no form can send and that makes any
+// other origin's fetch preflight, which Access refuses.
+export function isOwnWrite(req: Request, env: Env): boolean {
+  if (env.DEV_MODE === "1") return true; // the dev SPA runs on another port
+  const json = (req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase() === "application/json";
+  return json && req.headers.get("origin") === `https://admin.${env.APEX_HOST.toLowerCase()}`;
+}
+
 api.use("*", async (c, next) => {
   if (!(await verifyAdmin(c.req.raw, c.env))) return c.json({ error: "forbidden" }, 403);
+  const read = c.req.method === "GET" || c.req.method === "HEAD";
+  if (!read && !isOwnWrite(c.req.raw, c.env)) return c.json({ error: "cross-origin request refused" }, 403);
   await next();
 });
 
@@ -132,4 +148,19 @@ app.all("*", async (c) => {
   return res.status === 404 ? fetchAsset("/admin/index.html") : res; // SPA fallback
 });
 
-export const handleAdmin = async (req: Request, env: Env): Promise<Response> => app.fetch(req, env);
+// A share must not be able to frame the console and have the operator click
+// through it, nor pull an API answer in as a subresource.
+const ADMIN_HEADERS = {
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-frame-options": "DENY",
+  "cross-origin-resource-policy": "same-origin",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+};
+
+export const handleAdmin = async (req: Request, env: Env): Promise<Response> => {
+  const res = await app.fetch(req, env);
+  const out = new Response(res.body, res); // asset responses carry immutable headers
+  for (const [name, value] of Object.entries(ADMIN_HEADERS)) out.headers.set(name, value);
+  return out;
+};
