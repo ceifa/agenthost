@@ -4,6 +4,7 @@ import { Marked } from "marked";
 import { markdownShell, esc } from "./templates";
 import { highlightCode, languageName } from "./highlight";
 import { listAll, sitePrefix } from "./storage";
+import type { Gen } from "./generation";
 import { encodePath } from "./ids";
 import type { Env } from "./env";
 import { RENDER_LIMITS, RENDER_VERSION } from "./config";
@@ -215,14 +216,19 @@ async function loadDocIndex(env: Env, username: string, siteId: string): Promise
 
 // Share the small navigation index across every page of this generation. The
 // original Markdown stays in R2; this only uses the existing edge Cache API.
-export async function loadDocIndexCached(env: Env, ctx: ExecutionContext, username: string, siteId: string, gen: number): Promise<DocIndex> {
-  const key = new Request(`https://as-doc-index.internal/${username}/${siteId}/g${gen}/r${RENDER_VERSION}`);
-  const hit = await caches.default.match(key);
-  if (hit) return hit.json<DocIndex>();
+export async function loadDocIndexCached(env: Env, ctx: ExecutionContext, username: string, siteId: string, gen: Gen): Promise<DocIndex> {
+  const key = (g: number) => new Request(`https://as-doc-index.internal/${username}/${siteId}/g${g}/r${RENDER_VERSION}`);
+  if (gen.guess !== null) {
+    const hit = await caches.default.match(key(gen.guess));
+    if (hit) {
+      gen.cached = true;
+      return hit.json<DocIndex>();
+    }
+  }
   const index = await loadDocIndex(env, username, siteId);
-  ctx.waitUntil(caches.default.put(key, new Response(JSON.stringify(index), {
+  ctx.waitUntil(gen.confirmed.then(g => g === null ? undefined : caches.default.put(key(g), new Response(JSON.stringify(index), {
     headers: { "content-type": "application/json", "cache-control": "public, max-age=31536000, immutable" },
-  })));
+  }))).catch(() => {}));
   return index;
 }
 

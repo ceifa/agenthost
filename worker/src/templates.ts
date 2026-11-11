@@ -58,6 +58,11 @@ export function shareWidget(shareUrl: string): string {
 <script data-url="${esc(shareUrl)}" data-button="as-share-btn" data-label="as-share-label">${COPY_LINK_JS}</script>`;
 }
 
+// Drops a just-used access key from the address bar, history and later Referers
+// without the round trip a redirect costs. Injected as early in the page as the
+// markup allows, so the page's own scripts see the URL they would after one.
+export const STRIP_KEY_SCRIPT = `<script>(function(){try{var u=new URL(location.href);u.searchParams.delete("k");history.replaceState(history.state,"",u.pathname+u.search+u.hash)}catch(e){}})()</script>`;
+
 // Live reload, injected next to the Share widget on every served HTML page. The
 // behaviour is documented in client/live.ts; the version tag and the LIVE tuning
 // constants ride along as data- attributes so config.ts stays the single source.

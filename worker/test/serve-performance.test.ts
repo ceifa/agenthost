@@ -71,6 +71,10 @@ function fixture(files: Record<string, string>, types: Record<string, string> = 
 
 afterEach(() => vi.unstubAllGlobals());
 
+// Which internal caches a request consulted, in order (visit bookkeeping aside).
+const lookups = (f: ReturnType<typeof fixture>) =>
+  f.cache.match.mock.calls.map(([req]) => new URL((req as Request).url).host).filter(host => host !== "as-visits.internal");
+
 describe("serving I/O budgets", () => {
   it("uses a single content GET on a cold HTML route", async () => {
     const f = fixture({ "index.html": "<body>Home</body>" });
@@ -91,8 +95,8 @@ describe("serving I/O budgets", () => {
     expect(unchanged.status).toBe(304);
     expect(await unchanged.text()).toBe("");
     expect(f.bucket.get.mock.calls.map(([key]) => key)).toEqual(controlKeys);
-    // Route only; no body lookup. (The visit marker is bookkeeping, not serving.)
-    expect(f.cache.match.mock.calls.filter(([req]) => !(req as Request).url.startsWith("https://as-visits.internal/"))).toHaveLength(1);
+    // The route, from where this location last left off; no body lookup.
+    expect(lookups(f)).toEqual(["as-hints.internal", "as-routes.internal"]);
     f.meta.public = false;
     f.meta.accessKey = "secret";
     expect((await f.request("/", { "if-none-match": etag })).status).toBe(401);
@@ -183,22 +187,40 @@ describe("serving I/O budgets", () => {
     const f = fixture({});
     expect((await f.request("/new.css")).status).toBe(404);
     await f.settle();
-    expect(f.cache.put).not.toHaveBeenCalled();
+    expect([...f.cacheEntries.keys()].filter(url => !url.startsWith("https://as-hints.internal/"))).toEqual([]);
     f.objects.set(prefix + "new.css", "body{}");
     expect(await (await f.request("/new.css")).text()).toBe("body{}");
     await f.settle();
   });
 
-  it("honors a public-to-private change and takedown before reading any cached content", async () => {
+  // The share was last seen public here, so the cached page is already being
+  // fetched when the record says otherwise. It is let go, not sent.
+  it("honors a public-to-private change and takedown before sending any cached content", async () => {
     const f = fixture({ "index.html": "<body>Secret</body>" });
     await f.warm();
+    const opened: { cancelled: boolean }[] = [];
+    const original = f.cache.match.getMockImplementation()!;
+    f.cache.match.mockImplementation(async req => {
+      const hit = await original(req);
+      if (!hit?.body || !req.url.startsWith("https://as-cache.internal/")) return hit;
+      const state = { cancelled: false };
+      opened.push(state);
+      return new Response(new ReadableStream<Uint8Array>({ cancel() { state.cancelled = true; } }), hit);
+    });
     f.meta.public = false;
     f.meta.accessKey = "new-key";
-    expect((await f.request()).status).toBe(401);
-    expect(f.cache.match).not.toHaveBeenCalled();
+    const denied = await f.request();
+    expect(denied.status).toBe(401);
+    expect(await denied.text()).not.toContain("Secret");
     f.meta.tombstone = true;
-    expect((await f.request()).status).toBe(410);
-    expect(f.cache.match).not.toHaveBeenCalled();
+    const gone = await f.request();
+    expect(gone.status).toBe(410);
+    expect(await gone.text()).not.toContain("Secret");
+    await f.settle();
+    expect(opened.map(o => o.cancelled)).toEqual([true]);
+    // The record's answer is where the next request starts from: the second
+    // one, with no key to offer, fetched nothing.
+    expect(f.bucket.get.mock.calls.map(([key]) => key)).toEqual(["_sites/u/docs", "_sites/u/docs"]);
   });
 
   it("checks rotated keys on warm routes without caching reader credentials", async () => {
@@ -211,12 +233,370 @@ describe("serving I/O budgets", () => {
     expect((await f.request("/", { cookie: "as_auth_docs=old-key" })).status).toBe(401);
     expect((await f.request("/", { cookie: "as_auth_docs=new-key" })).status).toBe(200);
     const login = await f.request("/?k=new-key");
-    expect(login.status).toBe(302);
+    expect(login.status).toBe(200);
     expect(login.headers.get("set-cookie")).toContain("as_auth_docs=new-key");
+    await login.text();
+    await f.settle();
     for (const [key, response] of f.cacheEntries) {
       expect(key).not.toMatch(/old-key|new-key/);
       expect(await response.clone().text()).not.toMatch(/old-key|new-key/);
     }
+  });
+});
+
+describe("opening a share link", () => {
+  const cookie = "as_auth_docs=key; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=31536000";
+  const locked = (files: Record<string, string>) => {
+    const f = fixture(files);
+    f.meta.public = false;
+    f.meta.accessKey = "key";
+    return f;
+  };
+
+  it("logs the reader in on the page itself: one request, one record read", async () => {
+    const f = locked({ "index.html": "<body>Home</body>" });
+    const res = await f.request("/?k=key");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toBe(cookie);
+    expect(res.headers.get("cache-control")).toBe("private, no-cache");
+    expect(res.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+    expect(await res.text()).toContain("Home");
+    await f.settle();
+    expect(f.bucket.get.mock.calls.filter(([key]) => key === "_sites/u/docs")).toHaveLength(1);
+    for (const [url, cached] of f.cacheEntries) {
+      expect(url).not.toContain("key");
+      expect(cached.headers.get("set-cookie")).toBeNull();
+    }
+  });
+
+  it("gives a login the page even when the browser holds a matching validator", async () => {
+    const f = locked({ "README.md": "# Home" });
+    const first = await f.request("/", { cookie: "as_auth_docs=key" });
+    const etag = first.headers.get("etag")!;
+    await first.text();
+    await f.settle();
+    expect((await f.request("/", { cookie: "as_auth_docs=key", "if-none-match": etag })).status).toBe(304);
+    const login = await f.request("/?k=key", { "if-none-match": etag });
+    expect(login.status).toBe(200);
+    expect(login.headers.get("set-cookie")).toBe(cookie);
+    expect(await login.text()).toContain('<h1 id="home">');
+    await f.settle();
+  });
+
+  it("sets no cookie for a reader who already has one", async () => {
+    const f = locked({ "index.html": "<body>Home</body>" });
+    const res = await f.request("/?k=key", { cookie: "as_auth_docs=key" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    await res.text();
+    await f.settle();
+  });
+
+  // Only a page can drop the key from its own URL.
+  it.each<{ name: string; path: string; method?: string; location: string }>([
+    { name: "a static file", path: "/app.css?k=key", location: "/app.css" },
+    { name: "a download", path: "/index.html?download&k=key", location: "/index.html?download=" },
+    { name: "raw Markdown", path: "/notes.md?raw&k=key", location: "/notes.md?raw=" },
+    { name: "a HEAD", path: "/?k=key", method: "HEAD", location: "/" },
+    { name: "a missing path", path: "/nope?k=key", location: "/nope" },
+  ])("still redirects $name", async ({ path, method, location }) => {
+    const f = locked({ "index.html": "<body>Home</body>", "app.css": "body{}", "notes.md": "# Notes" });
+    const res = await f.request(path, undefined, method);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(location);
+    expect(res.headers.get("set-cookie")).toBe(cookie);
+    expect(await res.text()).toBe("");
+    await f.settle();
+    expect(f.bucket.put).not.toHaveBeenCalled(); // not a visit yet
+  });
+
+  // The real rewriter runs in workerd; this checks what it is asked to do.
+  describe("the key in the page's URL", () => {
+    function rewritten(tags: string[]) {
+      const inserted: string[] = [];
+      vi.stubGlobal("HTMLRewriter", class {
+        private handlers = new Map<string, { element(e: unknown): void }>();
+        on(selector: string, handler: { element(e: unknown): void }) { this.handlers.set(selector, handler); return this; }
+        transform(response: Response) {
+          for (const tag of tags) {
+            this.handlers.get(tag)?.element({
+              prepend: (html: string) => inserted.push(`${tag}<${html}`),
+              append: (html: string) => inserted.push(`${tag}>${html}`),
+            });
+          }
+          return response;
+        }
+      });
+      return inserted;
+    }
+    const strip = (inserted: string[]) => inserted.filter(i => i.includes("replaceState")).map(i => i.slice(0, 5));
+
+    it.each<{ tags: string[]; at: string[] }>([
+      { tags: ["head", "body"], at: ["head<"] },
+      { tags: ["body"], at: ["body<"] },
+    ])("is dropped once, as early as $tags allows", async ({ tags, at }) => {
+      const f = locked({ "index.html": "<body>Home</body>" });
+      const inserted = rewritten(tags);
+      await (await f.request("/?k=key")).text();
+      expect(strip(inserted)).toEqual(at);
+      expect(inserted.at(-1)).toMatch(/^body>.*as-share/s);
+      await f.settle();
+    });
+
+    it("is left alone when it is not the reader's key, or there is none", async () => {
+      const f = locked({ "index.html": "<body>Home</body>" });
+      const inserted = rewritten(["head", "body"]);
+      await (await f.request("/?k=other", { cookie: "as_auth_docs=key" })).text();
+      await (await f.request("/", { cookie: "as_auth_docs=key" })).text();
+      expect(strip(inserted)).toEqual([]);
+      await (await f.request("/?k=key", { cookie: "as_auth_docs=key" })).text();
+      expect(strip(inserted)).toEqual(["head<"]);
+      await f.settle();
+    });
+  });
+});
+
+describe("cold route lookups", () => {
+  // A body whose cancellation is visible, in place of one file's.
+  function watch(f: ReturnType<typeof fixture>, path: string) {
+    const cancel = vi.fn();
+    const original = f.bucket.get.getMockImplementation()!;
+    f.bucket.get.mockImplementation(async (key, opts) => {
+      const obj = await original(key, opts);
+      return key === prefix + path && obj ? { ...obj, body: new ReadableStream<Uint8Array>({ cancel }) } : obj;
+    });
+    return cancel;
+  }
+  // Holds one file's read open until released.
+  function hold(f: ReturnType<typeof fixture>, path: string) {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => (release = resolve));
+    const original = f.bucket.get.getMockImplementation()!;
+    f.bucket.get.mockImplementation(async (key, opts) => {
+      if (key === prefix + path) await gate;
+      return original(key, opts);
+    });
+    return release;
+  }
+  const reads = (f: ReturnType<typeof fixture>) => f.bucket.get.mock.calls.map(([key]) => key).filter(key => key.startsWith(prefix)).map(key => key.slice(prefix.length));
+
+  it("reads a Markdown home once, alongside the listing that names it", async () => {
+    const f = fixture({ "README.md": "# Home", "next.md": "# Next" });
+    const release = hold(f, "index.html");
+    const serving = f.request();
+    // Neither waits for the index.html miss.
+    await vi.waitFor(() => {
+      expect(reads(f)).toContain("README.md");
+      expect(f.bucket.list).toHaveBeenCalledOnce();
+    });
+    release();
+    const html = await (await serving).text();
+    expect(html).toContain('<h1 id="home">');
+    expect(html).toContain('href="/next.md"');
+    expect(reads(f).sort()).toEqual(["README.md", "index.html"]);
+    expect(f.bucket.list).toHaveBeenCalledOnce();
+    await f.settle();
+  });
+
+  it("lets go of the README it fetched when the share has a page, or another home", async () => {
+    const f = fixture({ "index.html": "<body>Page</body>", "README.md": "# Repo" });
+    const dropped = watch(f, "README.md");
+    expect(await (await f.request()).text()).toContain("Page");
+    await f.settle();
+    expect(dropped).toHaveBeenCalledOnce();
+
+    const g = fixture({ "README.md": "# Repo", "intro.md": "# Intro", "SUMMARY.md": "- [Intro](intro.md)" });
+    const unused = watch(g, "README.md");
+    expect(await (await g.request()).text()).toContain('<h1 id="intro">');
+    await g.settle();
+    expect(unused).toHaveBeenCalledOnce();
+  });
+
+  it("does not fetch a README for requests that would not render it", async () => {
+    const f = fixture({ "notes.md": "# Notes" });
+    await (await f.request("/?raw")).text();
+    expect(reads(f)).not.toContain("README.md");
+    await f.settle();
+    const g = fixture({ "notes.md": "# Notes" });
+    expect((await g.request("/", undefined, "HEAD")).status).toBe(200);
+    expect(reads(g)).toEqual([]);
+    expect(g.bucket.head.mock.calls.map(([key]) => key)).toEqual([prefix + "index.html"]);
+    await g.settle();
+  });
+
+  it("asks for an extensionless path and its directory index together", async () => {
+    const f = fixture({ "guide/index.html": "<body>Guide</body>" });
+    const release = hold(f, "guide");
+    const serving = f.request("/guide");
+    await vi.waitFor(() => expect(reads(f).sort()).toEqual(["guide", "guide/index.html"]));
+    release();
+    expect(await (await serving).text()).toContain("Guide");
+    await f.settle();
+  });
+
+  it("serves the file itself when both exist, and lets go of the index", async () => {
+    const f = fixture({ "LICENSE": "MIT", "LICENSE/index.html": "<body>Dir</body>" });
+    const dropped = watch(f, "LICENSE/index.html");
+    expect(await (await f.request("/LICENSE")).text()).toBe("MIT");
+    await f.settle();
+    expect(dropped).toHaveBeenCalledOnce();
+  });
+
+  it("probes one at a time when the name has an extension", async () => {
+    const f = fixture({ "app.css": "body{}" });
+    expect(await (await f.request("/app.css")).text()).toBe("body{}");
+    expect((await f.request("/gone.css")).status).toBe(404);
+    expect(reads(f)).toEqual(["app.css", "gone.css", "gone.css/index.html", "404.html"]);
+    await f.settle();
+  });
+
+  it.each(["/", "/app.css"])("serves %s from the object it resolved, without asking the body cache", async path => {
+    const f = fixture({ "index.html": "<body>Home</body>", "app.css": "body{}" });
+    const res = await f.request(path);
+    expect(res.status).toBe(200);
+    await res.text();
+    await f.settle();
+    expect(f.cache.match.mock.calls.map(([req]) => (req as Request).url).filter(url => url.startsWith("https://as-cache.internal/"))).toEqual([]);
+    // …and the next request finds it there.
+    vi.clearAllMocks();
+    await (await f.request(path)).text();
+    expect(reads(f)).toEqual([]);
+    await f.settle();
+  });
+});
+
+describe("work started while the record is read", () => {
+  // Holds the share record back until released; everything else answers at once.
+  function holdRecord(f: ReturnType<typeof fixture>) {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => (release = resolve));
+    const original = f.bucket.get.getMockImplementation()!;
+    f.bucket.get.mockImplementation(async (key, opts) => {
+      if (key === "_sites/u/docs") await gate;
+      return original(key, opts);
+    });
+    return release;
+  }
+  const contentReads = (f: ReturnType<typeof fixture>) => f.bucket.get.mock.calls.map(([key]) => key).filter(key => key.startsWith(prefix)).map(key => key.slice(prefix.length));
+  const stored = (f: ReturnType<typeof fixture>) => [...f.cacheEntries.keys()].filter(url => !url.startsWith("https://as-hints.internal/") && !url.startsWith("https://as-visits.internal/"));
+  const locked = (files: Record<string, string>) => {
+    const f = fixture(files);
+    f.meta.public = false;
+    f.meta.accessKey = "key";
+    return f;
+  };
+
+  it.each<{ name: string; files: Record<string, string>; path: string; reads: string[] }>([
+    { name: "an HTML page", files: { "index.html": "<body>Home</body>" }, path: "/?k=key", reads: ["README.md", "index.html"] },
+    { name: "a Markdown home", files: { "README.md": "# Home" }, path: "/?k=key", reads: ["README.md", "index.html"] },
+    { name: "an asset", files: { "app.css": "body{}" }, path: "/app.css", reads: ["app.css"] },
+  ])("reads $name from R2 alongside the record on a first visit with a key", async ({ files, path, reads }) => {
+    const f = locked(files);
+    const release = holdRecord(f);
+    const serving = f.request(path, { cookie: path.includes("k=") ? "" : "as_auth_docs=key" });
+    // The content is on its way before the record has answered.
+    await vi.waitFor(() => expect(contentReads(f).sort()).toEqual(reads));
+    expect(lookups(f)).toEqual(["as-hints.internal"]);
+    release();
+    const res = await serving;
+    expect(res.status).toBe(200);
+    await res.text();
+    await f.settle();
+    // Each file was read once, and the route is cached under the record's generation.
+    expect(contentReads(f).sort()).toEqual(reads);
+    expect(stored(f).some(url => url.startsWith("https://as-routes.internal/u/docs/g1/"))).toBe(true);
+  });
+
+  it("asks the caches alongside the record once this location knows the share", async () => {
+    const f = locked({ "index.html": "<body>Home</body>" });
+    await (await f.request("/", { cookie: "as_auth_docs=key" })).text();
+    await f.settle();
+    vi.clearAllMocks();
+    const release = holdRecord(f);
+    const serving = f.request("/", { cookie: "as_auth_docs=key" });
+    await vi.waitFor(() => expect(lookups(f)).toEqual(["as-hints.internal", "as-routes.internal", "as-cache.internal"]));
+    release();
+    expect(await (await serving).text()).toContain("Home");
+    await f.settle();
+    // No second lookup for what was already fetched, and no file read at all.
+    expect(lookups(f)).toEqual(["as-hints.internal", "as-routes.internal", "as-cache.internal"]);
+    expect(contentReads(f)).toEqual([]);
+  });
+
+  it("starts nothing for a request with no key to a share not known to be public", async () => {
+    const f = locked({ "index.html": "<body>Secret</body>" });
+    expect((await f.request()).status).toBe(401);
+    expect((await f.request("/app.css")).status).toBe(401);
+    await f.settle();
+    expect(contentReads(f)).toEqual([]);
+    expect(lookups(f)).toEqual(["as-hints.internal", "as-hints.internal"]);
+    // …nor for a share that does not exist.
+    const g = fixture({});
+    g.bucket.get.mockImplementation(async () => null);
+    expect((await g.request("/", { cookie: "as_auth_docs=anything" })).status).toBe(404);
+    await g.settle();
+    expect(stored(g)).toEqual([]);
+  });
+
+  it("lets go of what it read, and stores none of it, when the key is wrong", async () => {
+    const f = locked({ "index.html": "<body>Secret</body>", "README.md": "# Secret" });
+    const cancelled: string[] = [];
+    const original = f.bucket.get.getMockImplementation()!;
+    f.bucket.get.mockImplementation(async (key, opts) => {
+      const obj = await original(key, opts);
+      return obj && key.startsWith(prefix) ? { ...obj, body: new ReadableStream<Uint8Array>({ cancel() { cancelled.push(key.slice(prefix.length)); } }) } : obj;
+    });
+    const res = await f.request("/", { cookie: "as_auth_docs=stale" });
+    expect(res.status).toBe(401);
+    expect(await res.text()).not.toContain("Secret");
+    await f.settle();
+    expect(cancelled.sort()).toEqual(["README.md", "index.html"]);
+    expect(stored(f)).toEqual([]);
+  });
+
+  it("keeps a file read from R2 when the generation it guessed was wrong, and caches it under the right one", async () => {
+    const f = fixture({ "index.html": "<body>Home</body>", "app.css": "body{}" });
+    await f.warm(); // this location now expects generation 1
+    f.objects.set(prefix + "app.css", "body{color:red}");
+    f.meta.generation = 2;
+    expect(await (await f.request("/app.css")).text()).toBe("body{color:red}");
+    await f.settle();
+    expect(contentReads(f)).toEqual(["app.css"]);
+    expect(stored(f).filter(url => url.includes("app.css")).sort()).toEqual([
+      "https://as-cache.internal/u/docs/g2/app.css",
+      "https://as-routes.internal/u/docs/g2/r5/app.css",
+    ]);
+  });
+
+  it("sets aside what the caches said under an outdated generation", async () => {
+    const f = fixture({ "app.css": "body{}" });
+    await f.warm("/app.css");
+    f.objects.set(prefix + "app.css", "body{color:red}");
+    f.meta.generation = 2;
+    expect(await (await f.request("/app.css")).text()).toBe("body{color:red}");
+    await f.settle();
+    // The next request starts from generation 2.
+    vi.clearAllMocks();
+    expect(await (await f.request("/app.css")).text()).toBe("body{color:red}");
+    expect(contentReads(f)).toEqual([]);
+    await f.settle();
+  });
+
+  it("answers from the record alone when starting early fails", async () => {
+    const f = locked({ "index.html": "<body>Home</body>" });
+    const original = f.bucket.get.getMockImplementation()!;
+    let failed = false;
+    f.bucket.get.mockImplementation(async (key, opts) => {
+      if (key === prefix + "index.html" && !failed) {
+        failed = true;
+        throw new Error("R2 hiccup");
+      }
+      return original(key, opts);
+    });
+    const res = await f.request("/", { cookie: "as_auth_docs=key" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Home");
+    await f.settle();
   });
 });
 
@@ -390,7 +770,9 @@ describe("shares without a page of their own", () => {
     f.meta.public = false;
     f.meta.keyHash = await sha256Hex("legacy");
     expect((await f.request()).status).toBe(401);
-    expect((await f.request("/?k=legacy")).status).toBe(302);
+    const login = await f.request("/?k=legacy");
+    expect(login.status).toBe(200);
+    expect(login.headers.get("set-cookie")).toContain("as_auth_docs=legacy");
     expect((await f.request("/", { cookie: "as_auth_docs=legacy" })).status).toBe(200);
     await f.settle();
   });

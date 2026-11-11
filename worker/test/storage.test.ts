@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getMeta, getUser, putUser, listUsersPage, updateMeta, userUsage, mapBounded, RecordBusyError } from "../src/storage";
+import { getMeta, getUser, putUser, listUsersPage, readMeta, updateMeta, userUsage, mapBounded, RecordBusyError, NO_RECORD } from "../src/storage";
 import { handleAdmin } from "../src/admin";
 import { runRetentionSweep } from "../src/sweep";
 import { testBucket } from "./test-bucket";
@@ -58,6 +58,43 @@ describe("share record updates", () => {
     expect(seen).toEqual([1, 5]);
     expect(result).toMatchObject({ generation: 6, tombstone: true });
     expect(await getMeta(f.bucket, "u", "docs")).toMatchObject({ generation: 6, tombstone: true });
+  });
+
+  it("writes against a version the caller already read, without reading it again", async () => {
+    const f = testBucket();
+    f.json("_sites/u/docs", meta);
+    const seen = await readMeta(f.bucket, "u", "docs");
+    vi.clearAllMocks();
+    expect(await updateMeta(f.bucket, "u", "docs", current => ({ ...current!, generation: 2 }), seen)).toMatchObject({ generation: 2 });
+    expect(f.head).not.toHaveBeenCalled();
+    expect(f.get).not.toHaveBeenCalled();
+    // The same for a record known not to exist.
+    expect(await updateMeta(f.bucket, "u", "fresh", () => meta, NO_RECORD)).toEqual(meta);
+    expect(f.head).not.toHaveBeenCalled();
+  });
+
+  it("starts over from a fresh read when that version is no longer current", async () => {
+    const f = testBucket();
+    f.json("_sites/u/docs", meta);
+    const seen = await readMeta(f.bucket, "u", "docs");
+    await updateMeta(f.bucket, "u", "docs", current => ({ ...current!, generation: 5, tombstone: true }));
+    const applied: number[] = [];
+    const result = await updateMeta(f.bucket, "u", "docs", current => {
+      applied.push(current!.generation);
+      return { ...current!, generation: current!.generation + 1 };
+    }, seen);
+    expect(applied).toEqual([1, 5]);
+    expect(result).toMatchObject({ generation: 6, tombstone: true });
+    // A record created since is not overwritten either.
+    await updateMeta(f.bucket, "u", "new", () => ({ ...meta, accessKey: "first" }));
+    expect(await updateMeta(f.bucket, "u", "new", current => ({ ...meta, ...current, generation: 2 }), NO_RECORD)).toMatchObject({ accessKey: "first", generation: 2 });
+  });
+
+  it("decides to leave a record alone only on a fresh read", async () => {
+    const f = testBucket();
+    const seen = await readMeta(f.bucket, "u", "docs");
+    await updateMeta(f.bucket, "u", "docs", () => meta);
+    expect(await updateMeta(f.bucket, "u", "docs", current => current && { ...current, public: true }, seen)).toMatchObject({ public: true });
   });
 
   it("does not let two creators of the same record both win", async () => {

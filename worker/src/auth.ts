@@ -78,14 +78,22 @@ function getCookie(req: Request, name: string): string | null {
   return null;
 }
 
-// Returns the reader's access key, or the response to send instead: a matching
-// ?k logs the visitor in via cookie, then redirects to drop the key from the
-// URL; anything else gets the password prompt.
+// A reader who arrived with a matching ?k and no cookie yet. Either answer logs
+// them in: `cookie` on the page itself, when the page can drop the key from its
+// own URL, or `redirect()` to the same URL without it.
+export interface KeyLogin {
+  key: string;
+  cookie: string;
+  redirect: () => Response;
+}
+
+// Returns the reader's access key (as a KeyLogin when it came from ?k and still
+// has to become a cookie), or the response to send instead: the password prompt.
 export async function checkAccessKey(
   req: Request,
   env: Env,
   gate: { accessKey?: string; keyHash?: string; label: string; cookieName: string; limiterKey: string },
-): Promise<string | Response> {
+): Promise<string | KeyLogin | Response> {
   const matches = async (key: string) => gate.accessKey !== undefined
     ? timingSafeEqual(key, gate.accessKey)
     : timingSafeEqual(await sha256Hex(key), gate.keyHash ?? "");
@@ -96,10 +104,17 @@ export async function checkAccessKey(
   const k = url.searchParams.get("k");
   const noindex = { "x-robots-tag": "noindex, nofollow" };
   if (k && await matches(k)) {
-    url.searchParams.delete("k");
-    const res = new Response(null, { status: 302, headers: { ...noindex, location: url.pathname + url.search } });
-    res.headers.append("set-cookie", `${gate.cookieName}=${k}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${AUTH_COOKIE_MAX_AGE}`);
-    return res;
+    const cookie = `${gate.cookieName}=${k}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${AUTH_COOKIE_MAX_AGE}`;
+    return {
+      key: k,
+      cookie,
+      redirect: () => {
+        url.searchParams.delete("k");
+        const res = new Response(null, { status: 302, headers: { ...noindex, location: url.pathname + url.search } });
+        res.headers.append("set-cookie", cookie);
+        return res;
+      },
+    };
   }
   // Wrong key: throttle guessing before re-prompting. (The keyspace already
   // makes brute force infeasible; this also caps the invocation cost.)

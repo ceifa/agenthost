@@ -8,6 +8,7 @@ import { committedFiles, listAll, shareUsage, siteFileKey, sitePrefix, updateMet
 import { clientIp, generateAccessKey, metaUrl, sanitizeSiteId, siteHost } from "./ids";
 import { routeFilePath, safePath } from "./publish";
 import { signDirectUpload, type SignedUpload } from "./r2-signed";
+import { writeHint } from "./generation";
 
 // The file path after /shares/{id}/uploads/{prepare|complete}/.
 function uploadPath(c: AppContext): string | null {
@@ -129,5 +130,6 @@ export async function completeUpload(c: AppContext): Promise<Response> {
     return next;
   });
   if (!next) return c.json({ error: "share not found" }, 404);
+  await writeHint(owner.username, id, next);
   return c.json({ url: metaUrl(siteHost(owner.username, id, c.env.APEX_HOST), next), id, path, bytes: next.bytes, fileCount: next.fileCount });
 }

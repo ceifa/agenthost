@@ -66,6 +66,24 @@ async function putJson(b: R2Bucket, key: string, value: unknown, onlyIf?: R2Cond
 }
 
 export const getMeta = (b: R2Bucket, u: string, s: string) => getJson<SiteMeta>(b, metaKey(u, s));
+
+// A share record with the etag of the version it was read at; etag null when
+// there is no record at all.
+export interface MetaVersion { meta: SiteMeta | null; etag: string | null }
+export const NO_RECORD: MetaVersion = { meta: null, etag: null };
+
+function metaVersion(obj: R2Object | null): MetaVersion {
+  if (!obj) return NO_RECORD;
+  const json = obj.customMetadata?.json;
+  return { meta: json ? JSON.parse(json) as SiteMeta : null, etag: obj.etag };
+}
+
+// getMeta, keeping the version so a later updateMeta can skip reading it again.
+export async function readMeta(b: R2Bucket, u: string, s: string): Promise<MetaVersion> {
+  const obj = await b.get(metaKey(u, s));
+  await obj?.body.cancel();
+  return metaVersion(obj);
+}
 export const getUser = (b: R2Bucket, u: string) => getJson<UserRecord>(b, userKey(u));
 export const putUser = async (b: R2Bucket, u: string, rec: UserRecord): Promise<void> => { await putJson(b, userKey(u), rec); };
 
@@ -86,19 +104,29 @@ const UPDATE_ATTEMPTS = 6;
 // committed in between: a publish that streamed for a minute cannot bring back
 // the key that was rotated, or lift the takedown that landed, while it ran.
 // `change` may run more than once; it must derive everything from its argument.
+//
+// `seen` is a version the caller already read (readMeta). The first attempt
+// writes against it instead of reading the record again, which saves a round
+// trip when nothing changed in between; if something did, the conditional write
+// fails and the loop carries on from a fresh read, exactly as without it.
 export async function updateMeta(
   b: R2Bucket,
   u: string,
   s: string,
   change: (current: SiteMeta | null) => SiteMeta | null | Promise<SiteMeta | null>,
+  seen?: MetaVersion,
 ): Promise<SiteMeta | null> {
   const key = metaKey(u, s);
   for (let attempt = 0; attempt < UPDATE_ATTEMPTS; attempt++) {
-    const obj = await b.head(key);
-    const json = obj?.customMetadata?.json;
-    const next = await change(json ? JSON.parse(json) as SiteMeta : null);
-    if (!next) return null;
-    if (await putJson(b, key, next, obj ? { etagMatches: obj.etag } : { etagDoesNotMatch: "*" })) return next;
+    const trusted = attempt === 0 && seen !== undefined;
+    const current = trusted ? seen : metaVersion(await b.head(key));
+    const next = await change(current.meta);
+    if (!next) {
+      // "Leave it alone" has to be decided on the record as it is now.
+      if (trusted) continue;
+      return null;
+    }
+    if (await putJson(b, key, next, current.etag !== null ? { etagMatches: current.etag } : { etagDoesNotMatch: "*" })) return next;
   }
   throw new RecordBusyError(u, s);
 }

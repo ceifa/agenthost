@@ -15,13 +15,16 @@ import {
   clientIp,
 } from "./ids";
 import { verifyOwner } from "./auth";
+import { writeHint } from "./generation";
 import { parseTar, TarLimitError, type TarEntry } from "./tar";
 import { gunzipStream } from "./gunzip";
 import { peek, isGzip, isTar, isZip, sniffDocKind } from "./sniff";
 import {
   putUser,
   getMeta,
+  readMeta,
   updateMeta,
+  NO_RECORD,
   shareUsage,
   userUsage,
   listAll,
@@ -271,13 +274,14 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
   // Fail fast on over-quota: the share may hold what the account has left
   // after other shares and its own pending uploads.
   const limits = LIMITS[plan];
-  const [otherUsage, existingMeta, listed] = isNewUser
-    ? [0, null, []]
+  const [otherUsage, seen, listed] = isNewUser
+    ? [0, NO_RECORD, []]
     : await Promise.all([
         userUsage(env.SITES, username, siteId),
-        getMeta(env.SITES, username, siteId),
+        readMeta(env.SITES, username, siteId),
         listAll(env.SITES, sitePrefix(username, siteId)),
       ]);
+  const existingMeta = seen.meta;
   const reserved = existingMeta ? shareUsage(existingMeta) - existingMeta.bytes : 0;
   const totalBudget = Math.max(0, limits.perUser - otherUsage - reserved);
   // Uploads still in flight are neither counted here nor orphaned below.
@@ -303,16 +307,36 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
     return null;
   };
 
+  // A new account's record is written while its files upload, not after them:
+  // it depends on nothing in the body, so there is no reason to queue it behind.
+  // The commit below waits for it, and a publish that fails takes it back.
+  let userStored: Promise<void> | null = null;
+  const storeUser = (): Promise<void> => {
+    userStored ??= (async () => putUser(env.SITES, username, {
+      tokenHash: await sha256Hex(secret!),
+      plan: "free",
+      createdAt: Date.now(),
+    }))();
+    userStored.catch(() => {}); // observed where it is awaited
+    return userStored;
+  };
+
   // A publish that fails has already written files. Under a share record they
   // belong to a share and the next publish reconciles them. Without one nothing
-  // points at them and no quota counts them, so they go now. (A request cut off
-  // before it gets here leaves them to the sweep's orphan pass.)
+  // points at them and no quota counts them, so they go now, and so does the
+  // account minted for them. (A request cut off before it gets here leaves
+  // both to the sweep.)
   const discardWritten = async () => {
-    if (existingMeta || !writtenKeys.size) return;
+    if (existingMeta || (!writtenKeys.size && !userStored)) return;
     try {
       await gate.settle();
       // Unless the share came to exist meanwhile: then the files are its own.
-      if (!(await getMeta(env.SITES, username, siteId))) await deleteKeys(env.SITES, [...writtenKeys]);
+      if (await getMeta(env.SITES, username, siteId)) return;
+      if (writtenKeys.size) await deleteKeys(env.SITES, [...writtenKeys]);
+      if (userStored) {
+        await userStored.catch(() => {});
+        await env.SITES.delete(userKey(username));
+      }
     } catch {
       /* best effort: the sweep collects what is left */
     }
@@ -331,6 +355,10 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
   }
 
   try {
+    // Through the gate, so the account write and the file puts together stay
+    // within PUT_CONCURRENCY. Its failure is not the archive's: it is raised
+    // below, where the record is needed.
+    if (isNewUser) await gate.add(() => storeUser().catch(() => {}));
     if (mode.kind === "file") {
       // Single raw document: no archive to stream, so read the body directly and
       // write it under a name that serves at `/`.
@@ -345,6 +373,7 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
         }
         if (declared === 0) {
           void cancelBody().catch(() => {});
+          await discardWritten();
           return json({ error: "empty file" }, 400);
         }
         if (declared !== null) {
@@ -411,22 +440,28 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
     await discardWritten();
     return json({ error: perr.message }, perr.status);
   }
-  if (writtenKeys.size === 0) return json({ error: "archive contained no files" }, 400);
+  if (writtenKeys.size === 0) {
+    await discardWritten();
+    return json({ error: "archive contained no files" }, 400);
+  }
+
+  if (userStored) {
+    try {
+      await userStored;
+    } catch (error) {
+      await discardWritten();
+      throw error;
+    }
+  }
 
   if (!merge) await deleteKeys(env.SITES, [...existing.keys()].filter((k) => !writtenKeys.has(k)));
 
-  if (isNewUser) {
-    await putUser(env.SITES, username, {
-      tokenHash: await sha256Hex(secret!),
-      plan: "free",
-      createdAt: Date.now(),
-    });
-  }
-
   // Commit against the record as it is now, not as it was when the body started
   // streaming: a key rotation, a visibility change, a takedown or an upload
-  // reservation made meanwhile stays. Mint an access key only on a share's first
-  // publish; redeploys keep the key and visibility so share links keep working.
+  // reservation made meanwhile stays. The first attempt is conditional on the
+  // version read before the stream, so an untouched record costs no second
+  // read. Mint an access key only on a share's first publish; redeploys keep
+  // the key and visibility so share links keep working.
   const now = Date.now();
   const meta = (await updateMeta(env.SITES, username, siteId, (current): SiteMeta => ({
     ...current,
@@ -437,7 +472,10 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
     bytes: totalBytes,
     fileCount,
     public: current?.public ?? false,
-  })))!;
+  }), seen))!;
+
+  // A reader near this publisher starts their next request from this generation.
+  await writeHint(username, siteId, meta);
 
   return json({
     url: metaUrl(siteHost(username, siteId, env.APEX_HOST), meta),

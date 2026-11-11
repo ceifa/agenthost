@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import type { Env } from "./env";
 import { handlePublish, routeFilePath, safePath } from "./publish";
 import { ownedShare, readJson, requireOwner, type AppContext } from "./auth";
+import { writeHint } from "./generation";
 import { deleteSite, listSitesPage, putUser, siteFileKey, updateMeta, RecordBusyError, type SiteMeta } from "./storage";
 import { generateAccessKey, metaUrl, siteHost } from "./ids";
 import { llmsTxt } from "./llms";
@@ -103,6 +104,7 @@ app.delete("/shares/:id/files/*", async (c) => {
     fileCount: Math.max(0, current.fileCount - 1),
   });
   if (!next) return c.json({ error: "share not found" }, 404);
+  await writeHint(owner.username, id, next);
   return c.json(describe(c, owner.username, id, next));
 });
 

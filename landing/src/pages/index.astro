@@ -46,10 +46,22 @@ const agents = ["Claude Code", "Cursor", "Codex", "OpenClaw", "Hermes"];
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- The font stylesheet is on another origin, and as a plain stylesheet it
+         would hold back first paint for that whole connection. The faces are
+         display=swap anyway, so let the page paint in the fallback and apply
+         the stylesheet when it lands. -->
     <link
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
     <style is:global>
       /* Same ink and amber as before. Prose is now a sans; the mono voice is kept
          for exactly one thing: the sentence you say to your agent. */

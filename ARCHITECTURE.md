@@ -238,6 +238,9 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
    `_users/{username}` and mint a secret (random 32 bytes; store only its `sha256`). The
    agent gets `ownerToken = "{username}.{secret}"`: one string both names and proves the
    account (usernames never contain a dot), so no call needs a separate `?username=`.
+   The record is written **while the files upload**, not after them (it depends on nothing
+   in the body); the commit in step 6 waits for it, and a publish that fails deletes it
+   along with its files.
 2. **Resolve the share id** from the path; it's sanitized and required.
 3. **Compute the effective size budget.** Read the user's `plan`, sum the other shares'
    `bytes` and pending reservations from one `_sites/{username}/` LIST, and list this
@@ -250,7 +253,9 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
    the archive's tail) + a streaming tar parser; stream each
    entry **straight** to `sites/{username}/{siteId}/{path}` (overwrite-in-place) through a
    `FixedLengthStream`, its bytes as slices of the input chunks, with **bounded concurrency
-   (≤3 in-flight puts)**. **Never buffer the whole archive, nor a whole file:** memory stays
+   (≤6 in-flight puts)**: as many connections as one invocation may have open, and what an
+   archive of small files is limited by, since each put spends most of its time waiting
+   for R2 to commit. A new account's record counts as one of the six. **Never buffer the whole archive, nor a whole file:** memory stays
    flat, and on the Free plan's ~10 ms CPU budget the Worker can't afford to touch the
    bytes. A bare tar skips inflation entirely, the cheapest path for large or
    already-compressed payloads. Reject: paths containing `..`, symlinks, files over the
@@ -261,6 +266,10 @@ tar cf - -C ./dist . | curl -s -X PUT --data-binary @- https://agenthost.page/sh
    lastDeployAt: now, bytes, fileCount, accessKey, public, tombstone?, pending? }`. The
    first write of a share mints the access key (`public: false`); later writes preserve key
    and visibility so links keep working. `lastDeployAt` is what the retention sweep reads.
+   The write is conditional on the version of the record read in step 3 (or on there being
+   none, for a new account), so the usual commit is one PUT with no read before it; if
+   the record changed while the body streamed, the conditional write fails and the commit
+   re-reads and re-applies, as every other writer does.
 7. **Respond 200 JSON:**
 
    ```json
@@ -319,16 +328,47 @@ Worker on `*.agenthost.page/*`, `run_worker_first` enabled:
 2. The path, percent-decoded, is the file path within the share (`{rest}`); `siteId` came
    from the Host. Files are stored under their decoded names, so `/a%20b.pdf` is `a b.pdf`.
 3. Read the authoritative site record fresh: **one R2 GET** for generation, takedown and
-   access state, never cached. Check access and takedowns before consulting route/content
-   caches or returning a conditional 304.
-4. Map path: `/` and `/dir/` → `index.html`; `/dir` tries the exact file before
+   access state, never cached. Nothing is sent, stored in a cache, or answered with a
+   conditional 304 before that record allows the request.
+
+   **Steps 4–6 start while that read is in flight** (`src/generation.ts`), so an open costs
+   the slower of "read the record" and "find the content", not their sum — one R2 round
+   trip, where it used to be two or more. The record still decides; what was started is
+   used only if it allows the request, and is cancelled otherwise. Two things make the
+   head start possible:
+   - A **hint**: the generation this edge location last saw for the share and whether it
+     was public, kept in the Cache API (`https://as-hints.internal/{username}/{siteId}`).
+     It is refreshed by every fresh record read that finds it out of date, by the `/_gen`
+     poll that notices a publish (so the reload that follows starts from the new
+     generation), and by publish itself for readers near the publisher. With a hint, the
+     route and body caches are asked under its generation and R2 only for what they lack.
+     Without one, this location has not served the share lately, so the caches are
+     skipped and the files are read straight from R2.
+   - **Who gets it**: a request carrying `?k` or this share's cookie, or any request when
+     the hint says the share is public. A request with nothing to offer starts nothing,
+     so probing private or nonexistent shares costs the one record read it always did.
+
+   What a cache said under a guessed generation is used only if the record confirms that
+   generation; a file read from R2 is good whatever the generation turned out to be, since
+   file keys don't carry it. Cache entries are written only under a confirmed generation.
+   The one case that still pays the old price is a stale hint with a warm cache behind it:
+   a manual refresh right after a publish made far away, before the `/_gen` poll has seen
+   it. The caches answer for the old generation, the record disagrees, and the content is
+   then read after it.
+4. Map path: `/` and `/dir/` → `index.html`; `/dir` prefers the exact file over
    `/dir/index.html`. A Markdown-only homepage uses the first valid SUMMARY entry,
-   README, or the first document. With neither, `/` is the **file index**: a preview of
+   README, or the first document. File keys don't carry the generation, so on a cold
+   route the candidates are read **side by side**, not one miss after another: `/` asks
+   for `index.html`, the Markdown index and `README.md` together (a Markdown home costs
+   two R2 round trips after the record, not four), and an extensionless `/dir` asks for
+   the file and `dir/index.html` together. A read that isn't needed is cancelled; a name
+   with an extension is nearly always the file, so it is still probed alone. With neither, `/` is the **file index**: a preview of
    the only file (video, audio, image and PDF inline) or a list of all of them, each with
    a `?download` link — this is what replaced the old asset download page. Successful
    resolutions are edge-cached under
    `https://as-routes.internal/{username}/{siteId}/g{gen}/r{RENDER_VERSION}/{rest}`.
-   Cold GET requests retain the fetched object for serving, removing HEAD-then-GET.
+   Cold GET requests retain the fetched object for serving, removing HEAD-then-GET, and
+   serve it without asking the body cache first (the put that follows refreshes the entry).
    HEAD requests probe metadata only. Warm route caching avoids repeated file probes.
    Misses are not cached. Only the resolved filename is stored; no access keys or
    access decisions. The separate cache host prevents collisions with share files, and
@@ -360,8 +400,9 @@ Worker on `*.agenthost.page/*`, `run_worker_first` enabled:
    `Content-Disposition: attachment`; `?raw` serves Markdown source as plain text. Both
    are set after the cache, so one entry serves every variant.
 
-Warm requests still pay for the two fresh control-object reads, but no file-resolution
-R2 operations. The serving regression tests enforce these storage-operation budgets:
+Warm requests still pay for the fresh record read, but no file-resolution R2 operations,
+and their cache lookups overlap that read. The serving regression tests enforce these
+storage-operation budgets:
 
 | Warm request | Before | After |
 | --- | ---: | ---: |
@@ -411,9 +452,17 @@ rotating replaces the hash with a stored key.
 **Authorization — runs before §6 serve:**
 1. **Valid auth cookie** for this site → authorized, serve.
 2. Else **`?k=<key>`** present and equal to the share's key → set an auth cookie scoped to
-   the site's subdomain (`Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age` ~1y), then **302 to
-   the same URL minus `?k`** so the key doesn't linger in history/referrer. The next request
-   carries the cookie → authorized. *(This is the "enters once, stays in" requirement.)*
+   the site's subdomain (`Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age` ~1y) **on the
+   page itself**. Opening a share link is the first request every reader makes, so it
+   answers with the page rather than a redirect to it: one request and one record read
+   instead of two. The key still doesn't linger: a script injected at the top of `<head>`
+   (else `<body>`) drops `k` from the URL with `history.replaceState` before the page's
+   own scripts run, and the response carries
+   `Referrer-Policy: strict-origin-when-cross-origin`. A login never gets a `304`.
+   Whatever can't clean its own URL — a static file, `?raw`, `?download`, a `HEAD`, a
+   404 — still gets the **302 to the same URL minus `?k`**. A reader who already holds
+   the cookie and follows a keyed link has the key dropped the same way.
+   *(This is the "enters once, stays in" requirement.)*
 3. Else → serve our **password interstitial**: a small branded HTML page with an input;
    submitting re-tries via `?k`. Wrong key → re-prompt. *(This is the "no key in URL →
    manual prompt" requirement.)*
@@ -656,7 +705,7 @@ bloating with abandoned shares, while a link people still open stays up. The las
 
 A visit is an authorized request that resolves to content: a denied key, a 404 or a
 `/_gen` poll doesn't count, so neither a bot hitting the prompt nor a forgotten open tab
-keeps a share alive. A link preview that follows the `?k` redirect does count, once.
+keeps a share alive. A link preview that opens the `?k` link does count, once.
 Visits live in their own empty object rather than the share record because updating the
 record from the serve path would make every reader contend with publishes for it. Writes are throttled to one per share, per colo, per day: an in-isolate
 set plus a day-keyed Cache API marker, both off the response path in `waitUntil`.

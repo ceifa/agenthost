@@ -42,9 +42,11 @@ export const ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
 export const CACHE_MAX_BYTES = 512 * MB;
 
 // In-flight R2 puts during untar. Entries stream into R2 one at a time, so this
-// only overlaps a put's commit with reading the next entry; no put holds a
-// buffered file.
-export const PUT_CONCURRENCY = 3;
+// only overlaps a put's commit with reading the next entries; no put holds a
+// buffered file. An archive of small files is bounded by how many commits are
+// in the air, and six is as many connections as one invocation may have open:
+// more would queue inside the runtime, not run.
+export const PUT_CONCURRENCY = 6;
 export const AUTH_COOKIE_PREFIX = "as_auth_";
 export const AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // ~1 year, seconds
 

@@ -4,7 +4,7 @@ import { apexApp } from "../src/apex";
 import { handleAdmin } from "../src/admin";
 import { getMeta, getUser, userUsage } from "../src/storage";
 import { clientIp, sha256Hex } from "../src/ids";
-import { LIMITS, MAX_FILES } from "../src/config";
+import { LIMITS, MAX_FILES, PUT_CONCURRENCY } from "../src/config";
 import { testBucket } from "./test-bucket";
 import { gzip, header, tar } from "./test-tar";
 
@@ -60,6 +60,92 @@ describe("efficient single-file publishing", () => {
     expect(await res.json()).toEqual({ error: "bad archive: R2 unavailable" });
     await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
     expect(f.records.has("_sites/alice/docs")).toBe(false);
+  });
+});
+
+describe("publish round trips", () => {
+  const anonymous = (f: Awaited<ReturnType<typeof fixture>>, body: BodyInit, headers: Record<string, string> = {}) =>
+    handlePublish(new Request("https://example.com/shares/new", { method: "PUT", body, headers, ...({ duplex: "half" } as object) }), f.env, "new");
+
+  it("writes a new account alongside its file and commits without reading a record that cannot exist", async () => {
+    const f = await fixture();
+    // The account write is held open: the file must not be waiting behind it.
+    let release!: () => void;
+    const held = new Promise<void>(resolve => (release = resolve));
+    const original = f.put.getMockImplementation()!;
+    f.put.mockImplementation(async (key, body, opts) => {
+      if (String(key).startsWith("_users/")) await held;
+      return original(key, body, opts);
+    });
+    const publishing = anonymous(f, "# Hi", { "content-type": "text/markdown", "content-length": "4" });
+    await vi.waitFor(() => expect([...f.records.keys()].some(key => key.endsWith("/new/README.md"))).toBe(true));
+    // …but the share is not committed before its account exists.
+    expect([...f.records.keys()].some(key => key.startsWith("_sites/"))).toBe(false);
+    release();
+    const res = await publishing;
+    expect(res.status).toBe(200);
+    const { username } = await res.json<{ username: string }>();
+    const puts = f.put.mock.calls.map(([key]) => String(key));
+    expect(puts.slice(0, 2).sort()).toEqual([`_users/${username}`, `sites/${username}/new/README.md`]);
+    expect(puts.slice(2)).toEqual([`_sites/${username}/new`]);
+    // The only look before writing is the username's uniqueness.
+    expect(f.head.mock.calls.map(([key]) => key)).toEqual([`_users/${username}`]);
+    expect(f.get).not.toHaveBeenCalled();
+    expect((await getMeta(f.bucket, username, "new"))!.generation).toBe(1);
+  });
+
+  it("commits a republish against the record it read before the upload", async () => {
+    const f = await fixture();
+    expect((await f.request("# One", { "content-length": "5" })).status).toBe(200);
+    vi.clearAllMocks();
+    expect((await f.request("# Two", { "content-length": "5" })).status).toBe(200);
+    expect(f.head).not.toHaveBeenCalled();
+    expect(f.get.mock.calls.map(([key]) => key).sort()).toEqual(["_sites/alice/docs", "_users/alice"]);
+    expect((await getMeta(f.bucket, "alice", "docs"))!.generation).toBe(2);
+  });
+
+  it("takes back the account of an anonymous publish that stores nothing", async () => {
+    const f = await fixture();
+    for (const [body, headers] of [
+      [tar([{ name: "._cruft", body: "x" }]), {}],
+      ["", { "content-type": "text/markdown", "content-length": "0" }],
+    ] as const) {
+      expect((await anonymous(f, body === "" ? new Blob([]).stream() : body, headers)).status).toBe(400);
+    }
+    expect([...f.records.keys()]).toEqual(["_users/alice"]);
+  });
+
+  it("reports a failed account write as a failure, and keeps no files for it", async () => {
+    const f = await fixture();
+    const original = f.put.getMockImplementation()!;
+    f.put.mockImplementation(async (key, body, opts) => {
+      if (String(key).startsWith("_users/")) throw new Error("R2 unavailable");
+      return original(key, body, opts);
+    });
+    await expect(anonymous(f, tar([{ name: "index.html", body: "<p>hi</p>" }]))).rejects.toThrow("R2 unavailable");
+    expect([...f.records.keys()]).toEqual(["_users/alice"]);
+  });
+
+  it("keeps as many puts in the air as one invocation may have connections, the account's included", async () => {
+    const f = await fixture();
+    const original = f.put.getMockImplementation()!;
+    let inFlight = 0;
+    let peak = 0;
+    f.put.mockImplementation(async (key, body, opts) => {
+      peak = Math.max(peak, ++inFlight);
+      try {
+        const stored = await original(key, body, opts);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return stored;
+      } finally {
+        inFlight--;
+      }
+    });
+    const files = Array.from({ length: 40 }, (_, i) => ({ name: `f${i}.txt`, body: `file ${i}` }));
+    const res = await anonymous(f, tar(files));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ fileCount: 40 });
+    expect(peak).toBe(PUT_CONCURRENCY);
   });
 });
 
