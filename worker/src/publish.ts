@@ -63,6 +63,11 @@ class PutGate {
     while (this.inFlight.size) await Promise.race(this.inFlight);
     if (this.firstError) throw this.firstError;
   }
+
+  // Waits for the puts still running, whatever their outcome.
+  async settle(): Promise<void> {
+    await Promise.all(this.inFlight);
+  }
 }
 
 // Streams one tar entry into R2 without buffering it. `read` settles once the
@@ -251,6 +256,11 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
     plan = owner.ctx.user.plan;
   } else {
     // Anonymous → always a brand-new account (owned shares require the token).
+    // Each one comes with a full free quota, so the per-IP limit above bounds
+    // nothing for someone with many addresses. This one is shared by everyone.
+    if (!(await env.SIGNUP_LIMITER.limit({ key: "anonymous" })).success) {
+      return json({ error: "too many new accounts right now — retry shortly, or send the ownerToken you already have" }, 429);
+    }
     do {
       username = generateUsername();
     } while (await env.SITES.head(userKey(username)));
@@ -291,6 +301,21 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
     fileCount = files;
     writtenKeys.add(key);
     return null;
+  };
+
+  // A publish that fails has already written files. Under a share record they
+  // belong to a share and the next publish reconciles them. Without one nothing
+  // points at them and no quota counts them, so they go now. (A request cut off
+  // before it gets here leaves them to the sweep's orphan pass.)
+  const discardWritten = async () => {
+    if (existingMeta || !writtenKeys.size) return;
+    try {
+      await gate.settle();
+      // Unless the share came to exist meanwhile: then the files are its own.
+      if (!(await getMeta(env.SITES, username, siteId))) await deleteKeys(env.SITES, [...writtenKeys]);
+    } catch {
+      /* best effort: the sweep collects what is left */
+    }
   };
 
   // Peek before branching: the payload's own bytes decide archive-vs-document,
@@ -374,6 +399,7 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
     }
   } catch (e) {
     void cancelBody(e).catch(() => {});
+    await discardWritten();
     if (perr) return json({ error: perr.message }, perr.status);
     if (e instanceof TarLimitError) return json({ error: e.message }, 413);
     const message = e instanceof Error ? e.message : "failed to read archive";
@@ -382,6 +408,7 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
 
   if (perr) {
     void cancelBody().catch(() => {});
+    await discardWritten();
     return json({ error: perr.message }, perr.status);
   }
   if (writtenKeys.size === 0) return json({ error: "archive contained no files" }, 400);

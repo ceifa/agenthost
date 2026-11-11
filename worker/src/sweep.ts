@@ -1,6 +1,7 @@
 // Nightly retention sweep. Delete shares neither changed nor visited within their
 // plan's retention window, drop uploads never completed, then free accounts left
-// with nothing once they are old enough.
+// with nothing once they are old enough. Then delete files no share record
+// points at.
 //
 // It reads three flat listings side by side: accounts, share records and visits,
 // a thousand rows per LIST. They come back in key order, which groups the last
@@ -11,8 +12,8 @@
 // the alphabet were never reached again.)
 
 import type { Env } from "./env";
-import { LIMITS, SWEEP } from "./config";
-import { allSiteRecords, allVisits, deleteSite, listUsersPage, paginate, siteFileKey, updateMeta, userKey, type SiteMeta } from "./storage";
+import { LIMITS, ORPHAN_GRACE_MS, SWEEP } from "./config";
+import { allFiles, allSiteRecords, allVisits, deleteKeys, deleteSite, listUsersPage, paginate, siteFileKey, updateMeta, userKey, type SiteMeta } from "./storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Long enough that an account mid-first-publish is never mistaken for an empty one.
@@ -30,6 +31,7 @@ export interface SweepResult {
   ops: number; // R2 operations spent
   complete: boolean; // false: the budget ran out and the next run carries on
   unowned: number; // share and visit rows whose account record is gone; left alone
+  orphans: number; // files under no share record, deleted
 }
 
 // Hands out one owner's rows at a time from a listing sorted by owner.
@@ -77,6 +79,40 @@ function counted(bucket: R2Bucket): { bucket: R2Bucket; spent: () => number } {
 const expiredUploads = (meta: SiteMeta, now: number) =>
   Object.entries(meta.pending ?? {}).filter(([, p]) => p.expiresAt < now).map(([path]) => path);
 
+// Files with no share record: a first publish that failed or was cut off after
+// writing them, a presigned URL used after its share was deleted, a delete that
+// died halfway. No quota counts them and no share's retention reaches them, so
+// nothing else would ever remove them. Walks every file next to every share
+// record, both grouped by owner in the same order, holding one account's share
+// ids at a time. False if the budget ran out first.
+async function deleteOrphanFiles(bucket: R2Bucket, now: number, exhausted: () => boolean, found: (key: string) => void): Promise<boolean> {
+  const records = new ByOwner(plainOnly(allSiteRecords(bucket), () => {}));
+  let owner: string | null = null;
+  let shareIds = new Set<string>();
+  let doomed: string[] = [];
+  const flush = async () => {
+    const keys = doomed;
+    doomed = [];
+    await deleteKeys(bucket, keys);
+  };
+  for await (const file of plainOnly(allFiles(bucket), () => {})) {
+    if (file.username !== owner) {
+      if (exhausted()) {
+        await flush();
+        return false;
+      }
+      owner = file.username;
+      shareIds = new Set((await records.take(owner)).map(r => r.siteId));
+    }
+    if (shareIds.has(file.siteId) || now - file.at <= ORPHAN_GRACE_MS) continue;
+    found(file.key);
+    doomed.push(file.key);
+    if (doomed.length === 1000) await flush();
+  }
+  await flush();
+  return true;
+}
+
 export async function runRetentionSweep(env: Env, now: number, budget = SWEEP): Promise<SweepResult> {
   const { bucket, spent } = counted(env.SITES);
   const started = Date.now();
@@ -86,6 +122,7 @@ export async function runRetentionSweep(env: Env, now: number, budget = SWEEP): 
   let checked = 0;
   let deletedCount = 0;
   let oddlyNamed = 0;
+  let orphans = 0;
   const recordDelete = (name: string) => {
     deletedCount++;
     // Bound cron logs as well as the inventory. Counts still cover every item.
@@ -94,7 +131,7 @@ export async function runRetentionSweep(env: Env, now: number, budget = SWEEP): 
   const shares = new ByOwner(plainOnly(allSiteRecords(bucket), () => oddlyNamed++));
   const visits = new ByOwner(plainOnly(allVisits(bucket), () => oddlyNamed++));
   const result = (complete: boolean): SweepResult => ({
-    checked, deleted, deletedCount, ops: spent(), complete, unowned: shares.skipped + visits.skipped + oddlyNamed,
+    checked, deleted, deletedCount, ops: spent(), complete, unowned: shares.skipped + visits.skipped + oddlyNamed, orphans,
   });
 
   for await (const { username, user } of paginate(cursor => listUsersPage(bucket, cursor))) {
@@ -136,7 +173,13 @@ export async function runRetentionSweep(env: Env, now: number, budget = SWEEP): 
     if (exhausted()) return result(false);
   }
 
+  // After retention, so files of a share deleted above are already gone.
+  const swept = await deleteOrphanFiles(bucket, now, exhausted, key => {
+    orphans++;
+    if (deleted.length < 100) deleted.push(`orphan:${key.slice("sites/".length)}`);
+  });
+
   // Every step is idempotent, and what a run deletes is gone, so a run cut short
   // needs no checkpoint: the next one pays for the listing and carries on.
-  return result(true);
+  return result(swept);
 }
