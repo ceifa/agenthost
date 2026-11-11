@@ -66,10 +66,12 @@ export function isValidUsername(name: string): boolean {
 
 export function sanitizeSiteId(raw: string | undefined | null): string | null {
   if (!raw) return null;
-  const s = raw.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^-+|-+$/g, "");
+  // The id is half of one DNS label. A dot would split it into two, and the
+  // wildcard certificate covers a single level, so `report.md` becomes `report-md`.
+  const s = raw.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/^-+|-+$/g, "");
   // Cap at 32 so `{username}-{siteId}` (username ≤ 30) stays within a 63-octet
   // DNS label — the site now lives on that subdomain, not a path.
-  if (!s || s === "." || s === ".." || s.length > 32) return null;
+  if (!s || s.length > 32) return null;
   return s;
 }
 

@@ -82,7 +82,9 @@ https://{username}-{siteId}.agenthost.page/...
   separator, so the host splits back on its *first* hyphen. The hex suffix gives enough
   entropy that collisions are negligible → no uniqueness-enforcement primitive needed. On
   the paid tier the founder can rename it to a custom username (e.g. `acme`).
-- **`{siteId}`** — chosen by the agent at publish time (e.g. `myblog`); may contain hyphens.
+- **`{siteId}`** — chosen by the agent at publish time (e.g. `myblog`); may contain hyphens,
+  never a dot: a dot would make the host two labels deep, which the wildcard certificate
+  doesn't cover, so `report.md` is stored and served as `report-md`.
   One user hosts many sites, each on its own `{username}-{siteId}` subdomain. Combined length
   is capped (username ≤ 30, siteId ≤ 32) so the label fits the 63-octet DNS limit.
 
