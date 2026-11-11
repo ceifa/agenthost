@@ -5,7 +5,7 @@
 
 import type { Env } from "./env";
 import { LIMITS } from "./config";
-import { deleteSite, lastVisits, listUsersPage, paginate, putMeta, siteFileKey, siteRecords, userKey } from "./storage";
+import { deleteSite, lastVisits, listUsersPage, paginate, siteFileKey, siteRecords, updateMeta, userKey } from "./storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Long enough that an account mid-first-publish is never mistaken for an empty one.
@@ -43,12 +43,15 @@ export async function runRetentionSweep(env: Env, now: number): Promise<SweepRes
       const expired = Object.entries(meta.pending ?? {}).filter(([, p]) => p.expiresAt < now).map(([path]) => path);
       if (expired.length) {
         await env.SITES.delete(expired.map(path => siteFileKey(username, siteId, path)));
-        const pending = { ...meta.pending };
-        for (const path of expired) {
-          delete pending[path];
-          recordDelete(`upload:${username}/${siteId}/${path}`);
-        }
-        await putMeta(env.SITES, username, siteId, { ...meta, pending });
+        for (const path of expired) recordDelete(`upload:${username}/${siteId}/${path}`);
+        // Against the record as it is now: the listing above is a snapshot, and a
+        // path reserved again since then keeps its new reservation.
+        await updateMeta(env.SITES, username, siteId, current => {
+          if (!current) return null;
+          const pending = { ...current.pending };
+          for (const path of expired) if (pending[path] && pending[path].expiresAt < now) delete pending[path];
+          return { ...current, pending };
+        });
       }
     }
     if (user.plan === "free" && kept === 0 && now - user.createdAt > EMPTY_ACCOUNT_DAYS * DAY_MS) {

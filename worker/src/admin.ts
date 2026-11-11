@@ -13,8 +13,7 @@ import {
   deleteKeys,
   getUser,
   putUser,
-  getMeta,
-  putMeta,
+  updateMeta,
   userSitesPrefix,
   userKey,
   mapBounded,
@@ -109,10 +108,8 @@ api.post("/takedown", async (c) => {
   if (!body) return c.json({ error: "username and siteId required" }, 400);
   const { username, siteId, tombstone = true } = body;
   if (typeof tombstone !== "boolean") return c.json({ error: "tombstone must be a boolean" }, 400);
-  const meta = await getMeta(c.env.SITES, username, siteId);
+  const meta = await updateMeta(c.env.SITES, username, siteId, current => current && { ...current, tombstone });
   if (!meta) return c.json({ error: "site not found" }, 404);
-  meta.tombstone = tombstone;
-  await putMeta(c.env.SITES, username, siteId, meta);
   return c.json({ ok: true, username, siteId, tombstone });
 });
 

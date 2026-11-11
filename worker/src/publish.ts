@@ -21,7 +21,7 @@ import { peek, isGzip, isTar, isZip, sniffDocKind } from "./sniff";
 import {
   putUser,
   getMeta,
-  putMeta,
+  updateMeta,
   shareUsage,
   userUsage,
   listAll,
@@ -396,19 +396,21 @@ export async function handlePublish(req: Request, env: Env, rawId: string, file?
     });
   }
 
-  // Mint an access key only on a share's first publish; redeploys keep the key
-  // and visibility so share links keep working.
-  const meta: SiteMeta = {
-    ...existingMeta,
-    ...(existingMeta?.accessKey || existingMeta?.keyHash ? {} : { accessKey: generateAccessKey() }),
-    generation: (existingMeta?.generation ?? 0) + 1,
-    createdAt: existingMeta?.createdAt ?? Date.now(),
-    lastDeployAt: Date.now(),
+  // Commit against the record as it is now, not as it was when the body started
+  // streaming: a key rotation, a visibility change, a takedown or an upload
+  // reservation made meanwhile stays. Mint an access key only on a share's first
+  // publish; redeploys keep the key and visibility so share links keep working.
+  const now = Date.now();
+  const meta = (await updateMeta(env.SITES, username, siteId, (current): SiteMeta => ({
+    ...current,
+    ...(current?.accessKey || current?.keyHash ? {} : { accessKey: generateAccessKey() }),
+    generation: (current?.generation ?? 0) + 1,
+    createdAt: current?.createdAt ?? now,
+    lastDeployAt: now,
     bytes: totalBytes,
     fileCount,
-    public: existingMeta?.public ?? false,
-  };
-  await putMeta(env.SITES, username, siteId, meta);
+    public: current?.public ?? false,
+  })))!;
 
   return json({
     url: metaUrl(siteHost(username, siteId, env.APEX_HOST), meta),

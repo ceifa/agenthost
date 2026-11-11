@@ -149,7 +149,7 @@ entries — globally, with no purge API. See §6.
 ```
 
 **Compact, directly listable metadata.** Small control records (shares and users)
-store their JSON once in R2 `customMetadata.json` with an empty body.
+store their JSON once in R2 `customMetadata.json`; the body is only a version stamp (below).
 `R2.list({ include: ["customMetadata"] })` returns these records without per-object GETs.
 Every record must fit R2's metadata limit; the free-form fields are the email (≤ 254
 characters) and pending upload paths (≤ 512 characters, at most one per file a share
@@ -170,10 +170,30 @@ contentType   = guessed from extension at publish; a direct upload stores one on
 (Browser caching is handled at serve time with `no-cache` + `ETag`, not stored on the
 object — see §6 — because the public key is overwritten in place.)
 
+**Share records are updated atomically, with R2 alone.** A share record has several
+writers: a publish, an upload reservation and its completion, a key rotation, a visibility
+change, a file delete, the admin's takedown and the sweep. Each used to read the record,
+change its copy and put it back, so the last writer silently undid the others. A publish
+holds its copy for as long as its body streams, which made the window minutes wide: a key
+rotated meanwhile worked again once the publish committed, and a takedown was lifted.
+
+Every write now goes through `updateMeta` (`storage.ts`): read the record, apply the change,
+and put it back **only if the record is still the version that was read**
+(`onlyIf: { etagMatches }`, or `etagDoesNotMatch: "*"` to create). A lost race reads again
+and re-applies the change, a few times, then answers 503. R2 derives an etag from the
+object's body, and a record's JSON lives in its metadata, so each write also puts a fresh
+random stamp in the body: without it every version would share the etag of the empty
+string. Records written before this have an empty body; the first write stamps them.
+
+The publish commits its own `generation`, `bytes` and `fileCount` on top of whatever the
+record holds at that moment, so access state (`accessKey`, `public`, `tombstone`) and
+`pending` reservations always come from the latest version. What stays non-atomic is the
+file tree itself: two publishes to one share at once still interleave their files (§4's
+accepted trade-off), and the quota is still summed from records without a lock.
+
 **Why no DO/KV/D1:** the only hot-path query is `key → bytes`, which R2 serves with strong
-consistency. The merged metadata/generation record is a per-site R2 object (last-writer-wins is fine — you
-own your own site, there's no shared contended namespace). Username uniqueness is moot
-because usernames are auto-generated with entropy.
+consistency, and R2's conditional put is all the coordination a per-share record needs.
+Username uniqueness is moot because usernames are auto-generated with entropy.
 
 ---
 
@@ -611,8 +631,7 @@ A visit is an authorized request that resolves to content: a denied key, a 404 o
 `/_gen` poll doesn't count, so neither a bot hitting the prompt nor a forgotten open tab
 keeps a share alive. A link preview that follows the `?k` redirect does count, once.
 Visits live in their own empty object rather than the share record because updating the
-record from the serve path would race a publish's read-modify-write and could roll back
-its generation. Writes are throttled to one per share, per colo, per day: an in-isolate
+record from the serve path would make every reader contend with publishes for it. Writes are throttled to one per share, per colo, per day: an in-isolate
 set plus a day-keyed Cache API marker, both off the response path in `waitUntil`.
 Keeping a share alive forever by curling it from a cron is possible, but so was
 republishing it; the account quota is what bounds storage. Deleting a share = `R2.list` its prefix + delete all keys and its record.

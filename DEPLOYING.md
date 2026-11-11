@@ -167,8 +167,8 @@ Tunable limits/quotas (account storage, retention, files per share, etc.) live i
 ## Control records
 
 Small JSON control records (`_users/`, `_sites/`) live in
-R2 `customMetadata.json` with empty bodies; inspection tools must read custom metadata,
-not the body. The Worker no longer reads the older layouts, so a bucket from before
+R2 `customMetadata.json`; inspection tools must read custom metadata, not the body, which
+holds only a random version stamp (it gives each write its own etag for conditional puts). The Worker no longer reads the older layouts, so a bucket from before
 2026-10-18 needs its legacy records migrated before this Worker serves it.
 
 The shares API replaced `/publish` and the separate asset uploads. Objects under

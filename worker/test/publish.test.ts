@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handlePublish } from "../src/publish";
+import { apexApp } from "../src/apex";
+import { handleAdmin } from "../src/admin";
 import { getMeta, getUser, userUsage } from "../src/storage";
 import { sha256Hex } from "../src/ids";
 import { LIMITS, MAX_FILES } from "../src/config";
@@ -171,5 +173,64 @@ describe("archive publishing", () => {
     expect((await f.post(tar([{ name: "a.txt", body: "a" }]))).status).toBe(429);
     expect(f.get).not.toHaveBeenCalled();
     expect(f.put).not.toHaveBeenCalled();
+  });
+});
+
+// Regression: a publish read the share record before streaming and wrote that
+// copy back afterwards, so anything committed while the body was in flight was
+// silently undone: a rotated key worked again, a takedown was lifted.
+describe("changes committed while a publish is in flight", () => {
+  async function slowPublish() {
+    const f = await fixture();
+    f.json("_sites/alice/docs", { generation: 1, public: true, accessKey: "leakedkey", bytes: 2, fileCount: 1, createdAt: 7, lastDeployAt: 7 });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => (release = resolve));
+    const enc = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(c) { c.enqueue(enc.encode("# sl")); await held; c.enqueue(enc.encode("ow")); c.close(); },
+    });
+    const publishing = f.request(body, { "content-length": "6" });
+    // The publish has read the record and is now waiting on its body.
+    await vi.waitFor(() => expect(f.get).toHaveBeenCalledWith("_sites/alice/docs"));
+    const owner = (method: string, path: string, json?: unknown) => apexApp.fetch(new Request(`https://example.com${path}`, {
+      method, headers: { authorization: "Bearer alice.owner" }, body: json === undefined ? undefined : JSON.stringify(json),
+    }), f.env);
+    return { ...f, publishing, release, owner };
+  }
+
+  it("keeps a key rotation and the privacy it restores", async () => {
+    const f = await slowPublish();
+    const rotated = await (await f.owner("POST", "/shares/docs/key")).json<{ url: string }>();
+    f.release();
+    const published = await (await f.publishing).json<{ url: string }>();
+    const meta = (await getMeta(f.bucket, "alice", "docs"))!;
+    expect(meta.accessKey).not.toBe("leakedkey");
+    expect(meta.public).toBe(false);
+    expect(published.url).toBe(rotated.url);
+    expect(meta).toMatchObject({ generation: 2, createdAt: 7, fileCount: 1, bytes: 6 });
+  });
+
+  it("keeps a takedown", async () => {
+    const f = await slowPublish();
+    const res = await handleAdmin(new Request("https://admin.example.com/admin/api/takedown", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "alice", siteId: "docs" }),
+    }), f.env);
+    expect(res.status).toBe(200);
+    f.release();
+    expect((await f.publishing).status).toBe(200);
+    expect((await getMeta(f.bucket, "alice", "docs"))!.tombstone).toBe(true);
+  });
+
+  it("keeps an upload reserved meanwhile, and its bytes in the account's usage", async () => {
+    const f = await slowPublish();
+    const env = { ...f.env, R2_ACCOUNT_ID: "acc", R2_BUCKET_NAME: "b", R2_ACCESS_KEY_ID: "k", R2_SECRET_ACCESS_KEY: "s" };
+    const res = await apexApp.fetch(new Request("https://example.com/shares/docs/uploads/prepare/demo.mp4", {
+      method: "POST", headers: { authorization: "Bearer alice.owner" }, body: JSON.stringify({ bytes: 1000 }),
+    }), env);
+    expect(res.status).toBe(200);
+    f.release();
+    await f.publishing;
+    expect((await getMeta(f.bucket, "alice", "docs"))!.pending).toEqual({ "demo.mp4": { bytes: 1000, expiresAt: expect.any(Number) } });
+    expect(await userUsage(f.bucket, "alice")).toBe(1006);
   });
 });

@@ -1,13 +1,15 @@
-// In-memory R2 fixture: list ordering, delimiter/cursor behavior and metadata
-// projection matter to these tests just as much as object bodies do.
+// In-memory R2 fixture: list ordering, delimiter/cursor behavior, metadata
+// projection and conditional puts matter to these tests just as much as object
+// bodies do. As in R2, an object's etag follows its body alone.
 import { vi } from "vitest";
 import type { Env } from "../src/env";
 
 interface Stored { body: string; customMetadata?: Record<string, string>; httpMetadata?: R2HTTPMetadata; uploaded?: Date }
 export function testBucket(pageSize = 1000) {
   const records = new Map<string, Stored>();
+  const etagOf = (value: Stored) => `etag:${value.body}`;
   const object = (key: string, value: Stored) => ({
-    key, size: new TextEncoder().encode(value.body).length,
+    key, size: new TextEncoder().encode(value.body).length, etag: etagOf(value),
     httpEtag: '"test-etag"', uploaded: value.uploaded ?? new Date(0),
     customMetadata: value.customMetadata, httpMetadata: value.httpMetadata,
     writeHttpMetadata: (h: Headers) => { if (value.httpMetadata?.contentType) h.set("content-type", value.httpMetadata.contentType); },
@@ -23,6 +25,10 @@ export function testBucket(pageSize = 1000) {
     return value ? object(key, value) : null;
   });
   const put = vi.fn(async (key: string, body: unknown, opts?: R2PutOptions) => {
+    const current = records.get(key);
+    const onlyIf = opts?.onlyIf as R2Conditional | undefined;
+    if (onlyIf?.etagMatches !== undefined && (!current || etagOf(current) !== onlyIf.etagMatches)) return null;
+    if (onlyIf?.etagDoesNotMatch !== undefined && current && (onlyIf.etagDoesNotMatch === "*" || etagOf(current) === onlyIf.etagDoesNotMatch)) return null;
     const bytes = body instanceof ReadableStream ? await new Response(body as ReadableStream<Uint8Array>).text()
       : typeof body === "string" ? body : new TextDecoder().decode(body as Uint8Array);
     records.set(key, { body: bytes, customMetadata: opts?.customMetadata, httpMetadata: opts?.httpMetadata as R2HTTPMetadata });
