@@ -20,7 +20,7 @@ Paths are relative to `https://agenthost.page/`. Every call sends `Authorization
 | `POST /shares/{id}/uploads/complete/{path}` | Commit it. |
 | `PATCH /account` | `{"email": "you@example.com"}` sets a recovery/abuse contact. |
 
-`id` is lowercased and reduced to `[a-z0-9._-]`, at most 32 characters.
+`id` is lowercased and reduced to `[a-z0-9_-]`, at most 32 characters: anything else, a dot included, becomes `-` (`report.md` is `report-md`). The response's `id` is the one to reuse.
 
 ### Publishing
 
