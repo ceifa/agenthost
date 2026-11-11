@@ -621,12 +621,24 @@ reservation (§5.5). The per-user total is derived from the share records — `b
 pending reservations — with no mutable counter. A reservation that replaces a file counts
 both until it completes: briefly conservative, never under.
 
+**What the account quota does not bound.** A request without a token gets a new account
+with a full free quota, so for someone minting accounts the quota is no ceiling at all;
+the rate limits are. Two things make them hold:
+
+- The per-caller limiters key an IPv6 caller on its **/64**, not its address. One customer
+  is routinely handed a /64 or more, which is 2^64 separate keys otherwise.
+- `SIGNUP_LIMITER` has **one key for everyone**: how many anonymous accounts may be
+  created per minute (per Cloudflare location). It is the ceiling on storage handed to
+  strangers, and it never slows a caller that sends its token. The rate-limit binding
+  counts per minute and per location, so this is a brake, not a daily budget; a billing
+  notification in the Cloudflare dashboard is the backstop for the bill itself.
+
 ### Retention sweep (cron)
 
 A **Cron Trigger** on the same Worker runs nightly and deletes shares neither written nor
 visited within their plan's retention (15 days free, 1 year paid) — keeping R2 from
 bloating with abandoned shares, while a link people still open stays up. The last write is
-`lastDeployAt`; the last visit is the upload time of `_visits/{user}/{id}`, one LIST per user.
+`lastDeployAt`; the last visit is the upload time of `_visits/{user}/{id}`.
 
 A visit is an authorized request that resolves to content: a denied key, a 404 or a
 `/_gen` poll doesn't count, so neither a bot hitting the prompt nor a forgotten open tab
@@ -640,10 +652,35 @@ Uploads reserved more than a day ago and never completed are deleted, with whate
 landed at their path, on every plan. A free account whose `createdAt` is older than 90 days
 and has no share left after the pass loses its `_users/{username}` record too; its owner
 token then gets a 403 and the agent starts a new account. The 90-day floor keeps a
-brand-new account mid-first-publish safe. Users and shares are processed one cursor page
-at a time without a global plan map or extra profile GETs. Deletions are idempotent and
-logged with a bounded sample plus full counts. A failed cron retries from the beginning
-on the next run; there is no durable checkpoint PUT.
+brand-new account mid-first-publish safe.
+
+**The sweep reads three flat listings, not one per account.** `_users/`, `_sites/` and
+`_visits/` each come back a thousand rows per LIST, in key order, which groups the last two
+by owner in the same order as the accounts. One pass joins them holding one account's rows
+in memory, so a night costs about `(accounts + shares + visits) / 1000` LISTs plus the
+deletes. It used to make two LISTs per account; every anonymous publish is an account, so
+that passed the subrequest limit at a few thousand of them, and because a failed run
+restarts from the top, accounts late in the alphabet were never reached again. The join
+relies on usernames being `[a-z0-9]` (each sorts after `/`); a row owned by any other name,
+or by an account whose record is gone, is left alone and counted as `unowned` in the log.
+
+**A run has a budget** (`SWEEP` in `config.ts`: R2 operations and wall time, under the
+platform's subrequest and cron limits). When it runs out the sweep stops between shares
+and reports `complete: false`. There is no checkpoint: what a run deleted is gone, so the
+next one pays for the listing again and carries on from there. Deletions are idempotent
+and logged with a bounded sample plus full counts. The cron handler awaits the sweep and
+rethrows a failure, so the invocation is recorded as failed where the dashboard and a
+Cloudflare notification can see it.
+
+**Files no record points at.** A publish writes its files before its share record, so a
+first publish that fails or is cut off leaves files under `sites/` that nothing names; so
+does a presigned URL used after its share was deleted, or a delete that died halfway. No
+quota counts them and no share's retention reaches them. Two things remove them. A publish
+that fails with no share record deletes what it wrote before it answers. And after the
+retention pass the sweep walks every file next to every share record, both grouped by
+owner in the same order, and deletes a file whose share has no record once the file is a
+day old (`ORPHAN_GRACE_MS`: a publish in flight, and a presigned URL's 15 minutes, are far
+inside that). This pass costs one LIST per thousand files and shares the run's budget.
 
 ### Abuse
 

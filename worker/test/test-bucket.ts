@@ -55,6 +55,6 @@ export function testBucket(pageSize = 1000) {
   const del = vi.fn(async (key: string | string[]) => { for (const k of typeof key === "string" ? [key] : key) records.delete(k); });
   const bucket = { get, head, put, list, delete: del } as unknown as R2Bucket;
   const json = (key: string, value: unknown) => records.set(key, { body: "", customMetadata: { json: JSON.stringify(value) } });
-  const env = { SITES: bucket, DEV_MODE: "1", APEX_HOST: "example.com", PUBLISH_LIMITER: { limit: async () => ({ success: true }) } } as unknown as Env;
+  const env = { SITES: bucket, DEV_MODE: "1", APEX_HOST: "example.com", PUBLISH_LIMITER: { limit: async () => ({ success: true }) }, SIGNUP_LIMITER: { limit: async () => ({ success: true }) } } as unknown as Env;
   return { bucket, records, get, head, put, list, del, json, env };
 }

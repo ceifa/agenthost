@@ -12,7 +12,11 @@
   // control — no longer relying solely on a dashboard WAF rule. period is 10|60.
   "ratelimits": [
     { "name": "PUBLISH_LIMITER", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } },
-    { "name": "ACCESS_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }
+    { "name": "ACCESS_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } },
+    // One key for everyone: how many anonymous accounts may be created per minute
+    // (per Cloudflare location). A new account is a fresh free quota, so this, not
+    // the per-IP limit, is the ceiling on storage handed to strangers.
+    { "name": "SIGNUP_LIMITER", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } }
   ],
   "assets": {
     // landing/dist + admin/dist are copied into ../public by the build step.
