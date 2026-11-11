@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import type { Env } from "./env";
 import { handlePublish, routeFilePath, safePath } from "./publish";
 import { ownedShare, readJson, requireOwner, type AppContext } from "./auth";
-import { deleteSite, listSitesPage, putMeta, putUser, siteFileKey, type SiteMeta } from "./storage";
+import { deleteSite, listSitesPage, putUser, siteFileKey, updateMeta, RecordBusyError, type SiteMeta } from "./storage";
 import { generateAccessKey, metaUrl, siteHost } from "./ids";
 import { llmsTxt } from "./llms";
 import { skillFile } from "./skill";
@@ -57,8 +57,8 @@ app.patch("/shares/:id", async (c) => {
   if (share instanceof Response) return share;
   const value = (await readJson(c))?.public;
   if (typeof value !== "boolean") return c.json({ error: "JSON body {\"public\": true|false} required" }, 400);
-  const meta = { ...share.meta, public: value };
-  await putMeta(c.env.SITES, share.owner.username, share.id, meta);
+  const meta = await updateMeta(c.env.SITES, share.owner.username, share.id, current => current && { ...current, public: value });
+  if (!meta) return c.json({ error: "share not found" }, 404);
   return c.json(describe(c, share.owner.username, share.id, meta));
 });
 
@@ -66,15 +66,22 @@ app.patch("/shares/:id", async (c) => {
 app.post("/shares/:id/key", async (c) => {
   const share = await ownedShare(c);
   if (share instanceof Response) return share;
-  const { keyHash: _, ...rest } = share.meta;
-  const meta = { ...rest, accessKey: generateAccessKey(), public: false };
-  await putMeta(c.env.SITES, share.owner.username, share.id, meta);
+  const accessKey = generateAccessKey();
+  const meta = await updateMeta(c.env.SITES, share.owner.username, share.id, current => {
+    if (!current) return null;
+    const { keyHash: _, ...rest } = current;
+    return { ...rest, accessKey, public: false };
+  });
+  if (!meta) return c.json({ error: "share not found" }, 404);
   return c.json(describe(c, share.owner.username, share.id, meta));
 });
 
 app.delete("/shares/:id", async (c) => {
   const share = await ownedShare(c);
   if (share instanceof Response) return share;
+  // Deleting the record would delete the takedown with it, and the next PUT to
+  // the same id would bring the address back.
+  if (share.meta.tombstone) return c.json({ error: "this share was taken down and cannot be deleted" }, 403);
   await deleteSite(c.env.SITES, share.owner.username, share.id);
   return c.json({ ok: true });
 });
@@ -88,14 +95,14 @@ app.delete("/shares/:id/files/*", async (c) => {
   const object = path && !meta.pending?.[path] ? await c.env.SITES.head(siteFileKey(owner.username, id, path)) : null;
   if (!object) return c.json({ error: "file not found" }, 404);
   await c.env.SITES.delete(object.key);
-  const next = {
-    ...meta,
-    generation: meta.generation + 1,
+  const next = await updateMeta(c.env.SITES, owner.username, id, current => current && {
+    ...current,
+    generation: current.generation + 1,
     lastDeployAt: Date.now(),
-    bytes: Math.max(0, meta.bytes - object.size),
-    fileCount: Math.max(0, meta.fileCount - 1),
-  };
-  await putMeta(c.env.SITES, owner.username, id, next);
+    bytes: Math.max(0, current.bytes - object.size),
+    fileCount: Math.max(0, current.fileCount - 1),
+  });
+  if (!next) return c.json({ error: "share not found" }, 404);
   return c.json(describe(c, owner.username, id, next));
 });
 
@@ -112,13 +119,20 @@ app.patch("/account", async (c) => {
 });
 
 app.get("/llms.txt", (c) =>
-  c.body(llmsTxt(c.env.APEX_HOST), 200, { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" }),
+  c.body(llmsTxt(c.env.APEX_HOST, c.env.ABUSE_EMAIL), 200, { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" }),
 );
 
 app.get("/skill/*", (c) => {
   const body = skillFile(c.req.path.slice("/skill/".length), c.env.APEX_HOST);
   if (body === null) return c.notFound();
   return c.body(body, 200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "public, max-age=3600" });
+});
+
+// A share record that kept changing under a write: nothing was lost, the caller retries.
+app.onError((error, c) => {
+  if (error instanceof RecordBusyError) return c.json({ error: error.message }, 503);
+  console.error(error);
+  return c.json({ error: "internal error" }, 500);
 });
 
 // Unmatched paths → Static Assets (the landing page). Registered as the Hono

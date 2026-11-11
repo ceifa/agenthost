@@ -146,12 +146,13 @@ entries — globally, with no purge API. See §6.
   "tokenHash": "sha256(secret)",       // ownerToken is "{username}.{secret}"; the secret is never stored
   "email": "you@x.com",                // optional, unverified contact (PATCH /account)
   "plan": "free" | "paid",             // only the admin changes this
-  "createdAt": 1718800000
+  "createdAt": 1718800000,
+  "suspended": true                    // optional; set by the admin, the token is refused (§9)
 }
 ```
 
 **Compact, directly listable metadata.** Small control records (shares and users)
-store their JSON once in R2 `customMetadata.json` with an empty body.
+store their JSON once in R2 `customMetadata.json`; the body is only a version stamp (below).
 `R2.list({ include: ["customMetadata"] })` returns these records without per-object GETs.
 Every record must fit R2's metadata limit; the free-form fields are the email (≤ 254
 characters) and pending upload paths (≤ 512 characters, at most one per file a share
@@ -172,10 +173,30 @@ contentType   = guessed from extension at publish; a direct upload stores one on
 (Browser caching is handled at serve time with `no-cache` + `ETag`, not stored on the
 object — see §6 — because the public key is overwritten in place.)
 
+**Share records are updated atomically, with R2 alone.** A share record has several
+writers: a publish, an upload reservation and its completion, a key rotation, a visibility
+change, a file delete, the admin's takedown and the sweep. Each used to read the record,
+change its copy and put it back, so the last writer silently undid the others. A publish
+holds its copy for as long as its body streams, which made the window minutes wide: a key
+rotated meanwhile worked again once the publish committed, and a takedown was lifted.
+
+Every write now goes through `updateMeta` (`storage.ts`): read the record, apply the change,
+and put it back **only if the record is still the version that was read**
+(`onlyIf: { etagMatches }`, or `etagDoesNotMatch: "*"` to create). A lost race reads again
+and re-applies the change, a few times, then answers 503. R2 derives an etag from the
+object's body, and a record's JSON lives in its metadata, so each write also puts a fresh
+random stamp in the body: without it every version would share the etag of the empty
+string. Records written before this have an empty body; the first write stamps them.
+
+The publish commits its own `generation`, `bytes` and `fileCount` on top of whatever the
+record holds at that moment, so access state (`accessKey`, `public`, `tombstone`) and
+`pending` reservations always come from the latest version. What stays non-atomic is the
+file tree itself: two publishes to one share at once still interleave their files (§4's
+accepted trade-off), and the quota is still summed from records without a lock.
+
 **Why no DO/KV/D1:** the only hot-path query is `key → bytes`, which R2 serves with strong
-consistency. The merged metadata/generation record is a per-site R2 object (last-writer-wins is fine — you
-own your own site, there's no shared contended namespace). Username uniqueness is moot
-because usernames are auto-generated with entropy.
+consistency, and R2's conditional put is all the coordination a per-share record needs.
+Username uniqueness is moot because usernames are auto-generated with entropy.
 
 ---
 
@@ -582,8 +603,8 @@ A thin, founder-operated surface — **not** a multi-user dashboard.
   email (`ALLOWED_ADMIN_EMAIL`). The Worker verifies the signed Access JWT
   (`Cf-Access-Jwt-Assertion`) as defense-in-depth — no hand-rolled auth.
 - **Operations** (all behind Access): list users/shares (`R2.list` on `_users/` and
-  `_sites/{username}/`), set `plan`, rename a username, and take down an abusive share. Each
-  is a JSON edit in R2.
+  `_sites/{username}/`), set `plan`, rename a username, take down an abusive share, and
+  suspend an account. Each is a JSON edit in R2.
 - Scales fine on `R2.list` at low volume; D1 can back the admin later if listing grows —
   additive, never touches the hot path.
 
@@ -614,19 +635,30 @@ reservation (§5.5). The per-user total is derived from the share records — `b
 pending reservations — with no mutable counter. A reservation that replaces a file counts
 both until it completes: briefly conservative, never under.
 
+**What the account quota does not bound.** A request without a token gets a new account
+with a full free quota, so for someone minting accounts the quota is no ceiling at all;
+the rate limits are. Two things make them hold:
+
+- The per-caller limiters key an IPv6 caller on its **/64**, not its address. One customer
+  is routinely handed a /64 or more, which is 2^64 separate keys otherwise.
+- `SIGNUP_LIMITER` has **one key for everyone**: how many anonymous accounts may be
+  created per minute (per Cloudflare location). It is the ceiling on storage handed to
+  strangers, and it never slows a caller that sends its token. The rate-limit binding
+  counts per minute and per location, so this is a brake, not a daily budget; a billing
+  notification in the Cloudflare dashboard is the backstop for the bill itself.
+
 ### Retention sweep (cron)
 
 A **Cron Trigger** on the same Worker runs nightly and deletes shares neither written nor
 visited within their plan's retention (15 days free, 1 year paid) — keeping R2 from
 bloating with abandoned shares, while a link people still open stays up. The last write is
-`lastDeployAt`; the last visit is the upload time of `_visits/{user}/{id}`, one LIST per user.
+`lastDeployAt`; the last visit is the upload time of `_visits/{user}/{id}`.
 
 A visit is an authorized request that resolves to content: a denied key, a 404 or a
 `/_gen` poll doesn't count, so neither a bot hitting the prompt nor a forgotten open tab
 keeps a share alive. A link preview that follows the `?k` redirect does count, once.
 Visits live in their own empty object rather than the share record because updating the
-record from the serve path would race a publish's read-modify-write and could roll back
-its generation. Writes are throttled to one per share, per colo, per day: an in-isolate
+record from the serve path would make every reader contend with publishes for it. Writes are throttled to one per share, per colo, per day: an in-isolate
 set plus a day-keyed Cache API marker, both off the response path in `waitUntil`.
 Keeping a share alive forever by curling it from a cron is possible, but so was
 republishing it; the account quota is what bounds storage. Deleting a share = `R2.list` its prefix + delete all keys and its record.
@@ -634,10 +666,35 @@ Uploads reserved more than a day ago and never completed are deleted, with whate
 landed at their path, on every plan. A free account whose `createdAt` is older than 90 days
 and has no share left after the pass loses its `_users/{username}` record too; its owner
 token then gets a 403 and the agent starts a new account. The 90-day floor keeps a
-brand-new account mid-first-publish safe. Users and shares are processed one cursor page
-at a time without a global plan map or extra profile GETs. Deletions are idempotent and
-logged with a bounded sample plus full counts. A failed cron retries from the beginning
-on the next run; there is no durable checkpoint PUT.
+brand-new account mid-first-publish safe.
+
+**The sweep reads three flat listings, not one per account.** `_users/`, `_sites/` and
+`_visits/` each come back a thousand rows per LIST, in key order, which groups the last two
+by owner in the same order as the accounts. One pass joins them holding one account's rows
+in memory, so a night costs about `(accounts + shares + visits) / 1000` LISTs plus the
+deletes. It used to make two LISTs per account; every anonymous publish is an account, so
+that passed the subrequest limit at a few thousand of them, and because a failed run
+restarts from the top, accounts late in the alphabet were never reached again. The join
+relies on usernames being `[a-z0-9]` (each sorts after `/`); a row owned by any other name,
+or by an account whose record is gone, is left alone and counted as `unowned` in the log.
+
+**A run has a budget** (`SWEEP` in `config.ts`: R2 operations and wall time, under the
+platform's subrequest and cron limits). When it runs out the sweep stops between shares
+and reports `complete: false`. There is no checkpoint: what a run deleted is gone, so the
+next one pays for the listing again and carries on from there. Deletions are idempotent
+and logged with a bounded sample plus full counts. The cron handler awaits the sweep and
+rethrows a failure, so the invocation is recorded as failed where the dashboard and a
+Cloudflare notification can see it.
+
+**Files no record points at.** A publish writes its files before its share record, so a
+first publish that fails or is cut off leaves files under `sites/` that nothing names; so
+does a presigned URL used after its share was deleted, or a delete that died halfway. No
+quota counts them and no share's retention reaches them. Two things remove them. A publish
+that fails with no share record deletes what it wrote before it answers. And after the
+retention pass the sweep walks every file next to every share record, both grouped by
+owner in the same order, and deletes a file whose share has no record once the file is a
+day old (`ORPHAN_GRACE_MS`: a publish in flight, and a presigned URL's 15 minutes, are far
+inside that). This pass costs one LIST per thousand files and shares the run's budget.
 
 ### Abuse
 
@@ -647,7 +704,22 @@ Public-by-default publishing means day-one abuse risk. Controls, **no Durable Ob
   domain's search reputation.
 - **Per-IP rate limits** on publishes, uploads and wrong access keys.
 - **Size/count/quota caps** (above), enforced during untar.
-- **Takedown** endpoint in the admin (§8).
+- **Takedown** in the admin (§8): the share serves 410. It holds against its owner: a
+  publish keeps it (the record is updated, never replaced, §4), and the owner can't delete
+  a taken-down share, because deleting the record would delete the takedown and free the
+  address for the next PUT. The sweep still removes it when its retention runs out.
+- **Suspension** in the admin: a takedown stops one address, and the same token would
+  publish the next. Suspending sets `suspended` on the account and takes down every share
+  it has; the owner API then answers every call with 403 `account suspended`. Lifting it
+  gives the token back and leaves the shares down, each restored on its own. What it cannot
+  stop is a new anonymous account, which costs one request; that is the rate limits' job.
+- **A place to report.** `ABUSE_EMAIL`, when set, is linked from the landing page, from the
+  key prompt of every private share (with the share's host in the subject) and from
+  `/llms.txt`, next to the one-line rule it enforces.
+- **The domain is shared.** Shares are subdomains of the apex, which is not on the Public
+  Suffix List, so a browser blocklist that flags one share's host can flag the whole
+  domain, landing page included. The fixes are a separate registrable domain for shares or
+  a PSL entry; neither is done.
 - Turnstile deferred.
 
 ---

@@ -5,6 +5,8 @@ export interface Env {
   SITES: R2Bucket;
   ASSETS: Fetcher;
   APEX_HOST: string; // control-plane host (landing + /publish)
+  // Where abuse reports go. Unset, no "Report abuse" link is shown anywhere.
+  ABUSE_EMAIL?: string;
   // Object-scoped S3 credentials used only to generate short-lived presigned
   // URLs. Asset payloads travel directly between the client and R2.
   R2_ACCOUNT_ID?: string;
@@ -24,4 +26,7 @@ export interface Env {
   // lever); ACCESS_LIMITER throttles wrong-key attempts on private sites.
   PUBLISH_LIMITER: RateLimit;
   ACCESS_LIMITER: RateLimit;
+  // Not per caller: one shared budget for new anonymous accounts, each of which
+  // comes with a full free quota.
+  SIGNUP_LIMITER: RateLimit;
 }

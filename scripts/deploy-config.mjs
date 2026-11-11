@@ -11,7 +11,7 @@ const deployEnv = new URL("deploy.env", root);
 const wranglerConfig = new URL("worker/wrangler.jsonc", root);
 const generatedConfig = new URL("worker/wrangler.deploy.json", root);
 
-const OVERRIDES = ["CLOUDFLARE_ACCOUNT_ID", "APEX_HOST", "ZONE_NAME", "R2_BUCKET_NAME"];
+const OVERRIDES = ["CLOUDFLARE_ACCOUNT_ID", "APEX_HOST", "ZONE_NAME", "R2_BUCKET_NAME", "ABUSE_EMAIL"];
 
 let loaded = false;
 function loadDeployEnv() {
@@ -73,6 +73,12 @@ export function apexHost() {
   return process.env.APEX_HOST || readWranglerConfig().vars.APEX_HOST;
 }
 
+// Where abuse reports go, or "" when the operator set none.
+export function abuseEmail() {
+  loadDeployEnv();
+  return (process.env.ABUSE_EMAIL || readWranglerConfig().vars.ABUSE_EMAIL || "").trim();
+}
+
 // Applies the overrides in env to a parsed wrangler.jsonc. Returns null when
 // nothing is overridden, so Wrangler can keep using the shipped file.
 export function applyOverrides(config, env) {
@@ -99,6 +105,7 @@ export function applyOverrides(config, env) {
     }
     config.vars.R2_BUCKET_NAME = env.R2_BUCKET_NAME;
   }
+  if (env.ABUSE_EMAIL) config.vars.ABUSE_EMAIL = env.ABUSE_EMAIL;
   return config;
 }
 

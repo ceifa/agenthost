@@ -12,7 +12,11 @@
   // control — no longer relying solely on a dashboard WAF rule. period is 10|60.
   "ratelimits": [
     { "name": "PUBLISH_LIMITER", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } },
-    { "name": "ACCESS_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }
+    { "name": "ACCESS_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } },
+    // One key for everyone: how many anonymous accounts may be created per minute
+    // (per Cloudflare location). A new account is a fresh free quota, so this, not
+    // the per-IP limit, is the ceiling on storage handed to strangers.
+    { "name": "SIGNUP_LIMITER", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } }
   ],
   "assets": {
     // landing/dist + admin/dist are copied into ../public by the build step.
@@ -39,6 +43,10 @@
     // a *.{APEX_HOST} subdomain is treated as a hosted-site request; the admin
     // lives on admin.{APEX_HOST} (an Access-protected hostname in this zone).
     "APEX_HOST": "agenthost.page",
+    // Mailbox for abuse reports, e.g. "abuse@agenthost.page". Add it here (or as
+    // ABUSE_EMAIL in deploy.env) once the mailbox exists: while unset, no
+    // "Report abuse" link is shown anywhere.
+    // "ABUSE_EMAIL": "",
     // Public identifiers used to construct presigned R2 URLs. The matching S3
     // access key and secret are Wrangler secrets (see DEPLOYING.md).
     "R2_ACCOUNT_ID": "bbf56797ad865faf9657cf6163324b0f",

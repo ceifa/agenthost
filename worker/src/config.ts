@@ -26,6 +26,18 @@ export const MAX_BUFFERED_BYTES = 32 * MB;
 export const UPLOAD_URL_TTL_SECONDS = 15 * 60;
 export const UPLOAD_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
+// The nightly sweep stops, cleanly, once it has spent this many R2 operations or
+// this long, and the next night carries on: what it deleted is gone, so a rerun
+// from the top only pays for the listing again. Workers Paid allows 10,000
+// subrequests per invocation and a cron 15 minutes; on the Free plan (50
+// subrequests) lower maxOps to about 40.
+export const SWEEP = { maxOps: 8_000, maxMs: 10 * 60_000 };
+
+// A file under no share record is deleted by the sweep once it is this old. A
+// first publish writes its files before its record, and a presigned URL can
+// write for 15 minutes; a day is far past both.
+export const ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+
 // The Cache API refuses objects past this size; larger files stream from R2.
 export const CACHE_MAX_BYTES = 512 * MB;
 

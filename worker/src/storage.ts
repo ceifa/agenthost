@@ -2,7 +2,8 @@
 // store; read-after-write is strongly consistent per object, which is what lets
 // the publish→serve loop work without any other coordination primitive.
 
-// A share: one tree of files on its own subdomain. The access key is stored as
+// A share: one tree of files on its own subdomain. Written only through
+// updateMeta, never as a plain put. The access key is stored as
 // is: it is meant to travel in URLs, and anyone who can read this record can
 // read the files it guards.
 export interface SiteMeta {
@@ -25,6 +26,7 @@ export interface UserRecord {
   email?: string; // optional, unverified contact (set on claim)
   plan: "free" | "paid";
   createdAt: number;
+  suspended?: boolean; // set by the admin: the owner token is refused
 }
 
 export const siteFileKey = (u: string, s: string, path: string) => `sites/${u}/${s}/${path}`;
@@ -39,8 +41,12 @@ export const visitKey = (u: string, s: string) => `_visits/${u}/${s}`;
 // The live-reload probe answers /_gen, so a published file there could never be served.
 export const RESERVED_FILE = (path: string) => path === "_gen";
 
-// Every control record keeps its JSON in customMetadata with an empty body, so
-// a LIST with include: ["customMetadata"] returns whole records.
+// Every control record keeps its JSON in customMetadata, so a LIST with
+// include: ["customMetadata"] returns whole records. R2 derives an object's etag
+// from its body, so the body is a fresh stamp on every write: two versions of a
+// record never share an etag, which is what lets a write be conditional on the
+// version it read. (Records written before this have an empty body and all share
+// one etag; the first write stamps them.)
 async function getJson<T>(b: R2Bucket, key: string): Promise<T | null> {
   const obj = await b.get(key);
   if (!obj) return null;
@@ -49,17 +55,53 @@ async function getJson<T>(b: R2Bucket, key: string): Promise<T | null> {
   return json ? JSON.parse(json) as T : null;
 }
 
-async function putJson(b: R2Bucket, key: string, value: unknown): Promise<void> {
-  await b.put(key, "", {
+// False when `onlyIf` no longer holds: someone else wrote the record first.
+async function putJson(b: R2Bucket, key: string, value: unknown, onlyIf?: R2Conditional): Promise<boolean> {
+  const stored = await b.put(key, crypto.randomUUID(), {
     httpMetadata: { contentType: "application/json" },
     customMetadata: { json: JSON.stringify(value) },
+    onlyIf,
   });
+  return stored !== null;
 }
 
 export const getMeta = (b: R2Bucket, u: string, s: string) => getJson<SiteMeta>(b, metaKey(u, s));
-export const putMeta = (b: R2Bucket, u: string, s: string, meta: SiteMeta) => putJson(b, metaKey(u, s), meta);
 export const getUser = (b: R2Bucket, u: string) => getJson<UserRecord>(b, userKey(u));
-export const putUser = (b: R2Bucket, u: string, rec: UserRecord) => putJson(b, userKey(u), rec);
+export const putUser = async (b: R2Bucket, u: string, rec: UserRecord): Promise<void> => { await putJson(b, userKey(u), rec); };
+
+// Thrown when a share record changed under every attempt to update it.
+export class RecordBusyError extends Error {
+  constructor(username: string, siteId: string) {
+    super(`share ${username}/${siteId} is being changed by other requests; retry`);
+    this.name = "RecordBusyError";
+  }
+}
+
+const UPDATE_ATTEMPTS = 6;
+
+// The only way to write a share record. `change` gets the record as it is now
+// (null if there is none) and returns the record to store, or null to leave it
+// alone. The write is conditional on the version `change` saw, and a lost race
+// reads again and re-applies `change`, so a writer never overwrites what another
+// committed in between: a publish that streamed for a minute cannot bring back
+// the key that was rotated, or lift the takedown that landed, while it ran.
+// `change` may run more than once; it must derive everything from its argument.
+export async function updateMeta(
+  b: R2Bucket,
+  u: string,
+  s: string,
+  change: (current: SiteMeta | null) => SiteMeta | null | Promise<SiteMeta | null>,
+): Promise<SiteMeta | null> {
+  const key = metaKey(u, s);
+  for (let attempt = 0; attempt < UPDATE_ATTEMPTS; attempt++) {
+    const obj = await b.head(key);
+    const json = obj?.customMetadata?.json;
+    const next = await change(json ? JSON.parse(json) as SiteMeta : null);
+    if (!next) return null;
+    if (await putJson(b, key, next, obj ? { etagMatches: obj.etag } : { etagDoesNotMatch: "*" })) return next;
+  }
+  throw new RecordBusyError(u, s);
+}
 
 export async function* objectPages(b: R2Bucket, prefix: string): AsyncGenerator<R2Objects> {
   let cursor: string | undefined;
@@ -185,8 +227,41 @@ export async function deleteSite(b: R2Bucket, username: string, siteId: string):
   await b.delete([metaKey(username, siteId), visitKey(username, siteId)]);
 }
 
-// When each of a user's shares was last visited, by share id.
-export async function lastVisits(b: R2Bucket, username: string): Promise<Map<string, number>> {
-  const prefix = `_visits/${username}/`;
-  return new Map((await listAll(b, prefix)).map(o => [o.key.slice(prefix.length), o.uploaded.getTime()]));
+// `{username}/{siteId}` after a control prefix. Neither part contains a slash.
+function ownerAndShare(key: string, prefix: string): { username: string; siteId: string } | null {
+  const slash = key.indexOf("/", prefix.length);
+  return slash < 0 ? null : { username: key.slice(prefix.length, slash), siteId: key.slice(slash + 1) };
+}
+
+// Every share record of every account, in key order: a thousand per LIST, so
+// the nightly sweep costs a call per thousand shares instead of calls per account.
+export const allSiteRecords = (b: R2Bucket): AsyncGenerator<SiteRecord> => paginate(cursor => recordPage(b, "_sites/", cursor, obj => {
+  const id = ownerAndShare(obj.key, "_sites/");
+  const meta = listed<SiteMeta>(obj);
+  return id && meta && { ...id, meta };
+}));
+
+export interface FileRow { username: string; siteId: string; key: string; at: number }
+
+// Every stored file of every share, in the same order.
+export async function* allFiles(b: R2Bucket): AsyncGenerator<FileRow> {
+  for await (const page of objectPages(b, "sites/")) {
+    for (const obj of page.objects) {
+      const id = ownerAndShare(obj.key, "sites/");
+      const slash = id ? id.siteId.indexOf("/") : -1;
+      if (id && slash > 0) yield { username: id.username, siteId: id.siteId.slice(0, slash), key: obj.key, at: obj.uploaded.getTime() };
+    }
+  }
+}
+
+export interface VisitRecord { username: string; siteId: string; at: number }
+
+// When every share was last visited, in the same order.
+export async function* allVisits(b: R2Bucket): AsyncGenerator<VisitRecord> {
+  for await (const page of objectPages(b, "_visits/")) {
+    for (const obj of page.objects) {
+      const id = ownerAndShare(obj.key, "_visits/");
+      if (id) yield { ...id, at: obj.uploaded.getTime() };
+    }
+  }
 }

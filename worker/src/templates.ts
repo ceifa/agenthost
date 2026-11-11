@@ -24,7 +24,7 @@ body{margin:0;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,H
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 `;
 
-export function interstitialHtml(opts: { siteId: string; apexHost: string; wrong?: boolean }): string {
+export function interstitialHtml(opts: { siteId: string; apexHost: string; wrong?: boolean; abuse?: string | null }): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
@@ -46,7 +46,7 @@ button{background:var(--accent);color:#0c0d0f;border:0;border-radius:9px;padding
 <button type="submit">Enter</button>
 </form>
 ${opts.wrong ? '<div class="err">Incorrect key — try again.</div>' : ""}
-<div class="brand">hosted on <a href="https://${esc(opts.apexHost)}">${esc(opts.apexHost)}</a></div>
+<div class="brand">hosted on <a href="https://${esc(opts.apexHost)}">${esc(opts.apexHost)}</a>${opts.abuse ? ` · <a href="${esc(opts.abuse)}">Report abuse</a>` : ""}</div>
 </div></div></body></html>`;
 }
 

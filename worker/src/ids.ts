@@ -130,9 +130,35 @@ export const encodePath = (path: string) => path.split("/").map(encodeURICompone
 export const metaUrl = (host: string, meta: { public: boolean; accessKey?: string }) =>
   shareUrl(host, meta.public ? null : meta.accessKey);
 
-// Caller identity for the rate limiters. Falls back to a shared sentinel when the
-// header is absent (e.g. local dev) so the limiter key stays well-formed.
-export const clientIp = (req: Request): string => req.headers.get("cf-connecting-ip") ?? "unknown";
+// The first 64 bits of an IPv6 address, or null if it doesn't parse as one.
+function ipv6Network(ip: string): string | null {
+  const halves = ip.split("::");
+  if (halves.length > 2) return null;
+  const compressed = halves.length === 2;
+  const groups = (part: string) => (part ? part.split(":") : []);
+  const head = groups(halves[0]!);
+  const tail = compressed ? groups(halves[1]!) : [];
+  const given = [...head, ...tail];
+  // A trailing dotted quad (64:ff9b::192.0.2.1) stands for two groups.
+  const quad = given.at(-1)?.includes(".") ?? false;
+  if (given.some((g, i) => !/^[0-9a-f]{1,4}$/i.test(g) && !(quad && i === given.length - 1))) return null;
+  const missing = 8 - given.length - (quad ? 1 : 0);
+  if (compressed ? missing < 1 : missing !== 0) return null;
+  const network = [...head, ...Array<string>(compressed ? missing : 0).fill("0"), ...tail].slice(0, 4);
+  if (network.some(g => g.includes("."))) return null;
+  return network.map(g => parseInt(g, 16).toString(16)).join(":") + "::/64";
+}
+
+// Caller identity for the rate limiters. An IPv6 customer is handed a /64 or
+// more, 2^64 addresses to rotate through, so the key is the /64, not the
+// address. Falls back to a shared sentinel when the header is absent (e.g. local
+// dev) so the limiter key stays well-formed.
+export function clientIp(req: Request): string {
+  const ip = req.headers.get("cf-connecting-ip") ?? "unknown";
+  if (!ip.includes(":")) return ip;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  return mapped ? mapped[1]! : ipv6Network(ip) ?? ip;
+}
 
 const CONTENT_TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",
