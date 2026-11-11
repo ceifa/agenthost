@@ -16,7 +16,7 @@ function share(f: ReturnType<typeof testBucket>, username: string, id: string, l
 describe("retention sweep at scale", () => {
   // Regression: two LISTs per account. Every anonymous publish is an account, so
   // a few thousand of them passed the subrequest limit and the run died midway.
-  it("reads every account, share and visit in three listings, however many accounts", async () => {
+  it("reads every account, share, visit and file in five listings, however many accounts", async () => {
     const f = testBucket();
     const now = 5 * DAY;
     for (let i = 0; i < 300; i++) {
@@ -26,8 +26,9 @@ describe("retention sweep at scale", () => {
       f.records.set(`_visits/${name}/docs`, { body: "", uploaded: new Date(now) });
     }
     const result = await runRetentionSweep(f.env, now);
-    expect(result).toMatchObject({ checked: 300, deletedCount: 0, complete: true, ops: 3, unowned: 0 });
-    expect(f.list).toHaveBeenCalledTimes(3);
+    // Accounts, shares and visits for retention; files and shares again for orphans.
+    expect(result).toMatchObject({ checked: 300, deletedCount: 0, complete: true, ops: 5, unowned: 0, orphans: 0 });
+    expect(f.list).toHaveBeenCalledTimes(5);
   });
 
   it("joins the listings correctly when one username is the start of another, across pages", async () => {
@@ -64,6 +65,71 @@ describe("retention sweep at scale", () => {
     expect(keys(f, "_sites/")).toEqual(["_sites/a-b/old", "_sites/aa/old"]);
     expect(keys(f, "_users/")).toEqual(["_users/a", "_users/a-b", "_users/ab"]);
     expect(result).toMatchObject({ checked: 2, unowned: 2, complete: true });
+  });
+});
+
+describe("files no share record points at", () => {
+  const old = new Date(0);
+  const now = 2 * DAY;
+
+  // Regression: a first publish that failed after writing files, or a presigned
+  // URL used after its share was deleted, left files under sites/ that no record
+  // named. The sweep walked records only, so they stayed forever, uncounted.
+  it("are deleted once they are a day old", async () => {
+    const f = testBucket(2);
+    f.json("_users/alice", { ...user, createdAt: now });
+    share(f, "alice", "docs", now);
+    f.records.set("sites/alice/gone/big.bin", { body: "x", uploaded: old });
+    f.records.set("sites/alice/gone/deep/a.html", { body: "x", uploaded: old });
+    f.records.set("sites/ghost/leak/big.bin", { body: "x", uploaded: old }); // no account either
+    const result = await runRetentionSweep(f.env, now);
+    expect(keys(f, "sites/")).toEqual(["sites/alice/docs/index.html"]);
+    expect(result).toMatchObject({ orphans: 3, complete: true });
+    expect(result.deleted).toEqual(["orphan:alice/gone/big.bin", "orphan:alice/gone/deep/a.html", "orphan:ghost/leak/big.bin"]);
+  });
+
+  it("are left alone while a publish could still be writing them", async () => {
+    const f = testBucket();
+    f.records.set("sites/newcomer/first/index.html", { body: "x", uploaded: new Date(now - DAY + 1000) });
+    f.records.set("sites/newcomer/first/old.html", { body: "x", uploaded: new Date(now - DAY - 1000) });
+    await runRetentionSweep(f.env, now);
+    expect(keys(f, "sites/")).toEqual(["sites/newcomer/first/index.html"]);
+  });
+
+  it("never touches a recorded share, whatever its id sorts like", async () => {
+    const f = testBucket(1);
+    f.json("_users/u", { ...user, createdAt: now });
+    // Among files "a-b/" sorts before "a/"; among records "a" sorts before "a-b".
+    for (const id of ["a", "a-b", "a.b", "a_b", "ab"]) {
+      f.json(`_sites/u/${id}`, { ...meta, lastDeployAt: now });
+      f.records.set(`sites/u/${id}/index.html`, { body: "x", uploaded: old });
+    }
+    f.records.set("sites/u/a-c/index.html", { body: "x", uploaded: old });
+    const result = await runRetentionSweep(f.env, now);
+    expect(keys(f, "sites/")).toEqual(["a", "a-b", "a.b", "a_b", "ab"].map(id => `sites/u/${id}/index.html`).sort());
+    expect(result.orphans).toBe(1);
+  });
+
+  it("leaves an upload in flight and an oddly named owner alone", async () => {
+    const f = testBucket();
+    f.json("_users/u", { ...user, createdAt: now });
+    f.json("_sites/u/vid", { ...meta, lastDeployAt: now, pending: { "demo.mp4": { bytes: 5, expiresAt: now + DAY } } });
+    f.records.set("sites/u/vid/demo.mp4", { body: "x", uploaded: old });
+    f.records.set("sites/odd-name/x/index.html", { body: "x", uploaded: old });
+    await runRetentionSweep(f.env, now);
+    expect(keys(f, "sites/")).toEqual(["sites/odd-name/x/index.html", "sites/u/vid/demo.mp4"]);
+  });
+
+  it("stops with the budget and finishes on a later run", async () => {
+    const f = testBucket(1);
+    for (const name of ["a", "b", "c", "d", "e"]) f.records.set(`sites/${name}/leak/x.bin`, { body: "x", uploaded: old });
+    const first = await runRetentionSweep(f.env, now, { maxOps: 5, maxMs: 60_000 });
+    expect(first.complete).toBe(false);
+    let runs = 1;
+    while (!(await runRetentionSweep(f.env, now, { maxOps: 5, maxMs: 60_000 })).complete) {
+      if (++runs > 20) throw new Error("the sweep stopped making progress");
+    }
+    expect(keys(f, "sites/")).toEqual([]);
   });
 });
 
@@ -120,7 +186,7 @@ describe("cron handler", () => {
     const f = testBucket();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     await worker.scheduled!({} as ScheduledController, f.env, {} as ExecutionContext);
-    expect(JSON.parse(log.mock.calls[0]![1] as string)).toMatchObject({ checked: 0, complete: true, ops: 1 });
+    expect(JSON.parse(log.mock.calls[0]![1] as string)).toMatchObject({ checked: 0, complete: true, ops: 2, orphans: 0 });
     log.mockRestore();
   });
 });

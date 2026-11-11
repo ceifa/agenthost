@@ -240,6 +240,19 @@ export const allSiteRecords = (b: R2Bucket): AsyncGenerator<SiteRecord> => pagin
   return id && meta && { ...id, meta };
 }));
 
+export interface FileRow { username: string; siteId: string; key: string; at: number }
+
+// Every stored file of every share, in the same order.
+export async function* allFiles(b: R2Bucket): AsyncGenerator<FileRow> {
+  for await (const page of objectPages(b, "sites/")) {
+    for (const obj of page.objects) {
+      const id = ownerAndShare(obj.key, "sites/");
+      const slash = id ? id.siteId.indexOf("/") : -1;
+      if (id && slash > 0) yield { username: id.username, siteId: id.siteId.slice(0, slash), key: obj.key, at: obj.uploaded.getTime() };
+    }
+  }
+}
+
 export interface VisitRecord { username: string; siteId: string; at: number }
 
 // When every share was last visited, in the same order.

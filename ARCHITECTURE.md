@@ -620,6 +620,18 @@ reservation (§5.5). The per-user total is derived from the share records — `b
 pending reservations — with no mutable counter. A reservation that replaces a file counts
 both until it completes: briefly conservative, never under.
 
+**What the account quota does not bound.** A request without a token gets a new account
+with a full free quota, so for someone minting accounts the quota is no ceiling at all;
+the rate limits are. Two things make them hold:
+
+- The per-caller limiters key an IPv6 caller on its **/64**, not its address. One customer
+  is routinely handed a /64 or more, which is 2^64 separate keys otherwise.
+- `SIGNUP_LIMITER` has **one key for everyone**: how many anonymous accounts may be
+  created per minute (per Cloudflare location). It is the ceiling on storage handed to
+  strangers, and it never slows a caller that sends its token. The rate-limit binding
+  counts per minute and per location, so this is a brake, not a daily budget; a billing
+  notification in the Cloudflare dashboard is the backstop for the bill itself.
+
 ### Retention sweep (cron)
 
 A **Cron Trigger** on the same Worker runs nightly and deletes shares neither written nor
@@ -658,6 +670,16 @@ next one pays for the listing again and carries on from there. Deletions are ide
 and logged with a bounded sample plus full counts. The cron handler awaits the sweep and
 rethrows a failure, so the invocation is recorded as failed where the dashboard and a
 Cloudflare notification can see it.
+
+**Files no record points at.** A publish writes its files before its share record, so a
+first publish that fails or is cut off leaves files under `sites/` that nothing names; so
+does a presigned URL used after its share was deleted, or a delete that died halfway. No
+quota counts them and no share's retention reaches them. Two things remove them. A publish
+that fails with no share record deletes what it wrote before it answers. And after the
+retention pass the sweep walks every file next to every share record, both grouped by
+owner in the same order, and deletes a file whose share has no record once the file is a
+day old (`ORPHAN_GRACE_MS`: a publish in flight, and a presigned URL's 15 minutes, are far
+inside that). This pass costs one LIST per thousand files and shares the run's budget.
 
 ### Abuse
 

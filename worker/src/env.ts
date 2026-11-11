@@ -24,4 +24,7 @@ export interface Env {
   // lever); ACCESS_LIMITER throttles wrong-key attempts on private sites.
   PUBLISH_LIMITER: RateLimit;
   ACCESS_LIMITER: RateLimit;
+  // Not per caller: one shared budget for new anonymous accounts, each of which
+  // comes with a full free quota.
+  SIGNUP_LIMITER: RateLimit;
 }
