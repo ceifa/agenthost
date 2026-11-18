@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleSite, cacheKeyPath } from "../src/serve";
 import { sha256Hex } from "../src/ids";
-import { CACHE_MAX_BYTES } from "../src/config";
+import { CACHE_MAX_BYTES, RENDER_VERSION } from "../src/config";
 import type { Env } from "../src/env";
 import type { SiteMeta } from "../src/storage";
 
@@ -564,7 +564,7 @@ describe("work started while the record is read", () => {
     expect(contentReads(f)).toEqual(["app.css"]);
     expect(stored(f).filter(url => url.includes("app.css")).sort()).toEqual([
       "https://as-cache.internal/u/docs/g2/app.css",
-      "https://as-routes.internal/u/docs/g2/r5/app.css",
+      `https://as-routes.internal/u/docs/g2/r${RENDER_VERSION}/app.css`,
     ]);
   });
 

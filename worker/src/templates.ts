@@ -73,7 +73,7 @@ export function liveScript(version: string, lastDeployAt = 0): string {
 // Docs shell: prose in a sans measure of ~82ch, chrome and code in mono, one
 // amber accent — the landing's palette, adapted to both color schemes.
 const DOC_CSS = `
-:root{color-scheme:light dark;--measure:82ch;
+:root{color-scheme:light dark;--measure:60rem;
 --bg:#fbfaf8;--fg:#16181c;--dim:#5f636b;--line:#e4e1dc;--card:#f2f0ec;--accent:#8a5300;--sel:rgba(138,83,0,.13);
 --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 --add:#1b6b3a;--del:#a32b2b;
